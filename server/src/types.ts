@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import type { FishRarity, FishSpeciesId } from '../../shared/fishConfig.js';
 import type { CatchRecord } from './inventory.js';
+import type { WeatherSnapshot } from '../../shared/weatherConfig.js';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -111,6 +112,7 @@ export interface Room {
   stones: Map<string, Stone>;
   campfireCooking: CampfireCooking | null;
   campfireReserved: boolean;
+  weather: WeatherSnapshot;
 }
 
 export interface PlayerSnapshot {

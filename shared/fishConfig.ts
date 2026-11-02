@@ -1,4 +1,5 @@
 import { WORLD_CONFIG } from './worldConfig.js';
+import { WEATHER_CONFIG, type WeatherType } from './weatherConfig.js';
 
 export const FISH_CONFIG = {
   bigCatch: {
@@ -12,16 +13,13 @@ export const FISH_CONFIG = {
   },
   stones: {
     pickupRange: 2.5,
-    targetRange: 12,
     hitRadius: 1.8,
     cooldownMs: 1000,
     minFlightMs: 500,
     maxFlightMs: 900,
     flightDistanceMs: 28,
-    leadFactor: 0.45,
     lobDistance: 4.2,
     throwEdgeRadius: WORLD_CONFIG.stoneThrowRadius,
-    landMarginOutsideWater: 0.25,
     apexMin: 1.1,
     apexDistanceFactor: 0.12,
     splashDurationSeconds: 0.8,
@@ -187,8 +185,10 @@ export function calculateReelDifficulty(speciesId: FishSpeciesId, weightKg: numb
   return Math.max(0, Math.min(1, reel.rarityDifficultyWeight * rarityFactor + reel.weightDifficultyWeight * weightFactor));
 }
 
-export function calculateReelParameters(speciesId: FishSpeciesId, weightKg: number): ReelParameters & { difficulty: number } {
+export function calculateReelParameters(speciesId: FishSpeciesId, weightKg: number, weatherType: WeatherType = 'clear'): ReelParameters & { difficulty: number } {
   const species = FISH_CONFIG.species.find((entry) => entry.id === speciesId)!;
   const difficulty = calculateReelDifficulty(speciesId, weightKg);
-  return { ...reelParametersForDifficulty(difficulty, species.rarity, species.rarityColor), difficulty };
+  const parameters = reelParametersForDifficulty(difficulty, species.rarity, species.rarityColor);
+  parameters.greenWidth *= WEATHER_CONFIG.states[weatherType].fishing.reelGreenWidthMultiplier;
+  return { ...parameters, difficulty };
 }

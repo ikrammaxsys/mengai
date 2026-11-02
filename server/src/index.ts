@@ -11,6 +11,7 @@ import { InMemoryInventoryStore, type CatchRecord, type InventoryStore } from '.
 import { chickenNear, CHICKEN_HIT_RADIUS } from '../../shared/chickenPaths.js';
 import { JsonGameDataStore, type PersistentGameDataStore } from './persistence.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
+import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
 
 const PORT = Number(process.env.PORT ?? 3002);
 const server = createServer((request, response) => {
@@ -54,27 +55,6 @@ function clampToMap(x: number, z: number): { x: number; z: number } {
   if (distance <= radius) return { x, z };
   const scale = radius / Math.max(distance, 0.001);
   return { x: x * scale, z: z * scale };
-}
-
-function clampToSolidGround(x: number, z: number): { x: number; z: number } {
-  const point = clampToMap(x, z);
-  const radius = Math.hypot(point.x, point.z);
-  const minimum = MOVEMENT_RULES.waterRadius + FISH_CONFIG.stones.landMarginOutsideWater;
-  if (radius >= minimum) return point;
-  const scale = minimum / Math.max(radius, 0.001);
-  return { x: point.x * scale, z: point.z * scale };
-}
-
-function nearestThrowTarget(room: Room, thrower: Player): Player | undefined {
-  const candidates = [...room.players.values()].filter((candidate) => candidate.id !== thrower.id &&
-    Math.hypot(candidate.x - thrower.x, candidate.z - thrower.z) <= FISH_CONFIG.stones.targetRange);
-  const forwardX = Math.sin(thrower.facing), forwardZ = Math.cos(thrower.facing);
-  const inFront = candidates.filter((candidate) => {
-    const dx = candidate.x - thrower.x, dz = candidate.z - thrower.z;
-    return dx * forwardX + dz * forwardZ >= 0;
-  });
-  return [...(inFront.length ? inFront : candidates)].sort((a, b) =>
-    Math.hypot(a.x - thrower.x, a.z - thrower.z) - Math.hypot(b.x - thrower.x, b.z - thrower.z))[0];
 }
 
 function clearFishing(player: Player): void {
@@ -130,8 +110,23 @@ function roomSnapshot(room: Room, player: Player) {
     personalBest: room.personalBests.get(player.name.toLocaleLowerCase()) ?? null,
     stones: rooms.stoneSnapshot(room),
     campfireCooking: room.campfireCooking,
+    weather: room.weather,
     resumeToken: player.resumeToken,
   };
+}
+
+function updateWeather(room: Room, now: number): void {
+  while (room.players.size > 0 && now >= room.weather.endsAt) {
+    const startedAt = room.weather.endsAt;
+    const type = room.weather.next;
+    room.weather = createWeatherSnapshot(type, startedAt);
+    broadcast(room, { type: 'weather:update', weather: room.weather });
+  }
+}
+
+function setDebugWeather(room: Room, type: ReturnType<typeof createWeatherSnapshot>['type']): void {
+  room.weather = createWeatherSnapshot(type, Date.now());
+  broadcast(room, { type: 'weather:update', weather: room.weather });
 }
 
 async function recordCatch(room: Room, player: Player, now: number): Promise<void> {
@@ -264,6 +259,16 @@ wss.on('connection', (socket) => {
     const player = rooms.getPlayer(membership.roomId, membership.playerId);
     const room = rooms.getRoom(membership.roomId);
     if (!player || !room) return;
+
+    if (message.type === 'weather:debug') {
+      if (process.env.NODE_ENV === 'production') return;
+      if (!isWeatherType(message.weatherType)) {
+        send(socket, { type: 'notice', message: 'Unknown weather. Try clear, cloudy, rain, fog, or storm.' });
+        return;
+      }
+      setDebugWeather(room, message.weatherType);
+      return;
+    }
 
     if (message.type === 'move') {
       const seq = Number(message.seq);
@@ -455,25 +460,15 @@ wss.on('connection', (socket) => {
       }
 
       const offset = FISH_CONFIG.stones.heldOffset;
-      const target = nearestThrowTarget(room, player);
-      let targetId: string | null = null;
-      let endX: number, endZ: number;
-      if (target) {
-        targetId = target.id;
-        const targetDistance = Math.hypot(target.x - player.x, target.z - player.z);
-        const estimatedFlightMs = Math.max(FISH_CONFIG.stones.minFlightMs,
-          Math.min(FISH_CONFIG.stones.maxFlightMs, FISH_CONFIG.stones.minFlightMs + targetDistance * FISH_CONFIG.stones.flightDistanceMs));
-        const lead = estimatedFlightMs / 1000 * FISH_CONFIG.stones.leadFactor;
-        ({ x: endX, z: endZ } = clampToSolidGround(
-          target.x + target.velocityX * lead,
-          target.z + target.velocityZ * lead,
-        ));
-      } else {
-        const rawX = player.x + Math.sin(player.facing) * FISH_CONFIG.stones.lobDistance;
-        const rawZ = player.z + Math.cos(player.facing) * FISH_CONFIG.stones.lobDistance;
-        ({ x: endX, z: endZ } = clampToMap(rawX, rawZ));
-      }
-      if (target) player.facing = Math.atan2(endX - player.x, endZ - player.z);
+      const rawX = player.x + Math.sin(player.facing) * FISH_CONFIG.stones.lobDistance;
+      const rawZ = player.z + Math.cos(player.facing) * FISH_CONFIG.stones.lobDistance;
+      const { x: endX, z: endZ } = clampToMap(rawX, rawZ);
+      const target = [...room.players.values()]
+        .filter((candidate) => candidate.id !== player.id && candidate.disconnectedAt === null)
+        .map((candidate) => ({ candidate, distance: Math.hypot(candidate.x - endX, candidate.z - endZ) }))
+        .filter(({ distance }) => distance <= FISH_CONFIG.stones.hitRadius)
+        .sort((a, b) => a.distance - b.distance)[0]?.candidate;
+      const targetId = target?.id ?? null;
       const c = Math.cos(player.facing), s = Math.sin(player.facing);
       const start = {
         x: player.x + c * offset.x + s * offset.z,
@@ -512,7 +507,7 @@ wss.on('connection', (socket) => {
       player.reelStartedAt = now;
       player.biteDeadline = null;
       broadcast(room, { type: 'reel_state', playerId: player.id, active: true });
-      const params = calculateReelParameters(candidate.species, candidate.weightKg);
+      const params = calculateReelParameters(candidate.species, candidate.weightKg, room.weather.type);
       if (isDev) {
         const table = Object.entries(candidate.probabilities).map(([id, probability]) => `${id}: ${(probability * 100).toFixed(2)}%`).join(', ');
         console.info(`[fish-roll] room=${room.id} depth=${candidate.zone} quick=${quickReaction} pity=${player.pityMisses} { ${table} } => ${candidate.species}`);
@@ -591,11 +586,13 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.all()) {
+    updateWeather(room, now);
     let changed = false;
     for (const player of room.players.values()) {
       if (player.fishing === 'casting' && player.cast && now >= player.cast.startTime + player.cast.flightSeconds * 1000) {
         player.fishing = 'waiting';
-        player.biteAt = now + FISH_CONFIG.bite.minWaitMs + Math.random() * (FISH_CONFIG.bite.maxWaitMs - FISH_CONFIG.bite.minWaitMs);
+        const baseWait = FISH_CONFIG.bite.minWaitMs + Math.random() * (FISH_CONFIG.bite.maxWaitMs - FISH_CONFIG.bite.minWaitMs);
+        player.biteAt = now + baseWait * WEATHER_CONFIG.states[room.weather.type].fishing.biteWaitMultiplier;
         changed = true;
       } else if (player.fishing === 'waiting' && player.biteAt !== null && player.biteAt <= now) {
         player.fishing = 'bite';
@@ -603,7 +600,7 @@ setInterval(() => {
         player.biteDeadline = now + FISH_CONFIG.bite.reactionWindowMs + 100 + Math.min(250, player.latencyRttMs / 2);
         const depthRadius = player.cast ? Math.hypot(player.cast.targetX, player.cast.targetZ) : FISH_CONFIG.pond.waterRadius * 0.5;
         const rollCandidate = (quick: boolean) => {
-          const result = rollSpecies(depthRadius, { pityMisses: player.pityMisses, lastSpecies: player.lastSpecies }, quick);
+          const result = rollSpecies(depthRadius, { pityMisses: player.pityMisses, lastSpecies: player.lastSpecies }, quick, Math.random(), room.weather.type);
           return { species: result.species.id, weightKg: rollWeight(result.species), probabilities: result.probabilities, zone: result.zone };
         };
         // Both reaction-adjusted outcomes are sampled now; the server picks

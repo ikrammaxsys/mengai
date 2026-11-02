@@ -5,7 +5,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; backgro
 button, input { font: inherit; }
 #app, #game { width: 100%; height: 100%; position: relative; }
 #game { position: absolute; inset: 0; }
-#game canvas { display: block; width: 100%; height: 100%; }
+#game canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+#game canvas.is-turning { cursor: none; }
 .screen-card { position: fixed; z-index: 30; width: min(420px, calc(100vw - 36px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 38px 40px 28px; border: 1px solid rgba(255,255,255,.8); border-radius: 24px; background: rgba(255,255,255,.94); box-shadow: 0 24px 80px rgba(37,83,77,.18); }
 .eyebrow { color: #71918a; font-size: 10px; letter-spacing: .16em; font-weight: 700; }
 h1 { margin: 12px 0 10px; font: 800 42px/1.06 'Trebuchet MS', 'Segoe UI', sans-serif; letter-spacing: -.055em; color: #21403c; }
@@ -44,8 +45,19 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .hud-card { position: absolute; top: 22px; background: rgba(255,255,255,.91); border: 1px solid rgba(255,255,255,.8); border-radius: 13px; box-shadow: 0 5px 20px rgba(47,86,81,.08); backdrop-filter: blur(8px); }
 .room-card { left: 22px; padding: 10px 15px; }
 .room-card strong { display: block; font: 700 15px 'Trebuchet MS', 'Segoe UI', sans-serif; margin-top: 3px; }
-.people-card { left: 155px; height: 48px; padding: 0 14px; display: flex; align-items: center; gap: 7px; color: #637e77; font-size: 12px; }
+.people-card { left: 155px; height: 48px; padding: 0 11px; display: flex; align-items: center; gap: 9px; color: #637e77; font-size: 12px; }
+.people-count { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .people-card strong { color: #274b43; font-size: 14px; }
+.weather-control { position: relative; padding-left: 8px; border-left: 1px solid #dce9e3; pointer-events: auto; }
+.weather-badge { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #e5eee6; border-radius: 9px; background: #f8fbf6; color: #4c6a5b; box-shadow: none; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.weather-badge:hover, .weather-badge:focus-visible { background: #eef6ed; transform: none; }
+.weather-badge-icon { font-size: 13px; }
+.weather-caret { color: #82998a; font-size: 12px; }
+.weather-tooltip { position: absolute; z-index: 35; top: calc(100% + 8px); left: 0; display: none; width: max-content; max-width: min(250px, calc(100vw - 28px)); padding: 9px 11px; border: 1px solid rgba(255,255,255,.8); border-radius: 10px; background: rgba(40,62,53,.96); box-shadow: 0 6px 18px rgba(31,56,46,.24); color: #f2f8ed; font-size: 10px; font-weight: 600; line-height: 1.45; white-space: normal; pointer-events: auto; }
+.weather-debug-control { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(237,248,235,.2); color: #d3e6d6; font-size: 9px; font-weight: 700; }
+.weather-debug-control select { width: 100%; min-height: 30px; border: 1px solid rgba(237,248,235,.35); border-radius: 7px; padding: 4px 7px; background: #f8fbf6; color: #355447; font: inherit; font-size: 10px; }
+.weather-control:focus-within .weather-tooltip, .weather-control.is-open .weather-tooltip { display: block; }
+@media (hover: hover) { .weather-control:hover .weather-tooltip { display: block; } }
 .people-dot, .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: #4db890; }
 .connection-card { position: absolute; right: 22px; top: 22px; display: flex; align-items: center; gap: 7px; padding: 11px 14px; color: #627c75; font-size: 12px; }
 .view-toggle { pointer-events: auto; position: absolute; top: 82px; right: 22px; height: 36px; padding: 0 11px; border: 1px solid rgba(255,255,255,.85); border-radius: 10px; background: rgba(255,255,255,.93); color: #31564d; box-shadow: 0 4px 14px rgba(47,86,81,.12); font-size: 10px; text-align: center; }
@@ -212,6 +224,8 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .held-fish-chip:hover { background: white; transform: translateY(-1px); }
 .held-fish-chip img { width: 29px; height: 18px; object-fit: contain; }
 .campfire-cook-status { position: fixed; z-index: 7; display: flex; flex-direction: column; gap: 6px; width: min(220px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid rgba(235,191,112,.8); border-radius: 12px; background: rgba(255,250,235,.96); box-shadow: 0 5px 16px rgba(73,53,28,.2); color: #775c37; transform: translate(-50%, -100%); pointer-events: none; }
+.campfire-interaction-prompt { position: fixed; z-index: 8; display: flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid rgba(255,230,170,.8); border-radius: 10px; background: rgba(43,55,43,.94); box-shadow: 0 5px 16px rgba(45,36,20,.3); color: #fff8e8; transform: translate(-50%, -100%); pointer-events: none; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.campfire-interaction-prompt kbd { display: grid; place-items: center; min-width: 20px; height: 20px; border: 1px solid rgba(255,255,255,.5); border-bottom-width: 2px; border-radius: 5px; background: #fff8e8; color: #684b29; font: 800 11px 'Trebuchet MS', 'Segoe UI', sans-serif; }
 .campfire-cook-title { overflow: hidden; color: #715637; font-size: 10px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .campfire-cook-progress { height: 7px; overflow: hidden; border: 1px solid #edd6a9; border-radius: 99px; background: #f4e7cb; }
 .campfire-cook-progress-fill { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f1ab4f, #cf7441); transition: width .08s linear; }
@@ -238,6 +252,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .big-catch-banner { top: 76px; }
 #app.has-big-catch .leaderboard-panel, #app.has-big-catch .backpack-panel { top: 204px; }
 @media (max-width: 640px) {
+  .weather-tooltip { right: 0; left: auto; }
   .big-catch-banner { top: 130px; width: calc(100vw - 24px); }
   #app.has-big-catch .leaderboard-panel, #app.has-big-catch .backpack-panel { top: 210px; max-height: calc(100vh - 226px); }
   .fish-viewer { padding: 12px; }
@@ -248,4 +263,4 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 }
 @media (min-width: 641px) and (max-width: 800px) { .big-catch-banner { top: 130px; } #app.has-big-catch .leaderboard-panel, #app.has-big-catch .backpack-panel { top: 210px; max-height: calc(100vh - 226px); } }
 @keyframes catch-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (max-width: 520px) { .screen-card { padding: 30px 25px 23px; } h1 { font-size: 36px; } .hud-card { top: 12px; } .room-card { left: 12px; } .people-card { left: 128px; } .connection-card { right: 12px; top: 73px; } .view-toggle { top: 22px; right: 12px; } .controls { width: calc(100vw - 24px); bottom: 12px; font-size: 9px; padding: 8px; gap: 3px; row-gap: 4px; flex-wrap: wrap; justify-content: center; white-space: normal; transform: translateX(-50%); } .fish-prompt { bottom: 65px; } .reel-game { bottom: 51px; padding: 9px 11px 7px; } .chat-toggle { right: 12px; bottom: 12px; height: 39px; } .chat-panel { right: 12px; width: min(320px, calc(100vw - 24px)); height: min(68vh, 470px); } .leaderboard-toggle { left: 12px; top: 70px; } .leaderboard-panel { left: 12px; top: 164px; width: min(350px, calc(100vw - 24px)); } .backpack-toggle { left: 12px; top: 116px; } .backpack-panel { left: 12px; top: 164px; width: min(360px, calc(100vw - 24px)); max-height: min(68vh, 560px); } .collection-item img { width: 36px; } .catch-popup { left: 12px; bottom: 60px; } }
+@media (max-width: 520px) { .screen-card { padding: 30px 25px 23px; } h1 { font-size: 36px; } .hud-card { top: 12px; } .room-card { left: 12px; } .people-card { left: 128px; } .people-count > span:last-child { display: none; } .connection-card { right: 12px; top: 73px; } .view-toggle { top: 164px; right: 12px; } .controls { width: calc(100vw - 24px); bottom: 12px; font-size: 9px; padding: 8px; gap: 3px; row-gap: 4px; flex-wrap: wrap; justify-content: center; white-space: normal; transform: translateX(-50%); } .fish-prompt { bottom: 65px; } .reel-game { bottom: 51px; padding: 9px 11px 7px; } .chat-toggle { right: 12px; bottom: 12px; height: 39px; } .chat-panel { right: 12px; width: min(320px, calc(100vw - 24px)); height: min(68vh, 470px); } .leaderboard-toggle { left: 12px; top: 70px; } .leaderboard-panel { left: 12px; top: 164px; width: min(350px, calc(100vw - 24px)); } .backpack-toggle { left: 12px; top: 116px; } .backpack-panel { left: 12px; top: 164px; width: min(360px, calc(100vw - 24px)); max-height: min(68vh, 560px); } .collection-item img { width: 36px; } .catch-popup { left: 12px; bottom: 60px; } }

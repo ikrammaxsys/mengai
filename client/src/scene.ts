@@ -5,10 +5,12 @@ import { createFishModel } from './fishModels';
 import { ChickenFlock } from './chickenFlock';
 import { WORLD_CONFIG } from '../../shared/worldConfig';
 import { Campfire } from './campfire';
+import { WeatherEffects } from './weatherEffects';
+import type { WeatherSnapshot } from '../../shared/weatherConfig';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
@@ -36,10 +38,15 @@ export class GameScene {
   private correctionRemaining = 0;
   private interpolationUnderruns = 0;
   private island!: THREE.Group;
+  private ambientLight!: THREE.HemisphereLight;
+  private directionalLight!: THREE.DirectionalLight;
+  private waterGeometry!: THREE.BufferGeometry;
+  private waterMaterial!: THREE.MeshStandardMaterial;
   private firstPersonView = false;
   private heldFishClickHandler?: (playerId: string, catchId: string) => void;
   private readonly chickens: ChickenFlock;
   private readonly campfire: Campfire;
+  private readonly weatherEffects: WeatherEffects;
 
   constructor(container: HTMLElement, labels: HTMLElement) {
     this.labels = labels;
@@ -59,6 +66,7 @@ export class GameScene {
     this.camera.position.set(0, 14, 18);
     this.camera.lookAt(0, 0, 0);
     this.buildWorld();
+    this.weatherEffects = new WeatherEffects(this.scene, this.ambientLight, this.directionalLight, this.waterGeometry, this.waterMaterial);
     this.chickens = new ChickenFlock(this.scene);
     this.campfire = new Campfire(this.scene, this.labels);
     window.addEventListener('resize', this.onResize);
@@ -67,17 +75,18 @@ export class GameScene {
   private material(color: string, roughness = 1): THREE.MeshStandardMaterial { return new THREE.MeshStandardMaterial({ color, roughness, flatShading: true }); }
 
   private buildWorld(): void {
-    this.scene.add(new THREE.HemisphereLight('#f4fff4', '#8aa69a', 2.15));
-    const sun = new THREE.DirectionalLight('#fff6d9', 3.3);
-    sun.position.set(-12, 22, 10);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.00015;
-    sun.shadow.normalBias = 0.035;
-    sun.shadow.radius = 3;
-    sun.shadow.camera.left = -34; sun.shadow.camera.right = 34; sun.shadow.camera.top = 34; sun.shadow.camera.bottom = -34;
-    sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
-    this.scene.add(sun);
+    this.ambientLight = new THREE.HemisphereLight('#f4fff4', '#8aa69a', 2.15);
+    this.scene.add(this.ambientLight);
+    this.directionalLight = new THREE.DirectionalLight('#fff6d9', 3.3);
+    this.directionalLight.position.set(-12, 22, 10);
+    this.directionalLight.castShadow = true;
+    this.directionalLight.shadow.mapSize.set(2048, 2048);
+    this.directionalLight.shadow.bias = -0.00015;
+    this.directionalLight.shadow.normalBias = 0.035;
+    this.directionalLight.shadow.radius = 3;
+    this.directionalLight.shadow.camera.left = -34; this.directionalLight.shadow.camera.right = 34; this.directionalLight.shadow.camera.top = 34; this.directionalLight.shadow.camera.bottom = -34;
+    this.directionalLight.shadow.camera.near = 1; this.directionalLight.shadow.camera.far = 60;
+    this.scene.add(this.directionalLight);
 
     this.island = new THREE.Group();
     this.scene.add(this.island);
@@ -87,7 +96,9 @@ export class GameScene {
     top.rotation.x = -Math.PI / 2; top.position.y = 0.015; top.receiveShadow = true; this.island.add(top);
     const shore = new THREE.Mesh(new THREE.CylinderGeometry(6.3, 6.6, 0.25, 12), this.material('#dfd09a'));
     shore.position.y = 0.08; shore.receiveShadow = true; this.island.add(shore);
-    const water = new THREE.Mesh(new THREE.CircleGeometry(4.15, 16), new THREE.MeshStandardMaterial({ color: '#5bb7c1', roughness: 0.82, metalness: 0, flatShading: true }));
+    this.waterGeometry = new THREE.CircleGeometry(4.15, 16);
+    this.waterMaterial = new THREE.MeshStandardMaterial({ color: '#5bb7c1', roughness: 0.82, metalness: 0, flatShading: true });
+    const water = new THREE.Mesh(this.waterGeometry, this.waterMaterial);
     water.rotation.x = -Math.PI / 2; water.position.y = 0.23; this.island.add(water);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(4.23, 0.13, 4, 16), this.material('#e9ddaf'));
     rim.rotation.x = Math.PI / 2; rim.position.y = 0.19; this.island.add(rim);
@@ -160,7 +171,7 @@ export class GameScene {
       if (catchId) this.heldFishClickHandler?.(player.id, catchId);
     });
     this.labels.appendChild(label);
-    const avatar: Avatar = { group, label, rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
@@ -216,6 +227,10 @@ export class GameScene {
   }
 
   setCampfireCooking(cooking: CampfireCooking | null): void { this.campfire.setCooking(cooking); }
+
+  setWeather(weather: WeatherSnapshot): void {
+    this.weatherEffects.setWeather(weather, Date.now() + this.serverClockOffset);
+  }
 
   finishCampfireCooking(cookId: string): void {
     if (this.campfire.activeCookId === cookId) this.campfire.setCooking(null);
@@ -358,8 +373,6 @@ export class GameScene {
   throwStone(message: { stoneId: string; fromId: string; targetId: string | null } & StoneFlight): void {
     const stone = this.stones.get(message.stoneId); if (!stone) return;
     stone.state = 'flying'; stone.carriedBy = null; stone.flight = message; stone.respawnAt = null;
-    const thrower = this.avatars.get(message.fromId);
-    if (thrower) thrower.targetFacing = Math.atan2(message.end.x - thrower.group.position.x, message.end.z - thrower.group.position.z);
   }
 
   landStone(message: { stoneId: string; position: { x: number; z: number }; water: boolean }): void {
@@ -540,11 +553,6 @@ export class GameScene {
     avatar.group.rotation.y = avatar.targetFacing;
   }
   localFacing(): number { return this.avatars.get(this.localId)?.targetFacing ?? 0; }
-  facePlayerToward(id: string, targetX: number, targetZ: number): void {
-    const avatar = this.avatars.get(id); if (!avatar) return;
-    avatar.targetFacing = Math.atan2(targetX - avatar.group.position.x, targetZ - avatar.group.position.z);
-  }
-
   private interpolateRemote(avatar: Avatar, renderTime: number): void {
     const samples = avatar.samples;
     if (!samples.length) return;
@@ -631,6 +639,7 @@ export class GameScene {
     const remoteRenderTime = serverNow - this.interpolationDelayMs;
     const local = this.avatars.get(this.localId);
     if (local) {
+      local.group.rotation.y += this.angleDelta(local.group.rotation.y, local.targetFacing) * 0.24;
       if (this.firstPersonView) {
         const eye = local.group.localToWorld(new THREE.Vector3(0, 1.56, 0.02));
         const facing = local.group.rotation.y;
@@ -644,6 +653,7 @@ export class GameScene {
         this.camera.lookAt(local.group.position.x, 0.8, local.group.position.z);
       }
     }
+    this.camera.updateMatrixWorld();
     for (const [id, avatar] of this.avatars) {
       avatar.rod.rotation.z = -0.42 + (avatar.reelActive ? 0.12 + Math.sin(Date.now() * 0.006) * 0.035 : 0);
       if (avatar.heldModel) {
@@ -652,11 +662,7 @@ export class GameScene {
         const wiggle = Math.sin(serverNow * 0.0061 + avatar.group.position.x * 2.1);
         avatar.heldModel.rotation.x = wiggle > 0.94 ? (wiggle - 0.94) * 0.35 : 0;
       }
-      if (avatar.local) {
-        avatar.group.rotation.y += this.angleDelta(avatar.group.rotation.y, avatar.targetFacing) * 0.24;
-      } else {
-        this.interpolateRemote(avatar, remoteRenderTime);
-      }
+      if (!avatar.local) this.interpolateRemote(avatar, remoteRenderTime);
       const bonk = this.bonks.get(id);
       if (bonk) {
         const elapsed = performance.now() - bonk.startedAt;
@@ -672,11 +678,10 @@ export class GameScene {
       } else avatar.group.rotation.z = 0;
       this.renderCast(avatar, serverNow);
       this.ray.set(avatar.group.position.x, 2.2, avatar.group.position.z).project(this.camera);
-      avatar.label.style.left = `${(this.ray.x * 0.5 + 0.5) * innerWidth}px`;
-      avatar.label.style.top = `${(-this.ray.y * 0.5 + 0.5) * innerHeight}px`;
-      avatar.label.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
+      avatar.label.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
+      avatar.label.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
       avatar.label.style.display = avatar.local && this.firstPersonView || this.ray.z > 1 ? 'none' : 'block';
-      // Label contents are rebuilt with current state while keeping the held-fish chip clickable.
+      // Rebuild label contents only when the player's visible state changes, not on every animation frame.
       const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
       const leaderTitle = isLeader ? '<span class="leader-title"><span aria-hidden="true">👑</span><strong>Kapla Mengai</strong></span>' : '';
       const fish = avatar.holdingFish;
@@ -684,7 +689,11 @@ export class GameScene {
       const fishChip = fish && fishSpecies
         ? `<button class="held-fish-chip" data-catch-id="${this.escape(fish.catchId)}" style="--rarity-color:${fishSpecies.rarityColor}" type="button">🐟 ${this.escape(fishSpecies.name)} · ${fish.weightKg.toFixed(1)} kg</button>`
         : '';
-      avatar.label.innerHTML = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}</span>${fishChip}`;
+      const labelMarkup = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}</span>${fishChip}`;
+      if (avatar.renderedLabelMarkup !== labelMarkup) {
+        avatar.label.innerHTML = labelMarkup;
+        avatar.renderedLabelMarkup = labelMarkup;
+      }
       const bubble = this.chatBubbles.get(id);
       if (bubble) {
         if (bubble.expiresAt <= performance.now()) {
@@ -693,7 +702,6 @@ export class GameScene {
         } else {
           bubble.element.style.left = avatar.label.style.left;
           bubble.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 10}px`;
-          bubble.element.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
           bubble.element.style.display = avatar.label.style.display;
         }
       }
@@ -710,14 +718,14 @@ export class GameScene {
         } else {
           eatBubble.element.style.left = avatar.label.style.left;
           eatBubble.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 32}px`;
-          eatBubble.element.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
           eatBubble.element.style.display = avatar.label.style.display;
         }
       }
     }
     this.renderStones(serverNow);
     this.chickens.render(serverNow);
-    this.campfire.render(serverNow, this.camera);
+    this.campfire.render(serverNow, this.camera, this.getPosition());
+    this.weatherEffects.update(serverNow, this.camera);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -763,9 +771,8 @@ export class GameScene {
       }
     }
 
-    this.stoneHint.classList.add('hidden');
-    const local = this.avatars.get(this.localId);
-    if (!local || local.fishing !== 'idle') return;
+      const local = this.avatars.get(this.localId);
+    if (!local || local.fishing !== 'idle') { this.stoneHint.classList.add('hidden'); return; }
     let hintPosition: THREE.Vector3 | null = null;
     if (this.carryingStoneId(this.localId)) {
       hintPosition = local.group.localToWorld(new THREE.Vector3(0, 2.3, 0));
@@ -777,14 +784,16 @@ export class GameScene {
     }
     if (hintPosition) {
       this.ray.copy(hintPosition).project(this.camera);
-      this.stoneHint.style.left = `${(this.ray.x * 0.5 + 0.5) * innerWidth}px`;
-      this.stoneHint.style.top = `${(-this.ray.y * 0.5 + 0.5) * innerHeight}px`;
+      this.stoneHint.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
+      this.stoneHint.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
       this.stoneHint.style.display = this.ray.z > 1 ? 'none' : 'block';
       this.stoneHint.classList.remove('hidden');
-    }
+    } else this.stoneHint.classList.add('hidden');
   }
 
-  private escape(value: string): string { const element = document.createElement('span'); element.textContent = value; return element.innerHTML; }
+  private escape(value: string): string {
+    return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+  }
   private angleDelta(a: number, b: number): number { return Math.atan2(Math.sin(b - a), Math.cos(b - a)); }
   private onResize = (): void => { this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setSize(innerWidth, innerHeight); };
 }

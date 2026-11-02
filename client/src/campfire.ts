@@ -8,6 +8,7 @@ export class Campfire {
   private readonly group = new THREE.Group();
   private readonly flames: THREE.Mesh[] = [];
   private readonly firelight: THREE.PointLight;
+  private readonly interactionPrompt: HTMLDivElement;
   private readonly cookStatus: HTMLDivElement;
   private readonly cookTitle: HTMLElement;
   private readonly cookProgress: HTMLElement;
@@ -75,6 +76,14 @@ export class Campfire {
     this.firelight = new THREE.PointLight('#ff9d50', 2.3, 11, 2);
     this.firelight.position.set(0, 1.05, 0); this.group.add(this.firelight);
 
+    this.interactionPrompt = document.createElement('div');
+    this.interactionPrompt.className = 'campfire-interaction-prompt hidden';
+    this.interactionPrompt.setAttribute('aria-hidden', 'true');
+    const key = document.createElement('kbd'); key.textContent = 'C';
+    const instruction = document.createElement('span'); instruction.textContent = 'to cook';
+    this.interactionPrompt.append(key, instruction);
+    labels.append(this.interactionPrompt);
+
     this.cookStatus = document.createElement('div'); this.cookStatus.className = 'campfire-cook-status hidden'; this.cookStatus.setAttribute('aria-hidden', 'true');
     const heading = document.createElement('strong'); heading.className = 'campfire-cook-title';
     this.cookTitle = heading;
@@ -106,7 +115,7 @@ export class Campfire {
     this.cookStatus.classList.remove('hidden');
   }
 
-  render(now: number, camera: THREE.Camera): void {
+  render(now: number, camera: THREE.Camera, playerPosition: THREE.Vector3): void {
     const time = now * 0.001;
     for (let index = 0; index < this.flames.length; index++) {
       const flame = this.flames[index];
@@ -115,16 +124,34 @@ export class Campfire {
       flame.rotation.y = time * (index % 2 ? -0.55 : 0.42) + index;
     }
     this.firelight.intensity = 2.15 + Math.sin(time * 9) * 0.32 + Math.sin(time * 17) * 0.12;
-    if (!this.cooking) return;
-    const progress = Math.max(0, Math.min(1, (now - this.cooking.startedAt) / this.cooking.durationMs));
-    const percent = Math.round(progress * 100);
-    this.cookProgressFill.style.width = `${percent}%`;
-    this.cookProgress.setAttribute('aria-valuenow', String(percent));
-    const anchor = new THREE.Vector3(WORLD_CONFIG.campfire.x, 2.72, WORLD_CONFIG.campfire.z).project(camera);
-    this.cookStatus.style.left = `${(anchor.x * 0.5 + 0.5) * innerWidth}px`;
-    this.cookStatus.style.top = `${(-anchor.y * 0.5 + 0.5) * innerHeight}px`;
-    this.cookStatus.style.zIndex = String(Math.round((1 - anchor.z) * 1000));
-    this.cookStatus.style.display = anchor.z > 1 ? 'none' : 'flex';
+    const nearby = Math.hypot(playerPosition.x - WORLD_CONFIG.campfire.x, playerPosition.z - WORLD_CONFIG.campfire.z) <= WORLD_CONFIG.campfire.useRadius;
+    this.interactionPrompt.classList.toggle('hidden', !nearby || this.cooking !== null);
+
+    if (this.cooking) {
+      const progress = Math.max(0, Math.min(1, (now - this.cooking.startedAt) / this.cooking.durationMs));
+      const percent = Math.round(progress * 100);
+      this.cookProgressFill.style.width = `${percent}%`;
+      this.cookProgress.setAttribute('aria-valuenow', String(percent));
+    }
+
+    if (nearby || this.cooking) {
+      const anchor = new THREE.Vector3(WORLD_CONFIG.campfire.x, 2.35, WORLD_CONFIG.campfire.z).project(camera);
+      const visible = anchor.z <= 1 && Math.abs(anchor.x) <= 1.2 && Math.abs(anchor.y) <= 1.2;
+      const left = `${(anchor.x * 0.5 + 0.5) * innerWidth}px`;
+      const top = `${(-anchor.y * 0.5 + 0.5) * innerHeight}px`;
+      const zIndex = String(Math.round((1 - anchor.z) * 1000));
+      this.interactionPrompt.style.left = left;
+      this.interactionPrompt.style.top = top;
+      this.interactionPrompt.style.zIndex = zIndex;
+      this.interactionPrompt.style.display = visible && nearby && !this.cooking ? 'flex' : 'none';
+      this.cookStatus.style.left = left;
+      this.cookStatus.style.top = top;
+      this.cookStatus.style.zIndex = zIndex;
+      this.cookStatus.style.display = visible && this.cooking ? 'flex' : 'none';
+    } else {
+      this.interactionPrompt.style.display = 'none';
+      this.cookStatus.style.display = 'none';
+    }
   }
 
   private removeCookedFish(): void {

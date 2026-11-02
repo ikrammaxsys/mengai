@@ -6,6 +6,7 @@ import { FishViewer } from './fishViewer';
 import { FISH_CONFIG, reelParametersForDifficulty, type FishSpeciesId, type ReelParameters } from '../../shared/fishConfig';
 import { ReelGame } from './reelGame';
 import { MOVEMENT_RULES, stepMovement } from '../../shared/movement';
+import { isWeatherType, WEATHER_CONFIG, type WeatherSnapshot, type WeatherType } from '../../shared/weatherConfig';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const form = document.querySelector<HTMLFormElement>('#join-form')!;
@@ -26,6 +27,13 @@ const whatsNew = document.querySelector<HTMLElement>('#whats-new')!;
 const whatsNewClose = document.querySelector<HTMLButtonElement>('#whats-new-close')!;
 const whatsNewDismiss = document.querySelector<HTMLButtonElement>('#whats-new-dismiss')!;
 const toast = document.querySelector<HTMLElement>('#toast')!;
+const weatherControl = document.querySelector<HTMLElement>('#weather-control')!;
+const weatherBadge = document.querySelector<HTMLButtonElement>('#weather-badge')!;
+const weatherIcon = document.querySelector<HTMLElement>('#weather-icon')!;
+const weatherName = document.querySelector<HTMLElement>('#weather-name')!;
+const weatherHint = document.querySelector<HTMLElement>('#weather-hint')!;
+const weatherDebugControl = document.querySelector<HTMLElement>('#weather-debug-control')!;
+const weatherDebugSelect = document.querySelector<HTMLSelectElement>('#weather-debug-select')!;
 const fishPrompt = document.querySelector<HTMLElement>('#fish-prompt')!;
 const chatUi = document.querySelector<HTMLElement>('#chat-ui')!;
 const chatToggle = document.querySelector<HTMLButtonElement>('#chat-toggle')!;
@@ -74,8 +82,10 @@ const reelResult = document.querySelector<HTMLElement>('#reel-result')!;
 const netDebug = document.querySelector<HTMLElement>('#net-debug')!;
 const netDebugEnabled = import.meta.env.DEV && new URLSearchParams(location.search).has('netdebug');
 if (netDebugEnabled) netDebug.classList.remove('hidden');
+if (import.meta.env.DEV) weatherDebugControl.classList.remove('hidden');
 
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
+const gameCanvas = scene.renderer.domElement;
 const fishArt = new FishArt(document.querySelector<HTMLCanvasElement>('#catch-fish-canvas')!);
 let currentLeaderboard: CatchEntry[] = [];
 let inventoryItems: InventoryItem[] = [];
@@ -98,6 +108,7 @@ let currentRoom = '';
 let availableRooms: { room: string; playerCount: number }[] = [];
 let roomPollTimer = 0;
 let keys = new Set<string>();
+let mouseTurnRemaining = 0;
 let lastFrame = performance.now();
 let movementSequence = 0;
 let lastMovementSentAt = 0;
@@ -109,6 +120,8 @@ let unreadMessages = 0;
 let currentCatch: CatchEntry | null = null;
 let serverClockOffset = 0;
 let hasServerClockSample = false;
+let currentWeather: WeatherSnapshot | null = null;
+let pendingDebugWeather: WeatherType | null = null;
 let reelGame: ReelGame | null = null;
 let reelHideTimer = 0;
 let reelAttempts = 0;
@@ -118,6 +131,11 @@ const forcedDifficulty = (() => {
   const value = Number(new URLSearchParams(location.search).get('reelDifficulty'));
   return Number.isFinite(value) && new URLSearchParams(location.search).has('reelDifficulty') ? Math.max(0, Math.min(1, value)) : null;
 })();
+const forcedWeather = (() => {
+  if (!import.meta.env.DEV) return null;
+  const value = new URLSearchParams(location.search).get('weather');
+  return isWeatherType(value) ? value : null;
+})();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
 
 function showToast(message: string): void {
@@ -126,6 +144,33 @@ function showToast(message: string): void {
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2600);
 }
+
+function updateWeatherBadge(): void {
+  if (!currentWeather) return;
+  const state = WEATHER_CONFIG.states[currentWeather.type];
+  const minutesLeft = Math.max(0, Math.ceil((currentWeather.endsAt - (Date.now() + serverClockOffset)) / 60_000));
+  weatherIcon.textContent = state.emoji;
+  weatherName.textContent = state.name;
+  weatherBadge.setAttribute('aria-label', `Weather: ${state.name}`);
+  weatherHint.textContent = `${state.emoji} ${state.name} · ${minutesLeft} min left — ${state.hint}`;
+}
+
+function applyWeather(weather: WeatherSnapshot, announce: boolean): void {
+  currentWeather = weather;
+  scene.setWeather(weather);
+  weatherDebugSelect.value = weather.type;
+  updateWeatherBadge();
+  if (announce) showToast(WEATHER_CONFIG.states[weather.type].toast);
+}
+
+function setMengaiWeather(weather: unknown): boolean {
+  if (!import.meta.env.DEV || !isWeatherType(weather)) return false;
+  if (joined) network.setDebugWeather(weather);
+  else pendingDebugWeather = weather;
+  return true;
+}
+
+if (import.meta.env.DEV) Object.assign(window, { setMengaiWeather });
 
 function closeWhatsNew(): void {
   whatsNew.classList.add('hidden');
@@ -637,6 +682,7 @@ function join(room: string, name: string): void {
   network = new Network({
     joined: (message) => {
       observeServerTime(message.serverTime);
+      applyWeather(message.weather, false);
       selfId = message.selfId;
       movementSequence = 0; lastSentMotion = null; lastMovementSentAt = 0; lastMovementHeartbeatAt = 0;
       currentRoom = message.room;
@@ -670,6 +716,9 @@ function join(room: string, name: string): void {
       backpackToggle.setAttribute('aria-expanded', 'false');
       updateCount();
       joined = true;
+      const debugWeather = pendingDebugWeather ?? forcedWeather;
+      pendingDebugWeather = null;
+      if (debugWeather) network.setDebugWeather(debugWeather);
       if (roomPollTimer) window.clearInterval(roomPollTimer);
       roomPollTimer = 0;
       joinScreen.classList.add('hidden');
@@ -745,6 +794,7 @@ function join(room: string, name: string): void {
       const species = speciesConfig(event.cooking.fish.species);
       for (const playerId of event.recipientIds) scene.showEatBubble(playerId, species.name);
     },
+    weatherChanged: (weather) => applyWeather(weather, true),
     announcement: showToast,
     chat: (message) => {
       scene.showChatBubble(message.playerId, message.text);
@@ -752,16 +802,14 @@ function join(room: string, name: string): void {
     },
     bigCatch: enqueueBigCatch,
     stonePicked: (stoneId, playerId) => scene.pickStone(stoneId, playerId),
-    stoneThrown: (message) => {
-      scene.throwStone(message);
-      scene.facePlayerToward(message.fromId, message.end.x, message.end.z);
-    },
+    stoneThrown: (message) => scene.throwStone(message),
     stoneLanded: (message) => scene.landStone(message),
     stoneRespawn: (message) => scene.respawnStone(message.stoneId, message.position),
     stoneHit: (playerId) => scene.showBonk(playerId),
     chickenHit: (message) => scene.hitChicken(message),
     disconnected: () => {
       joined = false;
+      cancelMouseTurn();
       scene.clearPlayers();
       chatUi.classList.add('hidden');
       setChatOpen(false);
@@ -819,6 +867,22 @@ createRoomButton.addEventListener('click', () => {
   else nameInput.focus();
 });
 startRoomPolling();
+window.setInterval(updateWeatherBadge, 1000);
+
+weatherBadge.addEventListener('click', () => {
+  const open = weatherControl.classList.toggle('is-open');
+  weatherBadge.setAttribute('aria-expanded', String(open));
+  if (!open) weatherBadge.blur();
+});
+weatherDebugSelect.addEventListener('change', () => {
+  if (joined && isWeatherType(weatherDebugSelect.value)) network.setDebugWeather(weatherDebugSelect.value);
+});
+document.addEventListener('click', (event) => {
+  if (weatherControl.contains(event.target as Node)) return;
+  weatherControl.classList.remove('is-open');
+  weatherBadge.setAttribute('aria-expanded', 'false');
+  if (document.activeElement instanceof HTMLElement && weatherControl.contains(document.activeElement)) document.activeElement.blur();
+});
 
 chatToggle.addEventListener('click', () => setChatOpen(chatPanel.classList.contains('hidden')));
 chatClose.addEventListener('click', () => setChatOpen(false));
@@ -847,6 +911,31 @@ chatForm.addEventListener('submit', (event) => {
   chatInput.focus();
 });
 
+function cancelMouseTurn(): void {
+  if (document.pointerLockElement === gameCanvas) document.exitPointerLock();
+  mouseTurnRemaining = 0;
+  gameCanvas.classList.remove('is-turning');
+}
+
+gameCanvas.addEventListener('pointerdown', (event) => {
+  if (!joined || reelGame || scene.fishingState() !== 'idle' || event.pointerType !== 'mouse' || event.button !== 0) return;
+  if (document.pointerLockElement === gameCanvas) return;
+  event.preventDefault();
+  try { void Promise.resolve(gameCanvas.requestPointerLock()).catch(() => {}); }
+  catch { showToast('Mouse look could not be enabled. Use A/D to turn.'); }
+});
+gameCanvas.addEventListener('pointermove', (event) => {
+  if (document.pointerLockElement !== gameCanvas || !joined || reelGame || scene.fishingState() !== 'idle') return;
+  mouseTurnRemaining = Math.max(-0.5, Math.min(0.5, mouseTurnRemaining + event.movementX * 0.006));
+  event.preventDefault();
+});
+document.addEventListener('pointerlockchange', () => {
+  const locked = document.pointerLockElement === gameCanvas;
+  gameCanvas.classList.toggle('is-turning', locked);
+  if (!locked) mouseTurnRemaining = 0;
+});
+document.addEventListener('pointerlockerror', () => showToast('Mouse look could not be enabled. Use A/D to turn.'));
+
 const keyNames: Record<string, string> = { ArrowUp: 'w', ArrowDown: 's', ArrowLeft: 'a', ArrowRight: 'd', ' ': 'space' };
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !whatsNew.classList.contains('hidden')) {
@@ -860,7 +949,8 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Escape') {
     event.preventDefault();
-    if (!chatPanel.classList.contains('hidden') && chatPanel.contains(document.activeElement)) setChatOpen(false);
+    if (document.pointerLockElement === gameCanvas) cancelMouseTurn();
+    else if (!chatPanel.classList.contains('hidden') && chatPanel.contains(document.activeElement)) setChatOpen(false);
     else if (!backpackPanel.classList.contains('hidden')) setBackpackOpen(false);
     else if (!leaderboardPanel.classList.contains('hidden')) {
       leaderboardPanel.classList.add('hidden'); leaderboardToggle.setAttribute('aria-expanded', 'false');
@@ -957,12 +1047,14 @@ window.addEventListener('keyup', (event) => {
 });
 window.addEventListener('blur', () => {
   const wasMoving = hasForwardInput();
+  cancelMouseTurn();
   keys.clear(); reelGame?.setHeld(false);
   if (wasMoving) sendLocalMovement(true);
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     const wasMoving = hasForwardInput();
+    cancelMouseTurn();
     keys.clear(); reelGame?.setHeld(false);
     if (wasMoving) sendLocalMovement(true);
   }
@@ -981,7 +1073,14 @@ function animate(now: number): void {
   if (joined) scene.stepCorrection(delta);
   if (joined && !reelGame && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
-    const turn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
+    const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
+    let turn = keyboardTurn;
+    if (keyboardTurn === 0 && mouseTurnRemaining !== 0 && delta > 0) {
+      const maxTurn = MOVEMENT_RULES.turnSpeedRadians * delta * 1.35;
+      const mouseStep = Math.max(-maxTurn, Math.min(maxTurn, mouseTurnRemaining));
+      mouseTurnRemaining -= mouseStep;
+      turn = mouseStep / (MOVEMENT_RULES.turnSpeedRadians * delta);
+    } else if (keyboardTurn !== 0) mouseTurnRemaining = 0;
     const position = scene.getPosition();
     const next = stepMovement({ x: position.x, z: position.z, rotY: scene.localFacing() }, forward, turn, delta);
     scene.setLocalMotion(next.x, next.z, next.rotY);

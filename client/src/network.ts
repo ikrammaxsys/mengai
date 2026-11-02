@@ -1,5 +1,6 @@
 import type { FishRarity, FishSpeciesId, ReelParameters } from '../../shared/fishConfig';
 import { FISH_CONFIG } from '../../shared/fishConfig';
+import type { WeatherSnapshot, WeatherType } from '../../shared/weatherConfig';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -112,7 +113,7 @@ export interface PlayerSnapshot {
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -143,6 +144,7 @@ type Handlers = {
   playerHolding: (playerId: string, fish: HeldFish | null) => void;
   campfireCooking: (cooking: CampfireCooking | null) => void;
   campfireCooked: (event: CampfireCookedEvent) => void;
+  weatherChanged: (weather: WeatherSnapshot) => void;
   disconnected: () => void;
 };
 
@@ -270,6 +272,7 @@ export class Network {
         case 'player_holding': this.handlers.playerHolding(String(message.playerId), message.fish as HeldFish | null); break;
         case 'campfire_cooking': this.handlers.campfireCooking(message.cooking as CampfireCooking); break;
         case 'campfire_cooked': this.handlers.campfireCooked(message as unknown as CampfireCookedEvent); break;
+        case 'weather:update': this.handlers.weatherChanged(message.weather as WeatherSnapshot); break;
       }
   }
 
@@ -324,6 +327,7 @@ export class Network {
   sendChat(text: string): void { this.send({ type: 'chat', text }); }
   pickStone(stoneId: string): void { this.send({ type: 'stone_pickup', stoneId }); }
   throwStone(): void { this.send({ type: 'stone_throw' }); }
+  setDebugWeather(weatherType: WeatherType): void { this.send({ type: 'weather:debug', weatherType }); }
   releaseFish(catchId: string): void { this.send({ type: 'inventory_release', catchId }); }
   holdFish(catchId: string | null): void { this.send({ type: 'hold_fish', catchId }); }
   cookFish(catchId: string): void { this.send({ type: 'campfire_cook', catchId }); }

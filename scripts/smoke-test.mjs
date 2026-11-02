@@ -10,7 +10,7 @@ const port = 3301;
 const dataFile = join(tmpdir(), `mengai-smoke-${process.pid}.json`);
 function startServer() {
   return spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'server/src/index.ts'], {
-    env: { ...process.env, PORT: String(port), GAME_DATA_FILE: dataFile },
+    env: { ...process.env, NODE_ENV: 'development', PORT: String(port), GAME_DATA_FILE: dataFile },
     stdio: 'ignore',
   });
 }
@@ -99,6 +99,8 @@ try {
   const river = await connect();
   river.send(JSON.stringify({ type: 'join', room: 'pond-test', name: 'River' }));
   const riverJoined = await waitFor(river, 'joined');
+  assert.equal(riverJoined.weather.type, 'clear');
+  assert.ok(riverJoined.weather.endsAt > riverJoined.weather.startedAt);
   const initialRiver = riverJoined.players.find((player) => player.id === riverJoined.selfId);
   river.moveSeq = 0;
   assert.ok(riverJoined.stones.some((stone) => stone.id === 'pebble-3' && stone.state === 'ground'));
@@ -106,6 +108,7 @@ try {
   const skye = await connect();
   skye.send(JSON.stringify({ type: 'join', room: 'pond-test', name: 'Skye' }));
   const skyeJoined = await waitFor(skye, 'joined');
+  assert.deepEqual(skyeJoined.weather, riverJoined.weather, 'room join snapshots should carry the same server weather');
   skye.moveSeq = 0;
   await waitFor(river, 'player_joined');
   const roomsResponse = await fetch(`http://127.0.0.1:${port}/api/rooms`);
@@ -122,6 +125,17 @@ try {
   const separateJoined = await waitFor(separate, 'joined');
   assert.equal(separateJoined.players.length, 1);
   assert.equal(separate.messages.some((message) => message.type === 'player_joined'), false);
+
+  river.send(JSON.stringify({ type: 'weather:debug', weatherType: 'storm' }));
+  const riverStorm = await waitFor(river, 'weather:update', (message) => message.weather.type === 'storm');
+  const skyeStorm = await waitFor(skye, 'weather:update', (message) => message.weather.type === 'storm');
+  assert.deepEqual(riverStorm.weather, skyeStorm.weather, 'all room members should receive the same weather state');
+  assert.equal(separate.messages.some((message) => message.type === 'weather:update'), false, 'weather updates must stay in their room');
+  river.send(JSON.stringify({ type: 'weather:debug', weatherType: 'clear' }));
+  await Promise.all([
+    waitFor(river, 'weather:update', (message) => message.weather.type === 'clear' && message.weather.startedAt > riverStorm.weather.startedAt),
+    waitFor(skye, 'weather:update', (message) => message.weather.type === 'clear' && message.weather.startedAt > skyeStorm.weather.startedAt),
+  ]);
 
   river.send(JSON.stringify({ type: 'fish_cast', targetX: 0, targetZ: 1.5 }));
   assert.match((await waitFor(river, 'notice')).message, /Move closer/i);
@@ -153,10 +167,20 @@ try {
   assert.ok(movedRiver, 'missing authoritative movement snapshot');
   const movedSkye = [...skye.messages].reverse().find((message) => message.type === 'state')?.players.find((player) => player.id === skyeJoined.selfId);
   assert.ok(movedSkye, 'missing peer movement snapshot');
+  assert.ok(Math.hypot(movedRiver.x - movedSkye.x, movedRiver.z - movedSkye.z) <= 12, 'peer should be close enough to trigger the old auto-aim behavior');
   river.send(JSON.stringify({ type: 'stone_throw' }));
-  const targetedThrow = await waitFor(skye, 'stone_thrown', (message) => message.stoneId === 'pebble-3');
-  assert.equal(targetedThrow.targetId, skyeJoined.selfId, `throw was not aimed at nearby peer (River=${JSON.stringify(movedRiver)}, Skye=${JSON.stringify(movedSkye)})`);
-  await waitFor(skye, 'stone_hit', (message) => message.playerId === skyeJoined.selfId, 1500);
+  const directionalThrow = await waitFor(skye, 'stone_thrown', (message) => message.stoneId === 'pebble-3');
+  assert.equal(directionalThrow.targetId, null, 'a nearby player outside the throw path must not attract the stone');
+  const expectedEndX = movedRiver.x + Math.sin(movedRiver.facing) * 4.2;
+  const expectedEndZ = movedRiver.z + Math.cos(movedRiver.facing) * 4.2;
+  assert.ok(Math.hypot(directionalThrow.end.x - expectedEndX, directionalThrow.end.z - expectedEndZ) < 0.2,
+    `stone should follow River's existing facing (River=${JSON.stringify(movedRiver)}, throw=${JSON.stringify(directionalThrow)})`);
+  const afterThrowState = await waitFor(skye, 'state', (message) => message.serverTime >= directionalThrow.startTime);
+  const riverAfterThrow = afterThrowState.players.find((player) => player.id === riverJoined.selfId);
+  assert.ok(riverAfterThrow, 'missing thrower state after throwing');
+  assert.ok(Math.abs(Math.atan2(Math.sin(riverAfterThrow.facing - movedRiver.facing), Math.cos(riverAfterThrow.facing - movedRiver.facing))) < 0.1,
+    'throwing must not rotate the thrower toward another player');
+  await waitFor(skye, 'stone_landed', (message) => message.stoneId === 'pebble-3', 1500);
   const targetRadius = 4.15 * 0.55;
   const targetAngle = Math.atan2(-movedRiver.z, -movedRiver.x);
   river.send(JSON.stringify({ type: 'fish_cast', targetX: Math.cos(targetAngle) * targetRadius, targetZ: Math.sin(targetAngle) * targetRadius }));
