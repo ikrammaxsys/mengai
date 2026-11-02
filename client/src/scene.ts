@@ -1,0 +1,790 @@
+import * as THREE from 'three';
+import type { CampfireCooking, FishCast, FishingState, HeldFish, PlayerSnapshot, StoneFlight, StoneSnapshot } from './network';
+import { FISH_CONFIG, type FishSpeciesId } from '../../shared/fishConfig';
+import { createFishModel } from './fishModels';
+import { ChickenFlock } from './chickenFlock';
+import { WORLD_CONFIG } from '../../shared/worldConfig';
+import { Campfire } from './campfire';
+
+type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
+type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
+type ChatBubble = { element: HTMLDivElement; expiresAt: number };
+type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
+type BonkFx = { element: HTMLDivElement; startedAt: number };
+
+export class GameScene {
+  readonly scene = new THREE.Scene();
+  readonly camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 150);
+  readonly renderer: THREE.WebGLRenderer;
+  private readonly avatars = new Map<string, Avatar>();
+  private readonly chatBubbles = new Map<string, ChatBubble>();
+  private readonly eatBubbles = new Map<string, ChatBubble>();
+  private readonly stones = new Map<string, StoneVisual>();
+  private readonly bonks = new Map<string, BonkFx>();
+  private readonly labels: HTMLElement;
+  private readonly stoneHint: HTMLDivElement;
+  private readonly ray = new THREE.Vector3();
+  private readonly cameraOffset = new THREE.Vector3(0, 8.5, -11);
+  private localId = '';
+  private leaderboardLeader = '';
+  private serverClockOffset = 0;
+  private interpolationDelayMs: number = FISH_CONFIG.sync.interpolationDelayMs;
+  private correctionCount = 0;
+  private correctionX = 0;
+  private correctionZ = 0;
+  private correctionRemaining = 0;
+  private interpolationUnderruns = 0;
+  private island!: THREE.Group;
+  private firstPersonView = false;
+  private heldFishClickHandler?: (playerId: string, catchId: string) => void;
+  private readonly chickens: ChickenFlock;
+  private readonly campfire: Campfire;
+
+  constructor(container: HTMLElement, labels: HTMLElement) {
+    this.labels = labels;
+    this.stoneHint = document.createElement('div'); this.stoneHint.className = 'pebble-hint hidden';
+    labels.appendChild(this.stoneHint);
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.12;
+    container.appendChild(this.renderer.domElement);
+    this.scene.background = new THREE.Color('#c6e5df');
+    this.scene.fog = new THREE.Fog('#c6e5df', 38, 90);
+    this.camera.position.set(0, 14, 18);
+    this.camera.lookAt(0, 0, 0);
+    this.buildWorld();
+    this.chickens = new ChickenFlock(this.scene);
+    this.campfire = new Campfire(this.scene, this.labels);
+    window.addEventListener('resize', this.onResize);
+  }
+
+  private material(color: string, roughness = 1): THREE.MeshStandardMaterial { return new THREE.MeshStandardMaterial({ color, roughness, flatShading: true }); }
+
+  private buildWorld(): void {
+    this.scene.add(new THREE.HemisphereLight('#f4fff4', '#8aa69a', 2.15));
+    const sun = new THREE.DirectionalLight('#fff6d9', 3.3);
+    sun.position.set(-12, 22, 10);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.00015;
+    sun.shadow.normalBias = 0.035;
+    sun.shadow.radius = 3;
+    sun.shadow.camera.left = -34; sun.shadow.camera.right = 34; sun.shadow.camera.top = 34; sun.shadow.camera.bottom = -34;
+    sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+    this.scene.add(sun);
+
+    this.island = new THREE.Group();
+    this.scene.add(this.island);
+    const ground = new THREE.Mesh(new THREE.CylinderGeometry(WORLD_CONFIG.groundRadius - 1, WORLD_CONFIG.groundRadius, 1.2, 20), this.material('#7fbd83'));
+    ground.position.y = -0.62; ground.receiveShadow = true; ground.castShadow = true; this.island.add(ground);
+    const top = new THREE.Mesh(new THREE.CircleGeometry(WORLD_CONFIG.grassRadius, 20), this.material('#a7d38e'));
+    top.rotation.x = -Math.PI / 2; top.position.y = 0.015; top.receiveShadow = true; this.island.add(top);
+    const shore = new THREE.Mesh(new THREE.CylinderGeometry(6.3, 6.6, 0.25, 12), this.material('#dfd09a'));
+    shore.position.y = 0.08; shore.receiveShadow = true; this.island.add(shore);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(4.15, 16), new THREE.MeshStandardMaterial({ color: '#5bb7c1', roughness: 0.82, metalness: 0, flatShading: true }));
+    water.rotation.x = -Math.PI / 2; water.position.y = 0.23; this.island.add(water);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(4.23, 0.13, 4, 16), this.material('#e9ddaf'));
+    rim.rotation.x = Math.PI / 2; rim.position.y = 0.19; this.island.add(rim);
+
+    // A small ring of low-poly trees, stones, and flowers keeps the clearing open.
+    const trees = WORLD_CONFIG.trees;
+    for (const [x, z] of trees) this.addTree(x, z, 0.75 + Math.random() * 0.35);
+    const rocks = WORLD_CONFIG.rocks;
+    for (const [x,z] of rocks) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55 + Math.random() * 0.4, 0), this.material('#9b9d80'));
+      rock.position.set(x, 0.25, z); rock.scale.y = 0.62; rock.rotation.set(Math.random(), Math.random(), Math.random()); rock.castShadow = true; this.island.add(rock);
+    }
+    for (let i = 0; i < 15; i++) {
+      const angle = i * 2.4;
+      const flower = new THREE.Mesh(new THREE.SphereGeometry(0.12, 5, 4), this.material(i % 2 ? '#f4e9b0' : '#e99a91'));
+      flower.position.set(Math.cos(angle) * (7.3 + i % 3), 0.18, Math.sin(angle) * (7.3 + i % 3)); this.island.add(flower);
+    }
+    for (const pebble of FISH_CONFIG.stones.pebbles) {
+      const group = new THREE.Group();
+      const base = new THREE.Mesh(new THREE.DodecahedronGeometry(0.24, 0), this.material(pebble.color));
+      base.scale.set(1, 0.65, 0.82); base.castShadow = true; group.add(base);
+      const glint = new THREE.Mesh(new THREE.DodecahedronGeometry(0.105, 0), this.material('#fff8f0'));
+      glint.position.set(0.08, 0.08, 0.12); group.add(glint);
+      group.position.set(pebble.x, 0.18, pebble.z); this.scene.add(group);
+      const splash = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.035, 4, 12), new THREE.MeshBasicMaterial({ color: '#dffaff', transparent: true, opacity: 0 }));
+      splash.rotation.x = Math.PI / 2; splash.visible = false; this.scene.add(splash);
+      this.stones.set(pebble.id, { group, state: 'ground', x: pebble.x, z: pebble.z, color: pebble.color, carriedBy: null, flight: null, respawnAt: null, splashStartedAt: null, splash });
+    }
+  }
+
+  private addTree(x: number, z: number, scale: number): void {
+    const group = new THREE.Group(); group.position.set(x, 0, z); group.scale.setScalar(scale);
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 1.35, 6), this.material('#90694a'));
+    trunk.position.y = 0.67; trunk.castShadow = true; group.add(trunk);
+    const foliage = new THREE.Mesh(new THREE.ConeGeometry(1.15, 2.5, 7), this.material('#4f9972'));
+    foliage.position.y = 2.05; foliage.castShadow = true; group.add(foliage);
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(0.82, 1.8, 7), this.material('#68ad7b'));
+    crown.position.y = 2.85; crown.castShadow = true; group.add(crown);
+    this.island.add(group);
+  }
+
+  private makeAvatar(player: PlayerSnapshot, local: boolean): Avatar {
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.65, 3, 6), this.material(player.color));
+    body.position.y = 0.8; body.castShadow = true; body.visible = !local || !this.firstPersonView; group.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), this.material('#f2c7a5'));
+    head.position.set(0, 1.55, 0.04); head.castShadow = true; head.visible = !local || !this.firstPersonView; group.add(head);
+    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.37, 0.35, 7), this.material(player.color));
+    hat.position.set(0, 1.86, 0.04); hat.castShadow = true; hat.visible = !local || !this.firstPersonView; group.add(hat);
+    const crown = this.createCrown();
+    crown.visible = false; group.add(crown);
+    const face = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), this.material('#344b45'));
+    face.position.set(0.11, 1.57, 0.31); face.visible = !local || !this.firstPersonView; group.add(face);
+
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.25, 5), this.material('#765b40'));
+    rod.position.set(0.48, 1.2, 0.18); rod.rotation.z = -0.42; rod.visible = false; group.add(rod);
+    const linePoints = Array.from({ length: 7 }, () => new THREE.Vector3());
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(linePoints), new THREE.LineBasicMaterial({ color: '#f8f4dc' }));
+    line.visible = false; this.scene.add(line);
+    const bobber = new THREE.Mesh(new THREE.SphereGeometry(0.14, 7, 5), this.material('#f2745d'));
+    bobber.visible = false; this.scene.add(bobber);
+    const splash = Array.from({ length: 3 }, () => {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.035, 4, 12), new THREE.MeshBasicMaterial({ color: '#dffaff', transparent: true, opacity: 0 }));
+      ring.rotation.x = Math.PI / 2; ring.visible = false; this.scene.add(ring); return ring;
+    });
+    const label = document.createElement('div'); label.className = `name-label${local ? ' self' : ''}`; label.dataset.name = player.name;
+    label.addEventListener('click', (event) => {
+      const chip = (event.target as HTMLElement).closest<HTMLButtonElement>('.held-fish-chip');
+      const catchId = chip?.dataset.catchId;
+      if (catchId) this.heldFishClickHandler?.(player.id, catchId);
+    });
+    this.labels.appendChild(label);
+    const avatar: Avatar = { group, label, rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
+    group.position.set(player.x, 0, player.z);
+    this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
+    this.updateLeaderAppearance(avatar);
+    if (player.holdingFish) this.setHoldingFish(player.id, player.holdingFish);
+    return avatar;
+  }
+
+  setLocalId(id: string): void { this.localId = id; }
+
+  setFirstPersonView(enabled: boolean): void {
+    this.firstPersonView = enabled;
+    const local = this.avatars.get(this.localId);
+    if (local) {
+      for (const part of local.bodyParts) part.visible = !enabled;
+      this.updateLeaderAppearance(local);
+    }
+  }
+
+  setLeaderboardLeader(playerName: string | null): void {
+    this.leaderboardLeader = playerName?.trim().toLocaleLowerCase() ?? '';
+    for (const avatar of this.avatars.values()) this.updateLeaderAppearance(avatar);
+  }
+
+  private updateLeaderAppearance(avatar: Avatar): void {
+    const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
+    const visible = !avatar.local || !this.firstPersonView;
+    avatar.hat.visible = !isLeader && visible;
+    avatar.crown.visible = isLeader && visible;
+  }
+
+  private createCrown(): THREE.Group {
+    const crown = new THREE.Group();
+    const gold = this.material('#e5b13a', 0.72);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.31, 0.14, 8), gold);
+    band.position.y = 1.87; band.castShadow = true; crown.add(band);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.027, 4, 8), gold);
+    rim.rotation.x = Math.PI / 2; rim.position.y = 1.94; rim.castShadow = true; crown.add(rim);
+    for (let index = 0; index < 5; index++) {
+      const angle = index / 5 * Math.PI * 2;
+      const point = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.2, 4), gold);
+      point.position.set(Math.cos(angle) * 0.21, 2.015, Math.sin(angle) * 0.21);
+      point.castShadow = true; crown.add(point);
+    }
+    const gem = new THREE.Mesh(new THREE.DodecahedronGeometry(0.055, 0), this.material('#e87962', 0.6));
+    gem.position.set(0, 1.88, 0.29); crown.add(gem);
+    return crown;
+  }
+
+  setHeldFishClickHandler(handler: (playerId: string, catchId: string) => void): void { this.heldFishClickHandler = handler; }
+
+  hitChicken(message: { chickenId: string; startTime: number; directionX: number; directionZ: number }): void {
+    this.chickens.hit(message.chickenId, message.startTime, message.directionX, message.directionZ);
+  }
+
+  setCampfireCooking(cooking: CampfireCooking | null): void { this.campfire.setCooking(cooking); }
+
+  finishCampfireCooking(cookId: string): void {
+    if (this.campfire.activeCookId === cookId) this.campfire.setCooking(null);
+  }
+
+  heldFish(playerId: string): HeldFish | null { return this.avatars.get(playerId)?.holdingFish ?? null; }
+  playerName(playerId: string): string { return this.avatars.get(playerId)?.label.dataset.name ?? 'Pond friend'; }
+
+  setServerClockOffset(offsetMs: number): void { this.serverClockOffset = offsetMs; }
+
+  setInterpolationDelay(delayMs: number): void {
+    this.interpolationDelayMs = Math.max(FISH_CONFIG.sync.interpolationDelayMinMs,
+      Math.min(FISH_CONFIG.sync.interpolationDelayMaxMs, delayMs));
+  }
+
+  noteCorrection(): void { this.correctionCount += 1; }
+
+  syncDiagnostics(): { bufferDepth: number; interpolationDelayMs: number; corrections: number; underruns: number } {
+    let bufferDepth = 0;
+    for (const avatar of this.avatars.values()) if (!avatar.local) bufferDepth += avatar.samples.length;
+    return { bufferDepth, interpolationDelayMs: Math.round(this.interpolationDelayMs), corrections: this.correctionCount, underruns: this.interpolationUnderruns };
+  }
+
+  upsert(player: PlayerSnapshot, serverTime = Date.now() + this.serverClockOffset): void {
+    let avatar = this.avatars.get(player.id);
+    if (!avatar) avatar = this.makeAvatar(player, player.id === this.localId);
+    if (avatar.local) {
+      // Local position and facing are owned by prediction; snapshots only update gameplay state.
+    } else {
+      avatar.targetX = player.x; avatar.targetZ = player.z; avatar.targetFacing = player.facing;
+      const last = avatar.samples[avatar.samples.length - 1];
+      if (!last || serverTime > last.time) {
+        avatar.samples.push({ time: serverTime, x: player.x, z: player.z, facing: player.facing, moving: player.moving });
+        if (avatar.samples.length > FISH_CONFIG.sync.snapshotBufferLimit) avatar.samples.shift();
+      } else if (serverTime === last.time) {
+        last.x = player.x; last.z = player.z; last.facing = player.facing; last.moving = player.moving;
+      }
+    }
+    avatar.fishing = player.fishing;
+    if (player.holdingFish !== undefined) this.setHoldingFish(player.id, player.holdingFish);
+    avatar.reelActive = player.fishing === 'fighting';
+    if (avatar.reelActive) avatar.lineTaut = true;
+    if (player.cast) {
+      if (!avatar.cast || avatar.cast.startTime !== player.cast.startTime) this.startCast(player.id, player.cast);
+      avatar.fishing = player.fishing;
+      if (player.fishing === 'reeling' && avatar.cast?.phase !== 'reeling') {
+        this.startReel(player.id, player.cast.reelStartedAt ?? Date.now(), FISH_CONFIG.cast.reelSeconds);
+      }
+    } else if (avatar.cast?.phase !== 'reeling') {
+      this.clearCast(avatar);
+    }
+  }
+
+  addLocal(player: PlayerSnapshot): void {
+    this.localId = player.id;
+    const avatar = this.makeAvatar(player, true);
+    avatar.group.position.set(player.x, 0, player.z);
+    this.camera.position.copy(avatar.group.localToWorld(this.cameraOffset.clone()));
+    this.camera.lookAt(avatar.group.position.x, 0.8, avatar.group.position.z);
+  }
+
+  setFishing(id: string, state: FishingState): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    avatar.fishing = state;
+    avatar.rod.visible = state !== 'idle';
+  }
+
+  setHoldingFish(id: string, fish: HeldFish | null): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    if (avatar.holdingFish?.catchId === fish?.catchId) return;
+    if (avatar.heldModel) {
+      avatar.group.remove(avatar.heldModel);
+      this.disposeFishModel(avatar.heldModel);
+      avatar.heldModel = null;
+    }
+    avatar.holdingFish = fish;
+    if (!fish) return;
+    const model = createFishModel(fish.species, fish.weightKg);
+    const species = FISH_CONFIG.species.find((entry) => entry.id === fish.species)!;
+    const weightScale = Math.cbrt(Math.max(0.01, fish.weightKg) / species.medianKg);
+    // Slightly amplify the cube-root size difference so lighter/heavier catches read clearly in-world.
+    model.scale.setScalar(Math.max(0.6, Math.min(1.6, 1 + (weightScale - 1) * 1.8)));
+    model.position.set(0.34, 1.12, 0.4);
+    model.rotation.y = 0.12;
+    avatar.group.add(model);
+    avatar.heldModel = model;
+  }
+
+  private disposeFishModel(model: THREE.Group): void {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    model.traverse((node) => {
+      if (node instanceof THREE.Mesh) {
+        geometries.add(node.geometry);
+        for (const material of Array.isArray(node.material) ? node.material : [node.material]) materials.add(material);
+      }
+    });
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+  }
+
+  startCast(id: string, cast: FishCast): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    avatar.cast = { ...cast, phase: 'casting', reelSeconds: FISH_CONFIG.cast.reelSeconds };
+    avatar.fishing = 'casting';
+    if (!avatar.local) {
+      avatar.targetX = cast.startX; avatar.targetZ = cast.startZ;
+      avatar.group.position.x = cast.startX; avatar.group.position.z = cast.startZ;
+      avatar.targetFacing = cast.facing;
+    }
+    avatar.rod.visible = true; avatar.line.visible = true; avatar.bobber.visible = true;
+  }
+
+  showBite(id: string): void { const avatar = this.avatars.get(id); if (avatar) avatar.fishing = 'bite'; }
+
+  setReelActive(id: string, active: boolean): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    avatar.reelActive = active;
+    avatar.lineTaut = active;
+  }
+
+  setLineTaut(id: string, taut: boolean): void {
+    const avatar = this.avatars.get(id); if (avatar?.reelActive) avatar.lineTaut = taut;
+  }
+
+  setStones(snapshots: StoneSnapshot[]): void {
+    for (const snapshot of snapshots) {
+      const stone = this.stones.get(snapshot.id);
+      if (!stone) continue;
+      stone.x = snapshot.x; stone.z = snapshot.z; stone.state = snapshot.state;
+      stone.carriedBy = snapshot.carriedBy; stone.flight = snapshot.flight; stone.respawnAt = snapshot.respawnAt;
+    }
+  }
+
+  pickStone(stoneId: string, playerId: string): void {
+    const stone = this.stones.get(stoneId); if (!stone) return;
+    stone.state = 'carried'; stone.carriedBy = playerId; stone.flight = null; stone.respawnAt = null;
+  }
+
+  throwStone(message: { stoneId: string; fromId: string; targetId: string | null } & StoneFlight): void {
+    const stone = this.stones.get(message.stoneId); if (!stone) return;
+    stone.state = 'flying'; stone.carriedBy = null; stone.flight = message; stone.respawnAt = null;
+    const thrower = this.avatars.get(message.fromId);
+    if (thrower) thrower.targetFacing = Math.atan2(message.end.x - thrower.group.position.x, message.end.z - thrower.group.position.z);
+  }
+
+  landStone(message: { stoneId: string; position: { x: number; z: number }; water: boolean }): void {
+    const stone = this.stones.get(message.stoneId); if (!stone) return;
+    stone.x = message.position.x; stone.z = message.position.z; stone.flight = null; stone.carriedBy = null;
+    stone.state = message.water ? 'respawning' : 'ground';
+    stone.respawnAt = message.water ? Date.now() + FISH_CONFIG.stones.respawnDelayMs : null;
+    stone.splashStartedAt = message.water ? Date.now() : null;
+  }
+
+  respawnStone(stoneId: string, position: { x: number; z: number }): void {
+    const stone = this.stones.get(stoneId); if (!stone) return;
+    stone.x = position.x; stone.z = position.z; stone.state = 'ground'; stone.flight = null; stone.carriedBy = null; stone.respawnAt = null;
+  }
+
+  showBonk(playerId: string): void {
+    const avatar = this.avatars.get(playerId); if (!avatar) return;
+    let fx = this.bonks.get(playerId);
+    if (!fx) {
+      const element = document.createElement('div'); element.className = 'bonk-puff'; element.textContent = '✦';
+      this.labels.appendChild(element); fx = { element, startedAt: 0 }; this.bonks.set(playerId, fx);
+    }
+    fx.startedAt = performance.now();
+  }
+
+  carryingStoneId(playerId = this.localId): string | null {
+    return [...this.stones].find(([, stone]) => stone.state === 'carried' && stone.carriedBy === playerId)?.[0] ?? null;
+  }
+
+  nearbyStoneId(playerId = this.localId): string | null {
+    const avatar = this.avatars.get(playerId); if (!avatar || this.carryingStoneId(playerId)) return null;
+    let nearest: { id: string; distance: number } | null = null;
+    for (const [id, stone] of this.stones) {
+      if (stone.state !== 'ground') continue;
+      const distance = Math.hypot(stone.x - avatar.group.position.x, stone.z - avatar.group.position.z);
+      if (distance <= FISH_CONFIG.stones.pickupRange && (!nearest || distance < nearest.distance)) nearest = { id, distance };
+    }
+    return nearest?.id ?? null;
+  }
+
+  startReel(id: string, startTime: number, duration: number = FISH_CONFIG.cast.reelSeconds): void {
+    const avatar = this.avatars.get(id); if (!avatar?.cast) return;
+    avatar.cast.phase = 'reeling'; avatar.cast.reelStartedAt = startTime; avatar.cast.reelSeconds = duration;
+    avatar.fishing = 'reeling';
+  }
+
+  private clearCast(avatar: Avatar): void {
+    avatar.cast = null; avatar.fishing = 'idle';
+    avatar.rod.visible = false; avatar.line.visible = false; avatar.bobber.visible = false;
+    for (const ring of avatar.splash) ring.visible = false;
+  }
+
+  private castRodTip(cast: FishCast): THREE.Vector3 {
+    const localX = 0.9, localZ = 0.2;
+    const c = Math.cos(cast.facing), s = Math.sin(cast.facing);
+    return new THREE.Vector3(cast.startX + c * localX + s * localZ, 1.72, cast.startZ - s * localX + c * localZ);
+  }
+
+  private rodTip(avatar: Avatar): THREE.Vector3 {
+    return avatar.group.localToWorld(new THREE.Vector3(0.9, 1.72, 0.2));
+  }
+
+  private renderCast(avatar: Avatar, now: number): void {
+    const cast = avatar.cast;
+    if (!cast) return;
+    const flightMs = cast.flightSeconds * 1000;
+    const landingTime = cast.startTime + flightMs;
+    const distance = Math.hypot(cast.targetX - cast.startX, cast.targetZ - cast.startZ);
+    const surfaceY = FISH_CONFIG.pond.waterY + FISH_CONFIG.cast.floatHeight;
+    const start = this.castRodTip(cast);
+    const target = new THREE.Vector3(cast.targetX, surfaceY, cast.targetZ);
+    let bobPosition: THREE.Vector3;
+    let lineStart = cast.phase === 'casting' ? start : this.rodTip(avatar);
+
+    if (cast.phase === 'casting' && now < landingTime) {
+      const t = Math.max(0, Math.min(1, (now - cast.startTime) / flightMs));
+      const eased = 1 - (1 - t) * (1 - t);
+      bobPosition = start.clone().lerp(target, eased);
+      const apex = Math.min(FISH_CONFIG.cast.maxApexHeight, distance * FISH_CONFIG.cast.apexDistanceFactor);
+      bobPosition.y = surfaceY + (start.y - surfaceY) * (1 - t) + 4 * apex * t * (1 - t);
+    } else if (cast.phase === 'reeling') {
+      const reelStartedAt = cast.reelStartedAt ?? now;
+      const t = Math.max(0, Math.min(1, (now - reelStartedAt) / (cast.reelSeconds * 1000)));
+      const eased = t * t * (3 - 2 * t);
+      bobPosition = target.clone().lerp(this.rodTip(avatar), eased);
+      bobPosition.y += Math.sin(Math.PI * t) * 0.75;
+      if (t >= 1) { this.clearCast(avatar); return; }
+    } else {
+      cast.phase = 'floating';
+      lineStart = this.rodTip(avatar);
+      const amplitude = avatar.fishing === 'bite' ? FISH_CONFIG.cast.floatAmplitude * 2.1 : FISH_CONFIG.cast.floatAmplitude;
+      bobPosition = target.clone();
+      bobPosition.y += Math.sin((now - landingTime) * (Math.PI * 2 / FISH_CONFIG.cast.floatPeriodMs)) * amplitude;
+    }
+
+    avatar.bobber.visible = true;
+    avatar.line.visible = true;
+    avatar.bobber.position.copy(bobPosition);
+    const positions = avatar.line.geometry.attributes.position as THREE.BufferAttribute;
+    const sag = avatar.reelActive ? (avatar.lineTaut ? 0.025 : 0.21) : cast.phase === 'floating' ? 0.13 : 0.035;
+    for (let i = 0; i < positions.count; i++) {
+      const amount = i / (positions.count - 1);
+      const point = lineStart.clone().lerp(bobPosition, amount);
+      point.y -= sag * Math.sin(Math.PI * amount);
+      positions.setXYZ(i, point.x, point.y, point.z);
+    }
+    positions.needsUpdate = true;
+    avatar.line.geometry.computeBoundingSphere();
+
+    const splashElapsed = (now - landingTime) / 1000;
+    for (let i = 0; i < avatar.splash.length; i++) {
+      const ring = avatar.splash[i];
+      const phase = Math.max(0, Math.min(1, (splashElapsed - i * 0.12) / FISH_CONFIG.pond.splashSeconds));
+      const visible = splashElapsed >= i * 0.12 && phase < 1 && cast.phase !== 'reeling';
+      ring.visible = visible;
+      if (visible) {
+        ring.position.set(cast.targetX, FISH_CONFIG.pond.waterY + 0.025, cast.targetZ);
+        ring.scale.setScalar(0.35 + phase * 1.7);
+        (ring.material as THREE.MeshBasicMaterial).opacity = 0.72 * (1 - phase);
+      }
+    }
+  }
+
+  remove(id: string): void {
+    const avatar = this.avatars.get(id);
+    if (avatar) {
+      if (avatar.heldModel) this.disposeFishModel(avatar.heldModel);
+      this.scene.remove(avatar.group, avatar.line, avatar.bobber, ...avatar.splash);
+      avatar.label.remove(); this.avatars.delete(id);
+    }
+    this.chatBubbles.get(id)?.element.remove();
+    this.chatBubbles.delete(id);
+    this.eatBubbles.get(id)?.element.remove();
+    this.eatBubbles.delete(id);
+    this.bonks.get(id)?.element.remove();
+    this.bonks.delete(id);
+  }
+  clearPlayers(): void { for (const id of [...this.avatars.keys()]) this.remove(id); this.localId = ''; }
+  getPosition(): THREE.Vector3 { const avatar = this.avatars.get(this.localId); return avatar?.group.position ?? new THREE.Vector3(); }
+  setPosition(x: number, z: number): void { const avatar = this.avatars.get(this.localId); if (avatar) { avatar.group.position.x = x; avatar.group.position.z = z; } }
+  setLocalMotion(x: number, z: number, rotY: number): void {
+    const avatar = this.avatars.get(this.localId); if (!avatar) return;
+    avatar.group.position.x = x; avatar.group.position.z = z;
+    avatar.targetFacing = Math.atan2(Math.sin(rotY), Math.cos(rotY));
+    avatar.group.rotation.y = avatar.targetFacing;
+  }
+  applyCorrection(x: number, z: number): void {
+    const avatar = this.avatars.get(this.localId); if (!avatar) return;
+    this.correctionCount += 1;
+    const dx = x - avatar.group.position.x, dz = z - avatar.group.position.z;
+    if (Math.hypot(dx, dz) > FISH_CONFIG.sync.hardCorrectionDistance) {
+      avatar.group.position.x = x; avatar.group.position.z = z;
+      this.correctionX = 0; this.correctionZ = 0; this.correctionRemaining = 0;
+    } else {
+      this.correctionX = dx; this.correctionZ = dz;
+      this.correctionRemaining = FISH_CONFIG.sync.correctionBlendMs / 1000;
+    }
+  }
+  stepCorrection(deltaSeconds: number): void {
+    const avatar = this.avatars.get(this.localId);
+    if (!avatar || this.correctionRemaining <= 0) return;
+    const amount = Math.min(1, deltaSeconds / this.correctionRemaining);
+    avatar.group.position.x += this.correctionX * amount;
+    avatar.group.position.z += this.correctionZ * amount;
+    this.correctionX *= 1 - amount; this.correctionZ *= 1 - amount;
+    this.correctionRemaining = Math.max(0, this.correctionRemaining - deltaSeconds);
+  }
+  face(directionX: number, directionZ: number): void {
+    const avatar = this.avatars.get(this.localId);
+    if (avatar && Math.hypot(directionX, directionZ) > 0.01) {
+      avatar.targetFacing = Math.atan2(directionX, directionZ);
+      avatar.group.rotation.y = avatar.targetFacing;
+    }
+  }
+  turnLocal(radians: number): void {
+    const avatar = this.avatars.get(this.localId); if (!avatar) return;
+    avatar.targetFacing = Math.atan2(Math.sin(avatar.targetFacing + radians), Math.cos(avatar.targetFacing + radians));
+    avatar.group.rotation.y = avatar.targetFacing;
+  }
+  localFacing(): number { return this.avatars.get(this.localId)?.targetFacing ?? 0; }
+  facePlayerToward(id: string, targetX: number, targetZ: number): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    avatar.targetFacing = Math.atan2(targetX - avatar.group.position.x, targetZ - avatar.group.position.z);
+  }
+
+  private interpolateRemote(avatar: Avatar, renderTime: number): void {
+    const samples = avatar.samples;
+    if (!samples.length) return;
+    let nextIndex = samples.findIndex((sample) => sample.time >= renderTime);
+    let x: number, z: number, facing: number;
+    if (nextIndex === 0) {
+      const first = samples[0];
+      x = first.x; z = first.z; facing = first.facing;
+    } else if (nextIndex > 0) {
+      const left = samples[nextIndex - 1], right = samples[nextIndex];
+      const amount = Math.max(0, Math.min(1, (renderTime - left.time) / Math.max(1, right.time - left.time)));
+      x = left.x + (right.x - left.x) * amount;
+      z = left.z + (right.z - left.z) * amount;
+      facing = left.facing + this.angleDelta(left.facing, right.facing) * amount;
+    } else {
+      const last = samples[samples.length - 1], before = samples[samples.length - 2];
+      const extra = before ? Math.min(FISH_CONFIG.sync.maxExtrapolationMs, Math.max(0, renderTime - last.time)) : 0;
+      if (before && last.moving && last.time > before.time) {
+        const factor = extra / (last.time - before.time);
+        x = last.x + (last.x - before.x) * factor;
+        z = last.z + (last.z - before.z) * factor;
+        facing = last.facing + this.angleDelta(before.facing, last.facing) * factor;
+      } else {
+        x = last.x; z = last.z; facing = last.facing;
+      }
+    }
+
+    const last = samples[samples.length - 1];
+    const underrun = renderTime > last.time + FISH_CONFIG.sync.maxExtrapolationMs;
+    if (underrun && !avatar.inUnderrun) this.interpolationUnderruns += 1;
+    if (!underrun && avatar.inUnderrun) {
+      avatar.blendOffsetX = avatar.group.position.x - x;
+      avatar.blendOffsetZ = avatar.group.position.z - z;
+      avatar.blendOffsetFacing = this.angleDelta(facing, avatar.group.rotation.y);
+      avatar.blendStartedAt = performance.now();
+    }
+    avatar.inUnderrun = underrun;
+    if (!underrun && avatar.blendStartedAt) {
+      const progress = Math.min(1, (performance.now() - avatar.blendStartedAt) / 120);
+      const remaining = 1 - progress;
+      x += avatar.blendOffsetX * remaining;
+      z += avatar.blendOffsetZ * remaining;
+      facing += avatar.blendOffsetFacing * remaining;
+      if (progress >= 1) avatar.blendStartedAt = 0;
+    }
+    avatar.group.position.set(x, 0, z);
+    avatar.group.rotation.y = facing;
+    while (samples.length > 2 && samples[1].time < renderTime) samples.shift();
+  }
+
+  fishingState(): FishingState { return this.avatars.get(this.localId)?.fishing ?? 'idle'; }
+  playerCount(): number { return this.avatars.size; }
+
+  showChatBubble(id: string, text: string): void {
+    if (!this.avatars.has(id)) return;
+    let bubble = this.chatBubbles.get(id);
+    if (!bubble) {
+      const element = document.createElement('div');
+      element.className = 'speech-bubble';
+      this.labels.appendChild(element);
+      bubble = { element, expiresAt: 0 };
+      this.chatBubbles.set(id, bubble);
+    }
+    bubble.element.textContent = text.length > 100 ? `${text.slice(0, 97)}…` : text;
+    bubble.expiresAt = performance.now() + 4500;
+  }
+
+  showEatBubble(id: string, speciesName: string): void {
+    if (!this.avatars.has(id)) return;
+    let bubble = this.eatBubbles.get(id);
+    if (!bubble) {
+      const element = document.createElement('div');
+      element.className = 'eat-bubble';
+      this.labels.appendChild(element);
+      bubble = { element, expiresAt: 0 };
+      this.eatBubbles.set(id, bubble);
+    }
+    bubble.element.textContent = `Yummy! ${speciesName} 🍲`;
+    bubble.expiresAt = performance.now() + 3600;
+  }
+
+  render(deltaSeconds = 1 / 60): void {
+    const serverNow = Date.now() + this.serverClockOffset;
+    const remoteRenderTime = serverNow - this.interpolationDelayMs;
+    const local = this.avatars.get(this.localId);
+    if (local) {
+      if (this.firstPersonView) {
+        const eye = local.group.localToWorld(new THREE.Vector3(0, 1.56, 0.02));
+        const facing = local.group.rotation.y;
+        const damping = 1 - Math.exp(-15 * Math.max(0, deltaSeconds));
+        this.camera.position.lerp(eye, damping);
+        this.camera.lookAt(eye.x + Math.sin(facing) * 10, eye.y - 0.12, eye.z + Math.cos(facing) * 10);
+      } else {
+        const target = local.group.localToWorld(this.cameraOffset.clone());
+        const damping = 1 - Math.exp(-8 * Math.max(0, deltaSeconds));
+        this.camera.position.lerp(target, damping);
+        this.camera.lookAt(local.group.position.x, 0.8, local.group.position.z);
+      }
+    }
+    for (const [id, avatar] of this.avatars) {
+      avatar.rod.rotation.z = -0.42 + (avatar.reelActive ? 0.12 + Math.sin(Date.now() * 0.006) * 0.035 : 0);
+      if (avatar.heldModel) {
+        avatar.heldModel.position.y = 1.12 + Math.sin(serverNow * 0.0022 + avatar.group.position.x) * 0.035;
+        avatar.heldModel.rotation.z = Math.sin(serverNow * 0.0018 + avatar.group.position.z) * 0.055;
+        const wiggle = Math.sin(serverNow * 0.0061 + avatar.group.position.x * 2.1);
+        avatar.heldModel.rotation.x = wiggle > 0.94 ? (wiggle - 0.94) * 0.35 : 0;
+      }
+      if (avatar.local) {
+        avatar.group.rotation.y += this.angleDelta(avatar.group.rotation.y, avatar.targetFacing) * 0.24;
+      } else {
+        this.interpolateRemote(avatar, remoteRenderTime);
+      }
+      const bonk = this.bonks.get(id);
+      if (bonk) {
+        const elapsed = performance.now() - bonk.startedAt;
+        if (elapsed >= 900) { bonk.element.remove(); this.bonks.delete(id); avatar.group.rotation.z = 0; }
+        else {
+          const progress = elapsed / 900;
+          avatar.group.rotation.z = Math.sin(elapsed * 0.045) * (1 - progress) * 0.18;
+          bonk.element.style.left = avatar.label.style.left;
+          bonk.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 22 - progress * 24}px`;
+          bonk.element.style.opacity = String(1 - progress);
+          bonk.element.style.display = avatar.label.style.display;
+        }
+      } else avatar.group.rotation.z = 0;
+      this.renderCast(avatar, serverNow);
+      this.ray.set(avatar.group.position.x, 2.2, avatar.group.position.z).project(this.camera);
+      avatar.label.style.left = `${(this.ray.x * 0.5 + 0.5) * innerWidth}px`;
+      avatar.label.style.top = `${(-this.ray.y * 0.5 + 0.5) * innerHeight}px`;
+      avatar.label.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
+      avatar.label.style.display = avatar.local && this.firstPersonView || this.ray.z > 1 ? 'none' : 'block';
+      // Label contents are rebuilt with current state while keeping the held-fish chip clickable.
+      const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
+      const leaderTitle = isLeader ? '<span class="leader-title"><span aria-hidden="true">👑</span><strong>Kapla Mengai</strong></span>' : '';
+      const fish = avatar.holdingFish;
+      const fishSpecies = fish ? FISH_CONFIG.species.find((entry) => entry.id === fish.species) : undefined;
+      const fishChip = fish && fishSpecies
+        ? `<button class="held-fish-chip" data-catch-id="${this.escape(fish.catchId)}" style="--rarity-color:${fishSpecies.rarityColor}" type="button">🐟 ${this.escape(fishSpecies.name)} · ${fish.weightKg.toFixed(1)} kg</button>`
+        : '';
+      avatar.label.innerHTML = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}</span>${fishChip}`;
+      const bubble = this.chatBubbles.get(id);
+      if (bubble) {
+        if (bubble.expiresAt <= performance.now()) {
+          bubble.element.remove();
+          this.chatBubbles.delete(id);
+        } else {
+          bubble.element.style.left = avatar.label.style.left;
+          bubble.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 10}px`;
+          bubble.element.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
+          bubble.element.style.display = avatar.label.style.display;
+        }
+      }
+      const eatBubble = this.eatBubbles.get(id);
+      if (eatBubble) {
+        if (eatBubble.expiresAt <= performance.now()) {
+          eatBubble.element.remove();
+          this.eatBubbles.delete(id);
+        } else if (avatar.local && this.firstPersonView) {
+          eatBubble.element.style.left = `${innerWidth / 2}px`;
+          eatBubble.element.style.top = `${innerHeight * 0.38}px`;
+          eatBubble.element.style.zIndex = '900';
+          eatBubble.element.style.display = 'block';
+        } else {
+          eatBubble.element.style.left = avatar.label.style.left;
+          eatBubble.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 32}px`;
+          eatBubble.element.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
+          eatBubble.element.style.display = avatar.label.style.display;
+        }
+      }
+    }
+    this.renderStones(serverNow);
+    this.chickens.render(serverNow);
+    this.campfire.render(serverNow, this.camera);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private renderStones(now: number): void {
+    for (const stone of this.stones.values()) {
+      const { group } = stone;
+      if (stone.state === 'ground') {
+        group.visible = true;
+        group.position.set(stone.x, 0.18, stone.z);
+        group.rotation.y = Math.sin(now * 0.0005 + stone.x) * 0.12;
+      } else if (stone.state === 'carried') {
+        const carrier = stone.carriedBy ? this.avatars.get(stone.carriedBy) : undefined;
+        if (!carrier) { group.visible = false; continue; }
+        const offset = FISH_CONFIG.stones.heldOffset;
+        group.visible = true;
+        group.position.copy(carrier.group.localToWorld(new THREE.Vector3(offset.x, offset.y, offset.z)));
+      } else if (stone.state === 'flying' && stone.flight) {
+        const flight = stone.flight;
+        const t = Math.max(0, Math.min(1, (now - flight.startTime) / flight.flightMs));
+        const eased = 1 - (1 - t) * (1 - t);
+        const distance = Math.hypot(flight.end.x - flight.start.x, flight.end.z - flight.start.z);
+        const apex = Math.max(FISH_CONFIG.stones.apexMin, distance * FISH_CONFIG.stones.apexDistanceFactor);
+        group.visible = true;
+        group.position.set(
+          flight.start.x + (flight.end.x - flight.start.x) * eased,
+          flight.start.y + (flight.end.y - flight.start.y) * t + 4 * apex * t * (1 - t),
+          flight.start.z + (flight.end.z - flight.start.z) * eased,
+        );
+        group.rotation.x += 0.035; group.rotation.z += 0.025;
+      } else group.visible = false;
+
+      if (stone.splashStartedAt !== null) {
+        const elapsed = (now - stone.splashStartedAt) / 1000;
+        if (elapsed >= FISH_CONFIG.stones.splashDurationSeconds) {
+          stone.splash.visible = false; stone.splashStartedAt = null;
+        } else {
+          const phase = Math.max(0, elapsed / FISH_CONFIG.stones.splashDurationSeconds);
+          stone.splash.visible = true;
+          stone.splash.position.set(stone.x, FISH_CONFIG.pond.waterY + 0.03, stone.z);
+          stone.splash.scale.setScalar(0.35 + phase * 1.9);
+          (stone.splash.material as THREE.MeshBasicMaterial).opacity = 0.72 * (1 - phase);
+        }
+      }
+    }
+
+    this.stoneHint.classList.add('hidden');
+    const local = this.avatars.get(this.localId);
+    if (!local || local.fishing !== 'idle') return;
+    let hintPosition: THREE.Vector3 | null = null;
+    if (this.carryingStoneId(this.localId)) {
+      hintPosition = local.group.localToWorld(new THREE.Vector3(0, 2.3, 0));
+      this.stoneHint.textContent = 'E to throw';
+    } else {
+      const id = this.nearbyStoneId(this.localId);
+      const pebble = id ? this.stones.get(id) : undefined;
+      if (pebble) { hintPosition = new THREE.Vector3(pebble.x, 0.65, pebble.z); this.stoneHint.textContent = 'E to pick up'; }
+    }
+    if (hintPosition) {
+      this.ray.copy(hintPosition).project(this.camera);
+      this.stoneHint.style.left = `${(this.ray.x * 0.5 + 0.5) * innerWidth}px`;
+      this.stoneHint.style.top = `${(-this.ray.y * 0.5 + 0.5) * innerHeight}px`;
+      this.stoneHint.style.display = this.ray.z > 1 ? 'none' : 'block';
+      this.stoneHint.classList.remove('hidden');
+    }
+  }
+
+  private escape(value: string): string { const element = document.createElement('span'); element.textContent = value; return element.innerHTML; }
+  private angleDelta(a: number, b: number): number { return Math.atan2(Math.sin(b - a), Math.cos(b - a)); }
+  private onResize = (): void => { this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setSize(innerWidth, innerHeight); };
+}

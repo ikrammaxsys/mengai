@@ -1,0 +1,27 @@
+{
+  "name": "pondside-multiplayer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c green,cyan \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch server/src/index.ts",
+    "dev:client": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "test": "tsx scripts/test-reel-game.ts && tsx scripts/test-persistence.ts && node scripts/smoke-test.mjs",
+    "simulate:fishing": "tsx scripts/simulate-fishing.ts",
+    "start": "tsx server/src/index.ts"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "@types/ws": "^8.5.13",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.1"
+  }
+}

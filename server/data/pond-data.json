@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "rooms": {
+    "1": {
+      "catches": [
+        {
+          "id": "e01d61c8-0170-4414-98df-57f5f9caea06",
+          "playerId": "2d09e234-cfcb-4920-bf13-a684b0047881",
+          "playerName": "1",
+          "species": "bluegill",
+          "weightKg": 0.16,
+          "rarity": "common",
+          "timestamp": 1793605764944
+        },
+        {
+          "id": "93da0cef-4bcf-463d-87f7-de0317a475db",
+          "playerId": "730a24d0-eeb6-4211-ae16-514e1204f5a3",
+          "playerName": "Core API",
+          "species": "largemouth-bass",
+          "weightKg": 0.87,
+          "rarity": "rare",
+          "timestamp": 1793606337385
+        },
+        {
+          "id": "2f586b3a-d775-4533-9c5e-0fd50b223846",
+          "playerId": "730a24d0-eeb6-4211-ae16-514e1204f5a3",
+          "playerName": "Core API",
+          "species": "bluegill",
+          "weightKg": 0.12,
+          "rarity": "common",
+          "timestamp": 1793606443022
+        },
+        {
+          "id": "64297bf1-8205-4d98-9a06-289e64bd63f7",
+          "playerId": "730a24d0-eeb6-4211-ae16-514e1204f5a3",
+          "playerName": "Core API",
+          "species": "largemouth-bass",
+          "weightKg": 3.31,
+          "rarity": "rare",
+          "timestamp": 1793609386104
+        },
+        {
+          "id": "46dd6e87-550d-4480-8916-6c9c6a6b6d2b",
+          "playerId": "730a24d0-eeb6-4211-ae16-514e1204f5a3",
+          "playerName": "Core API",
+          "species": "bluegill",
+          "weightKg": 0.23,
+          "rarity": "common",
+          "timestamp": 1793609446189
+        },
+        {
+          "id": "343822da-d0c5-4150-be25-bdb81941c0ff",
+          "playerId": "730a24d0-eeb6-4211-ae16-514e1204f5a3",
+          "playerName": "Core API",
+          "species": "rainbow-trout",
+          "weightKg": 1.4,
+          "rarity": "uncommon",
+          "timestamp": 1793609460075
+        },
+        {
+          "id": "a6255a87-56da-4e7e-88c5-ab10eed51b5d",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "rainbow-trout",
+          "weightKg": 0.78,
+          "rarity": "uncommon",
+          "timestamp": 1793609542690
+        },
+        {
+          "id": "7633c829-c79f-4171-8c44-44b4f6fe99a7",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "bluegill",
+          "weightKg": 0.25,
+          "rarity": "common",
+          "timestamp": 1793609555591
+        },
+        {
+          "id": "717af22b-92a3-4146-acc3-aa99ed8dd08d",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "common-carp",
+          "weightKg": 1.94,
+          "rarity": "epic",
+          "timestamp": 1793609569037
+        },
+        {
+          "id": "8a481795-205d-4f94-b2bc-1e019bfe67b1",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "bluegill",
+          "weightKg": 0.18,
+          "rarity": "common",
+          "timestamp": 1793609581924
+        },
+        {
+          "id": "119371d1-7dc0-43a2-96ed-c7630b30fd67",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "rainbow-trout",
+          "weightKg": 1.54,
+          "rarity": "uncommon",
+          "timestamp": 1793609725261
+        },
+        {
+          "id": "eeb04713-c441-40b7-88f3-e8d0f2efff19",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "bluegill",
+          "weightKg": 0.11,
+          "rarity": "common",
+          "timestamp": 1793609745067
+        },
+        {
+          "id": "3af3818c-3555-4f98-92a1-f90ace296457",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "largemouth-bass",
+          "weightKg": 1.43,
+          "rarity": "rare",
+          "timestamp": 1793609764404
+        },
+        {
+          "id": "e510b832-f959-4bf5-9bab-b51a2f90e1eb",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "common-carp",
+          "weightKg": 3.61,
+          "rarity": "epic",
+          "timestamp": 1793609775552
+        },
+        {
+          "id": "05f646ee-3447-49eb-bb9f-df586e7e5dab",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "bluegill",
+          "weightKg": 0.24,
+          "rarity": "common",
+          "timestamp": 1793609793293
+        },
+        {
+          "id": "6c9359cd-4dd5-48bf-ab48-822baf633845",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "bluegill",
+          "weightKg": 0.12,
+          "rarity": "common",
+          "timestamp": 1793609808099
+        },
+        {
+          "id": "6a3fb3d4-b75b-4ea6-b1a4-2ce80524e25c",
+          "playerId": "b42c8fb4-55ab-4293-95f3-3bec3129b3a2",
+          "playerName": "ayam",
+          "species": "largemouth-bass",
+          "weightKg": 1.32,
+          "rarity": "rare",
+          "timestamp": 1793609826176
+        },
+        {
+          "id": "27bcd2b3-1966-44e3-8138-228a672bfae7",
+          "playerId": "1c7fd1d9-1bbe-4e4b-8990-47816a26d0e1",
+          "playerName": "Core API2",
+          "species": "bluegill",
+          "weightKg": 0.1,
+          "rarity": "common",
+          "timestamp": 1793610401399
+        },
+        {
+          "id": "e75fea0f-f13f-4949-9b42-e70a276fbe9e",
+          "playerId": "28ded9c3-79c4-4e34-a73b-cb47607c2138",
+          "playerName": "Core API2",
+          "species": "rainbow-trout",
+          "weightKg": 0.9,
+          "rarity": "uncommon",
+          "timestamp": 1793610735023
+        },
+        {
+          "id": "48d28176-5f68-4087-afa0-392def170808",
+          "playerId": "77d3ff7c-73fa-443a-af95-05f588cf28f8",
+          "playerName": "Core API2",
+          "species": "largemouth-bass",
+          "weightKg": 1.66,
+          "rarity": "rare",
+          "timestamp": 1793611652286
+        }
+      ],
+      "players": {
+        "1": {
+          "inventory": [
+            {
+              "catchId": "e01d61c8-0170-4414-98df-57f5f9caea06",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.16,
+              "caughtAt": 1793605764944
+            }
+          ]
+        },
+        "core api": {
+          "inventory": [
+            {
+              "catchId": "93da0cef-4bcf-463d-87f7-de0317a475db",
+              "species": "largemouth-bass",
+              "rarity": "rare",
+              "weightKg": 0.87,
+              "caughtAt": 1793606337385
+            },
+            {
+              "catchId": "2f586b3a-d775-4533-9c5e-0fd50b223846",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.12,
+              "caughtAt": 1793606443022
+            },
+            {
+              "catchId": "64297bf1-8205-4d98-9a06-289e64bd63f7",
+              "species": "largemouth-bass",
+              "rarity": "rare",
+              "weightKg": 3.31,
+              "caughtAt": 1793609386104
+            },
+            {
+              "catchId": "46dd6e87-550d-4480-8916-6c9c6a6b6d2b",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.23,
+              "caughtAt": 1793609446189
+            },
+            {
+              "catchId": "343822da-d0c5-4150-be25-bdb81941c0ff",
+              "species": "rainbow-trout",
+              "rarity": "uncommon",
+              "weightKg": 1.4,
+              "caughtAt": 1793609460075
+            }
+          ]
+        },
+        "ayam": {
+          "inventory": [
+            {
+              "catchId": "a6255a87-56da-4e7e-88c5-ab10eed51b5d",
+              "species": "rainbow-trout",
+              "rarity": "uncommon",
+              "weightKg": 0.78,
+              "caughtAt": 1793609542690
+            },
+            {
+              "catchId": "7633c829-c79f-4171-8c44-44b4f6fe99a7",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.25,
+              "caughtAt": 1793609555591
+            },
+            {
+              "catchId": "717af22b-92a3-4146-acc3-aa99ed8dd08d",
+              "species": "common-carp",
+              "rarity": "epic",
+              "weightKg": 1.94,
+              "caughtAt": 1793609569037
+            },
+            {
+              "catchId": "8a481795-205d-4f94-b2bc-1e019bfe67b1",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.18,
+              "caughtAt": 1793609581924
+            },
+            {
+              "catchId": "119371d1-7dc0-43a2-96ed-c7630b30fd67",
+              "species": "rainbow-trout",
+              "rarity": "uncommon",
+              "weightKg": 1.54,
+              "caughtAt": 1793609725261
+            },
+            {
+              "catchId": "eeb04713-c441-40b7-88f3-e8d0f2efff19",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.11,
+              "caughtAt": 1793609745067
+            },
+            {
+              "catchId": "3af3818c-3555-4f98-92a1-f90ace296457",
+              "species": "largemouth-bass",
+              "rarity": "rare",
+              "weightKg": 1.43,
+              "caughtAt": 1793609764404
+            },
+            {
+              "catchId": "e510b832-f959-4bf5-9bab-b51a2f90e1eb",
+              "species": "common-carp",
+              "rarity": "epic",
+              "weightKg": 3.61,
+              "caughtAt": 1793609775552
+            },
+            {
+              "catchId": "05f646ee-3447-49eb-bb9f-df586e7e5dab",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.24,
+              "caughtAt": 1793609793293
+            },
+            {
+              "catchId": "6c9359cd-4dd5-48bf-ab48-822baf633845",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.12,
+              "caughtAt": 1793609808099
+            },
+            {
+              "catchId": "6a3fb3d4-b75b-4ea6-b1a4-2ce80524e25c",
+              "species": "largemouth-bass",
+              "rarity": "rare",
+              "weightKg": 1.32,
+              "caughtAt": 1793609826176
+            }
+          ]
+        },
+        "core api2": {
+          "inventory": []
+        }
+      },
+      "campfireCooking": null
+    }
+  }
+}
