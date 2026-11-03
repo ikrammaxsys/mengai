@@ -1,7 +1,9 @@
+import 'dotenv/config';
 import { createServer } from 'node:http';
 import type { Socket as NetSocket } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
+import { AccessToken } from 'livekit-server-sdk';
 import { BROADCAST_SCOPE, calculateReelParameters, FISH_CONFIG } from '../../shared/fishConfig.js';
 import { isSafeMovementPosition, movementViolation, MOVEMENT_RULES, normalizeRotation } from '../../shared/movement.js';
 import { RESUME_GRACE_MS, Rooms } from './rooms.js';
@@ -16,10 +18,15 @@ import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shar
 
 const PORT = Number(process.env.PORT ?? 3002);
 const server = createServer((request, response) => {
-  const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+  const requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+  const pathname = requestUrl.pathname;
   if (request.method === 'GET' && pathname === '/api/rooms') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     response.end(JSON.stringify({ rooms: rooms.list() }));
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/voice-token') {
+    void issueVoiceToken(request, response, requestUrl);
     return;
   }
   response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -32,6 +39,52 @@ const persistentData: PersistentGameDataStore = new JsonGameDataStore();
 const memberships = new Map<WebSocket, { roomId: string; playerId: string }>();
 const aliveSockets = new WeakSet<WebSocket>();
 const isDev = process.env.NODE_ENV !== 'production' && process.env.FISH_ROLL_LOG !== '0';
+
+function safeEqual(left: string, right: string): boolean {
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function liveKitRoomName(gameRoomId: string): string {
+  const digest = createHash('sha256').update(gameRoomId).digest('hex').slice(0, 32);
+  return `game-room-${digest}`;
+}
+
+async function issueVoiceToken(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, url: URL): Promise<void> {
+  const roomId = url.searchParams.get('room')?.trim() ?? '';
+  const playerId = url.searchParams.get('playerId') ?? '';
+  const authorization = request.headers.authorization ?? '';
+  const resumeToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const player = roomId && resumeToken ? rooms.findPlayerByResumeToken(roomId, resumeToken) : undefined;
+  if (!player || !playerId || !safeEqual(player.id, playerId)) {
+    response.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ error: 'Join the game room before requesting voice access.' }));
+    return;
+  }
+
+  const liveKitUrl = process.env.LIVEKIT_URL;
+  const apiKey = process.env.LIVEKIT_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  if (!liveKitUrl || !apiKey || !apiSecret) {
+    response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ error: 'Voice chat is not configured on this server.' }));
+    return;
+  }
+
+  try {
+    const roomName = liveKitRoomName(roomId);
+    const accessToken = new AccessToken(apiKey, apiSecret, { identity: player.id, name: player.name, ttl: '10m' });
+    accessToken.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
+    const token = await accessToken.toJwt();
+    response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ token, url: liveKitUrl, room: roomName, expiresInSeconds: 600 }));
+  } catch (error) {
+    console.error('[voice] Failed to issue LiveKit token:', error);
+    response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ error: 'Could not prepare voice chat. Please try again.' }));
+  }
+}
 
 function send(socket: WebSocket, message: object): void {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));

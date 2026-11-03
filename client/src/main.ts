@@ -9,6 +9,7 @@ import { FISH_CONFIG, reelParametersForDifficulty, type FishSpeciesId, type Reel
 import { ReelGame } from './reelGame';
 import { MOVEMENT_RULES, stepMovement } from '../../shared/movement';
 import { isWeatherType, WEATHER_CONFIG, type WeatherSnapshot, type WeatherType } from '../../shared/weatherConfig';
+import { VoiceClient, type VoiceConnectionStatus } from './voice';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const form = document.querySelector<HTMLFormElement>('#join-form')!;
@@ -89,10 +90,36 @@ const reelPercent = document.querySelector<HTMLElement>('#reel-percent')!;
 const reelHelper = document.querySelector<HTMLElement>('#reel-helper')!;
 const reelResult = document.querySelector<HTMLElement>('#reel-result')!;
 const netDebug = document.querySelector<HTMLElement>('#net-debug')!;
+const voiceToggle = document.querySelector<HTMLButtonElement>('#voice-toggle')!;
+const voiceSettingsToggle = document.querySelector<HTMLButtonElement>('#voice-settings-toggle')!;
+const voicePanel = document.querySelector<HTMLElement>('#voice-panel')!;
+const voiceSettingsClose = document.querySelector<HTMLButtonElement>('#voice-settings-close')!;
+const voiceStatus = document.querySelector<HTMLElement>('#voice-status')!;
+const voiceMessage = document.querySelector<HTMLElement>('#voice-message')!;
+const voicePtt = document.querySelector<HTMLInputElement>('#voice-ptt')!;
+const voiceVolume = document.querySelector<HTMLInputElement>('#voice-volume')!;
+const voiceVolumeValue = document.querySelector<HTMLElement>('#voice-volume-value')!;
+const voicePlayers = document.querySelector<HTMLElement>('#voice-players')!;
 const netDebugEnabled = import.meta.env.DEV && new URLSearchParams(location.search).has('netdebug');
 if (netDebugEnabled) netDebug.classList.remove('hidden');
 
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
+let voice: VoiceClient;
+voice = new VoiceClient({
+  status: (status, message) => {
+    const labels: Record<VoiceConnectionStatus, string> = { off: 'Off', connecting: 'Connecting…', connected: 'Connected', failed: 'Connection failed' };
+    voiceStatus.textContent = labels[status];
+    voiceMessage.textContent = message ?? (status === 'failed' ? 'Check your connection and try again.' : 'Enable your mic to talk with nearby players.');
+    if (message) showToast(message);
+    updateVoiceButton();
+  },
+  microphone: () => updateVoiceButton(),
+  speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
+  mutedPlayersChanged: renderVoicePlayers,
+});
+voiceVolume.value = String(voice.volume);
+voiceVolumeValue.textContent = `${Math.round(voice.volume * 100)}%`;
+voicePtt.checked = voice.isPushToTalk;
 const gameCanvas = scene.renderer.domElement;
 gameCanvas.tabIndex = 0;
 const minimap = new Minimap(
@@ -132,6 +159,7 @@ let joined = false;
 let firstPersonView = false;
 let selfId = '';
 let currentRoom = '';
+let voiceResumeToken = '';
 let isPhotoboothMode = false;
 let previousPhotoboothFacing = 0;
 let availableRooms: { room: string; playerCount: number }[] = [];
@@ -446,6 +474,59 @@ function setConnected(value: boolean): void {
   connectionDot.classList.toggle('offline', !value);
   connectionLabel.textContent = value ? 'Connected' : 'Disconnected';
   document.querySelector<HTMLButtonElement>('#connection-control')!.setAttribute('aria-label', value ? 'Connected' : 'Disconnected');
+}
+
+function updateVoiceButton(): void {
+  const active = voice.isEnabled;
+  const transmitting = voice.isMicrophoneEnabled;
+  let label: string;
+  if (voice.connectionStatus === 'connecting') label = 'Voice connecting';
+  else if (voice.connectionStatus === 'failed') label = 'Retry voice chat';
+  else if (!active) label = 'Enable voice chat';
+  else if (voice.isPushToTalk) label = transmitting ? 'Voice on · release V to mute' : 'Voice ready · hold V to talk';
+  else label = transmitting ? 'Microphone on · click to mute' : 'Microphone off · click to unmute';
+  voiceToggle.setAttribute('aria-label', label);
+  voiceToggle.title = label;
+  voiceToggle.dataset.status = voice.connectionStatus;
+  voiceToggle.setAttribute('aria-pressed', String(transmitting));
+  voiceToggle.classList.toggle('active', transmitting || (active && voice.isPushToTalk));
+  voiceToggle.classList.toggle('voice-muted', active && !transmitting && !voice.isPushToTalk);
+  const tooltip = voiceToggle.querySelector<HTMLElement>('.dock-tooltip');
+  if (tooltip) tooltip.textContent = voice.isPushToTalk ? (transmitting ? 'Talking · V' : 'Hold to talk · V') : (transmitting ? 'Mic on' : active ? 'Mic off' : 'Enable voice');
+}
+
+function renderVoicePlayers(): void {
+  voicePlayers.replaceChildren();
+  const others = scene.mapPlayers().filter((player) => player.id !== selfId);
+  if (!others.length) {
+    const empty = document.createElement('span');
+    empty.className = 'voice-empty';
+    empty.textContent = joined ? 'No other players in this room yet.' : 'Join the pond to see players.';
+    voicePlayers.append(empty);
+    return;
+  }
+  for (const player of others) {
+    const row = document.createElement('div');
+    row.className = 'voice-player-row';
+    const name = document.createElement('span');
+    name.textContent = player.name;
+    const label = document.createElement('label');
+    const mute = document.createElement('input');
+    mute.type = 'checkbox';
+    mute.checked = voice.isPlayerMuted(player.id);
+    mute.setAttribute('aria-label', `Mute ${player.name}`);
+    mute.addEventListener('change', () => voice.setPlayerMuted(player.id, mute.checked));
+    label.append(mute, document.createTextNode('Mute'));
+    row.append(name, label);
+    voicePlayers.append(row);
+  }
+}
+
+function setVoicePanel(open: boolean): void {
+  voicePanel.classList.toggle('hidden', !open);
+  voiceSettingsToggle.classList.toggle('active', open);
+  voiceSettingsToggle.setAttribute('aria-expanded', String(open));
+  if (open) renderVoicePlayers();
 }
 
 function setViewMode(firstPerson: boolean): void {
@@ -874,8 +955,10 @@ function join(room: string, name: string): void {
       observeServerTime(message.serverTime);
       applyWeather(message.weather, false);
       selfId = message.selfId;
+      voiceResumeToken = message.resumeToken;
       movementSequence = 0; lastSentMotion = null; lastMovementSentAt = 0; lastMovementHeartbeatAt = 0;
       currentRoom = message.room;
+      voice.setSession(message.room, selfId, message.resumeToken);
       document.querySelector('h1')!.innerHTML = 'Welcome to<br/><span>Mengai</span>';
       document.querySelector('.intro')!.textContent = 'Find a quiet spot by the water and see who else is out fishing.';
       scene.clearPlayers();
@@ -904,6 +987,7 @@ function join(room: string, name: string): void {
       backpackUi.classList.remove('hidden');
       setOpenSidePanel(null);
       updateCount();
+      renderVoicePlayers();
       joined = true;
       const debugWeather = pendingDebugWeather ?? forcedWeather;
       pendingDebugWeather = null;
@@ -913,6 +997,7 @@ function join(room: string, name: string): void {
       joinScreen.classList.add('hidden');
       hud.classList.remove('hidden');
       setConnected(true);
+      updateVoiceButton();
       joinButton.disabled = false;
       joinButton.innerHTML = 'Join the pond <span aria-hidden="true">→</span>';
       formError.textContent = '';
@@ -926,8 +1011,8 @@ function join(room: string, name: string): void {
       if (me) updateChickenScore(me.chickenScore);
       updateCount();
     },
-    playerJoined: (player, serverTime) => { observeServerTime(serverTime); scene.upsert(player, serverTime); updateCount(); showToast(`${player.name} joined the pond`); },
-    playerLeft: (id) => { scene.remove(id); updateCount(); },
+    playerJoined: (player, serverTime) => { observeServerTime(serverTime); scene.upsert(player, serverTime); updateCount(); renderVoicePlayers(); showToast(`${player.name} joined the pond`); },
+    playerLeft: (id) => { voice.removeGamePlayer(id); scene.remove(id); updateCount(); renderVoicePlayers(); },
     correction: (message) => { if (message.seq >= movementSequence) scene.applyCorrection(message.x, message.z); },
     clockOffset: (offsetMs) => {
       serverClockOffset = offsetMs; hasServerClockSample = true; scene.setServerClockOffset(offsetMs);
@@ -1004,6 +1089,8 @@ function join(room: string, name: string): void {
     chickenState: (chickens, serverTime) => scene.setChickens(chickens, serverTime),
     disconnected: () => {
       joined = false;
+      voiceResumeToken = '';
+      void voice.disconnect();
       if (isPhotoboothMode) exitPhotobooth();
       cancelMouseTurn();
       scene.clearPlayers();
@@ -1098,6 +1185,19 @@ leaderboardToggle.addEventListener('click', () => {
   setOpenSidePanel(openSidePanel === 'leaderboard' ? null : 'leaderboard');
 });
 viewToggle.addEventListener('click', () => setViewMode(!firstPersonView));
+voiceToggle.addEventListener('click', () => {
+  if (!voice.isEnabled) void voice.enable(currentRoom, selfId, voiceResumeToken);
+  else if (voice.isPushToTalk) void voice.disconnect();
+  else void voice.toggleMicrophone();
+});
+voiceSettingsToggle.addEventListener('click', () => setVoicePanel(voicePanel.classList.contains('hidden')));
+voiceSettingsClose.addEventListener('click', () => setVoicePanel(false));
+voicePtt.addEventListener('change', () => { void voice.setPushToTalk(voicePtt.checked); updateVoiceButton(); });
+voiceVolume.addEventListener('input', () => {
+  const value = Number(voiceVolume.value);
+  voice.setMasterVolume(value);
+  voiceVolumeValue.textContent = `${Math.round(value * 100)}%`;
+});
 photoboothEnter.addEventListener('click', enterPhotobooth);
 leaderboardClose.addEventListener('click', () => setOpenSidePanel(null));
 backpackToggle.addEventListener('click', () => setBackpackOpen(backpackPanel.classList.contains('hidden')));
@@ -1176,6 +1276,11 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (key === 'v' && joined && voice.isPushToTalk) {
+    event.preventDefault();
+    if (!event.repeat) void voice.setPushToTalkHeld(true);
+    return;
+  }
   if (key === 'p' && joined && !event.repeat) {
     event.preventDefault();
     if (isPhotoboothMode) exitPhotobooth();
@@ -1262,6 +1367,7 @@ window.addEventListener('keydown', (event) => {
   keys.add(key);
 });
 window.addEventListener('keyup', (event) => {
+  if (event.key.toLowerCase() === 'v' && voice.isPushToTalk) void voice.setPushToTalkHeld(false);
   if (isPhotoboothMode) return;
   if (event.code === 'Space') reelGame?.setHeld(false);
   const key = keyNames[event.key] ?? event.key.toLowerCase();
@@ -1274,6 +1380,7 @@ window.addEventListener('keyup', (event) => {
   keys.delete(key);
 });
 window.addEventListener('blur', () => {
+  if (voice.isPushToTalk) void voice.setPushToTalkHeld(false);
   const wasMoving = hasForwardInput();
   cancelMouseTurn();
   keys.clear(); reelGame?.setHeld(false);
@@ -1318,6 +1425,7 @@ function animate(now: number): void {
     minimap.render(now, scene.mapPlayers());
   }
   if (joined) {
+    voice.updateSpatialAudio(scene.mapPlayers(), selfId, now);
     sendLocalMovement(false);
     const distance = Math.hypot(scene.getPosition().x, scene.getPosition().z);
     const fishing = scene.fishingState();
@@ -1337,3 +1445,4 @@ function animate(now: number): void {
 // The same frame loop renders the island before joining and drives gameplay after joining.
 whatsNewClose.focus({ preventScroll: true });
 requestAnimationFrame(animate);
+window.addEventListener('pagehide', () => { void voice.disconnect(); });

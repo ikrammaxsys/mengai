@@ -5,12 +5,21 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
+import { TokenVerifier } from 'livekit-server-sdk';
 
 const port = 3301;
 const dataFile = join(tmpdir(), `mengai-smoke-${process.pid}.json`);
 function startServer() {
   return spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'server/src/index.ts'], {
-    env: { ...process.env, NODE_ENV: 'development', PORT: String(port), GAME_DATA_FILE: dataFile },
+    env: {
+      ...process.env,
+      NODE_ENV: 'development',
+      PORT: String(port),
+      GAME_DATA_FILE: dataFile,
+      LIVEKIT_URL: 'wss://voice.example.test',
+      LIVEKIT_API_KEY: 'smoke-livekit-key',
+      LIVEKIT_API_SECRET: 'smoke-livekit-secret',
+    },
     stdio: 'ignore',
   });
 }
@@ -140,6 +149,27 @@ try {
   assert.deepEqual(skyeJoined.chickens.map((chicken) => chicken.id), riverJoined.chickens.map((chicken) => chicken.id),
     'same-room joiners should receive the same chicken flock');
   await waitFor(river, 'player_joined');
+  const voiceUrl = `http://127.0.0.1:${port}/voice-token?room=pond-test&playerId=${encodeURIComponent(riverJoined.selfId)}`;
+  const unauthorizedVoiceToken = await fetch(voiceUrl);
+  assert.equal(unauthorizedVoiceToken.status, 401, 'voice tokens must require an authenticated game player');
+  const impersonatedVoiceToken = await fetch(`http://127.0.0.1:${port}/voice-token?room=pond-test&playerId=${encodeURIComponent(skyeJoined.selfId)}`, {
+    headers: { Authorization: `Bearer ${riverJoined.resumeToken}` },
+  });
+  assert.equal(impersonatedVoiceToken.status, 401, 'a game credential cannot mint a token for another player');
+  const voiceTokenResponse = await fetch(voiceUrl, { headers: { Authorization: `Bearer ${riverJoined.resumeToken}` } });
+  assert.equal(voiceTokenResponse.status, 200);
+  const voiceTokenBody = await voiceTokenResponse.json();
+  assert.equal(voiceTokenBody.url, 'wss://voice.example.test');
+  assert.match(voiceTokenBody.room, /^game-room-[a-f0-9]{32}$/);
+  assert.equal(JSON.stringify(voiceTokenBody).includes('smoke-livekit-secret'), false, 'the LiveKit API secret must never be returned');
+  const voiceClaims = await new TokenVerifier('smoke-livekit-key', 'smoke-livekit-secret').verify(voiceTokenBody.token);
+  assert.equal(voiceClaims.sub, riverJoined.selfId, 'LiveKit identity should match the game player ID');
+  assert.equal(voiceClaims.name, 'River', 'LiveKit participant name should match the game player name');
+  assert.equal(voiceClaims.video.room, voiceTokenBody.room);
+  assert.equal(voiceClaims.video.roomJoin, true);
+  assert.equal(voiceClaims.video.canPublish, true);
+  assert.equal(voiceClaims.video.canSubscribe, true);
+  assert.ok(voiceClaims.exp - voiceClaims.nbf <= 600, 'voice tokens should be short-lived');
   const roomsResponse = await fetch(`http://127.0.0.1:${port}/api/rooms`);
   const roomList = await roomsResponse.json();
   assert.equal(roomList.rooms.find((room) => room.room === 'pond-test').playerCount, 2);

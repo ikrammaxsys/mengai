@@ -102,6 +102,12 @@ export class Rooms {
     return this.rooms.get(roomId)?.players.get(playerId);
   }
 
+  findPlayerByResumeToken(roomId: string, resumeToken: string): Player | undefined {
+    const room = this.rooms.get(roomId);
+    if (!room) return undefined;
+    return [...room.players.values()].find((player) => player.resumeToken === resumeToken && player.disconnectedAt === null);
+  }
+
   getRoom(roomId: string): Room | undefined { return this.rooms.get(roomId); }
 
   all(): IterableIterator<Room> {

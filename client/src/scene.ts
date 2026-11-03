@@ -12,7 +12,7 @@ import { PHOTOBOOTH_CONFIG } from './photobooth';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; speaking: boolean };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
@@ -268,7 +268,7 @@ export class GameScene {
       if (catchId) this.heldFishClickHandler?.(player.id, catchId);
     });
     this.labels.appendChild(label);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown, speaking: false };
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
@@ -370,6 +370,10 @@ export class GameScene {
 
   heldFish(playerId: string): HeldFish | null { return this.avatars.get(playerId)?.holdingFish ?? null; }
   playerName(playerId: string): string { return this.avatars.get(playerId)?.label.dataset.name ?? 'Pond friend'; }
+  setVoiceSpeaking(playerId: string, speaking: boolean): void {
+    const avatar = this.avatars.get(playerId);
+    if (avatar) avatar.speaking = speaking;
+  }
 
   setServerClockOffset(offsetMs: number): void { this.serverClockOffset = offsetMs; }
 
@@ -745,8 +749,9 @@ export class GameScene {
 
   fishingState(): FishingState { return this.avatars.get(this.localId)?.fishing ?? 'idle'; }
   playerCount(): number { return this.avatars.size; }
-  mapPlayers(): { x: number; z: number; facing: number; color: string; name: string; fishing: boolean; local: boolean }[] {
-    return [...this.avatars.values()].map((avatar) => ({
+  mapPlayers(): { id: string; x: number; z: number; facing: number; color: string; name: string; fishing: boolean; local: boolean }[] {
+    return [...this.avatars.entries()].map(([id, avatar]) => ({
+      id,
       x: avatar.group.position.x,
       z: avatar.group.position.z,
       facing: avatar.local ? avatar.targetFacing : avatar.group.rotation.y,
@@ -852,7 +857,8 @@ export class GameScene {
         ? `<button class="held-fish-chip" data-catch-id="${this.escape(fish.catchId)}" style="--rarity-color:${fishSpecies.rarityColor}" type="button">🐟 ${this.escape(fishSpecies.name)} · ${fish.weightKg.toFixed(1)} kg</button>`
         : '';
       const photoMark = avatar.inPhotobooth ? '<span class="photo-camera-mark" aria-label="In photobooth">📸</span>' : '';
-      const labelMarkup = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span>${fishChip}`;
+      const voiceMark = avatar.speaking ? '<span class="voice-speaking-mark" title="Speaking" aria-label="Speaking">🎙</span>' : '';
+      const labelMarkup = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}${voiceMark}</span>${fishChip}`;
       if (avatar.renderedLabelMarkup !== labelMarkup) {
         avatar.label.innerHTML = labelMarkup;
         avatar.renderedLabelMarkup = labelMarkup;

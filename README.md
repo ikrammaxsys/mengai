@@ -22,7 +22,7 @@ Run `npm run dev` on the host computer, then open the **Network** URL printed by
 Run the WebSocket integration smoke test with `npm test`.
 Run a 1,000-catch distribution and pity check with `npm run simulate:fishing`.
 
-The Vite client runs on port `5173`; the WebSocket and room-list API run privately on port `3002`. Vite proxies same-origin `/ws` upgrades and `/api` requests to the local server, so a single public tunnel is enough.
+The Vite client runs on port `5173`; the WebSocket, room-list API, and voice-token endpoint run privately on port `3002`. Vite proxies same-origin `/ws` upgrades and `/api` and `/voice-token` requests to the local server, so a single public tunnel is enough. LiveKit signaling/media traffic connects directly from the browser to `LIVEKIT_URL`.
 
 ### Share the dev app with ngrok
 
@@ -34,7 +34,21 @@ ngrok http 5173
 
 Share the generated HTTPS URL. The browser will use `wss://<that-same-host>/ws`, and Vite will forward the WebSocket upgrade to local port `3002`. The Vite config allows ngrok's `*.ngrok-free.dev` hostnames. Do not expose port `3002` separately.
 
-For a production/reverse-proxy deployment, proxy `/ws` to the Node server with WebSocket upgrades enabled, or set `VITE_WS_URL` at build time to the public `wss://` endpoint.
+For a production/reverse-proxy deployment, proxy `/ws` to the Node server with WebSocket upgrades enabled and forward `/voice-token` to the same Node server, or set `VITE_WS_URL` at build time to the public `wss://` endpoint.
+
+### Proximity voice chat
+
+Voice is optional and connects only after a player enables the microphone in the HUD. Configure LiveKit Cloud or a self-hosted LiveKit server on the game server with:
+
+```sh
+LIVEKIT_URL=wss://your-livekit-host
+LIVEKIT_API_KEY=your-api-key
+LIVEKIT_API_SECRET=your-api-secret
+```
+
+Keep `LIVEKIT_API_SECRET` on the server; it is only used to mint short-lived, room-scoped participant tokens. The game validates the room-scoped resume token before issuing a voice token and uses the player ID/name as LiveKit identity/display name. Proximity audio is spatialized in the browser; voice needs HTTPS in deployed environments (localhost is allowed). The V key is push-to-talk when that option is enabled in Voice settings; otherwise V retains its view-switch shortcut.
+
+Put these values in the repository-root `.env` file (copy `.env.example` to start); `.env` is gitignored and loaded by the game server. Environment variables set by the deployment environment take precedence.
 
 ## Play
 
@@ -67,6 +81,7 @@ client/
   index.html
   src/main.ts       UI, input, client prediction, and the single game frame loop
   src/network.ts    WebSocket client and protocol types
+  src/voice.ts      Swappable LiveKit voice transport and Web Audio proximity audio
   src/scene.ts      Three.js island, avatars, labels, cast arcs, and interpolation
   src/campfire.ts   Campfire clearing, log benches, and flickering firelight
   src/fishModels.ts Procedural fish, catch preview, and leaderboard icons
@@ -93,6 +108,7 @@ Messages are JSON objects with a `type` field. The server is authoritative for r
 | Client → server | `join` | `{ room, name, resumeToken? }`; creates a room if needed and checks the 1–16 character name for uniqueness (case-insensitive), or reclaims the same player during the 10-second grace period. |
 | Server → client | `joined` | `{ selfId, room, resumeToken, serverTime, players, leaderboard, personalBest, stones }`; full room snapshot after joining. |
 | HTTP GET `/api/rooms` | Server → client | `{ rooms: [{ room, playerCount }] }`; public lobby list containing room numbers and active player counts only. |
+| HTTP GET `/voice-token?room=<roomId>&playerId=<playerId>` | Client → server | Authenticated with `Authorization: Bearer <resumeToken>`; returns a 10-minute room-scoped LiveKit JWT and public LiveKit URL. |
 | Server → peers | `player_joined` | Announces a player joining the room. |
 | Client → server | `move` | `{ seq, x, z, rotY, moving, t, rttMs }` absolute transform, sequence, timestamp, movement state, and bounded RTT estimate. Updates are sent on changes at up to 20 Hz with a 1 Hz heartbeat. |
 | Server → client | `correction` | `{ x, z, seq }` accepted position for an invalid or out-of-bounds transform; local correction is blended unless the error is large. |
