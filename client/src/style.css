@@ -274,6 +274,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 }
 .pebble-hint { position: absolute; transform: translate(-50%, -100%); padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,.94); color: #47675b; box-shadow: 0 3px 11px rgba(34,66,54,.15); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .bonk-puff { position: absolute; transform: translate(-50%, -100%); color: #e7b84a; font-size: 22px; font-weight: 800; text-shadow: 0 2px 7px rgba(102,78,29,.25); }
+.chicken-score-pop { position: absolute; z-index: 14; transform: translate(-50%, -100%); color: #f2cc60; font-size: 18px; font-weight: 900; text-shadow: 0 2px 5px rgba(75,53,23,.72), 0 0 8px rgba(255,248,198,.72); pointer-events: none; }
 .net-debug { position: fixed; z-index: 120; top: 12px; right: 12px; margin: 0; padding: 9px 11px; border: 1px solid rgba(255,255,255,.45); border-radius: 9px; background: rgba(26,43,39,.84); color: #d5f0e3; font: 10px/1.45 Consolas, monospace; pointer-events: none; white-space: pre; }
 .big-catch-banner { top: 76px; }
 #app.has-big-catch .leaderboard-panel, #app.has-big-catch .backpack-panel { top: 204px; }
@@ -297,6 +298,8 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .room-card strong { margin: 0; color: #294c43; font: 700 13px 'Trebuchet MS', 'Segoe UI', sans-serif; }
 .room-card .room-separator { color: #aabbb2; }
 .room-card #player-count { color: #3d7762; font-weight: 800; }
+.chicken-score { display: inline-flex; align-items: center; gap: 3px; color: #6a7860; font-size: 10px; }
+.chicken-score strong { color: #8a6b35; font-size: 11px; }
 .people-dot { flex: 0 0 7px; width: 7px; height: 7px; margin-left: 1px; box-shadow: 0 0 0 3px rgba(77,184,144,.12); }
 .weather-control { position: absolute; z-index: 4; top: var(--hud-margin); left: 50%; padding: 0; border: 0; transform: translateX(-50%); pointer-events: auto; }
 .weather-badge { height: 42px; gap: 8px; padding: 0 14px; border: 1px solid rgba(255,255,255,.9); border-radius: 13px; background: rgba(255,255,255,.94); color: #3b6657; box-shadow: 0 5px 20px rgba(47,86,81,.1); font-size: 12px; transition: background .15s, transform .15s, box-shadow .15s; }

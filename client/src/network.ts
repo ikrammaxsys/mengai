@@ -1,6 +1,7 @@
 import type { FishRarity, FishSpeciesId, ReelParameters } from '../../shared/fishConfig';
 import { FISH_CONFIG } from '../../shared/fishConfig';
 import type { WeatherSnapshot, WeatherType } from '../../shared/weatherConfig';
+import type { ChickenSnapshot } from '../../shared/chickenConfig';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -73,6 +74,7 @@ export interface StoneFlight {
   startTime: number;
   flightMs: number;
   targetId: string | null;
+  throwerId: string;
 }
 
 export interface StoneSnapshot {
@@ -85,6 +87,7 @@ export interface StoneSnapshot {
   state: 'ground' | 'carried' | 'flying' | 'respawning';
   carriedBy: string | null;
   flight: StoneFlight | null;
+  chickenHitId: string | null;
   respawnAt: number | null;
 }
 
@@ -111,10 +114,11 @@ export interface PlayerSnapshot {
   holdingFish?: HeldFish | null;
   moving: boolean;
   inPhotobooth: boolean;
+  chickenScore: number;
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[] }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -137,7 +141,8 @@ type Handlers = {
   stoneLanded: (message: { stoneId: string; position: { x: number; z: number }; water: boolean; hitPlayerId: string | null }) => void;
   stoneRespawn: (message: { stoneId: string; position: { x: number; z: number } }) => void;
   stoneHit: (playerId: string, fishingCancelled: boolean) => void;
-  chickenHit: (message: { chickenId: string; startTime: number; directionX: number; directionZ: number }) => void;
+  chickenHit: (message: { chickenId: string; playerId: string; newScore: number; startTime: number }) => void;
+  chickenState: (chickens: ChickenSnapshot[], serverTime: number) => void;
   chat: (message: { playerId: string; name: string; text: string; at: number; catch?: CatchEntry }) => void;
   inventorySync: (items: InventoryItem[], totalCaught: number, personalBest: InventoryItem | null, collection: InventoryItem[]) => void;
   inventoryAdd: (item: InventoryItem) => void;
@@ -266,6 +271,7 @@ export class Network {
         case 'stone_respawn': this.handlers.stoneRespawn(message as unknown as Parameters<Handlers['stoneRespawn']>[0]); break;
         case 'stone_hit': this.handlers.stoneHit(String(message.playerId), Boolean(message.fishingCancelled)); break;
         case 'chicken_hit': this.handlers.chickenHit(message as unknown as Parameters<Handlers['chickenHit']>[0]); break;
+        case 'chicken_state': this.handlers.chickenState(message.chickens as ChickenSnapshot[], Number(message.serverTime) || Date.now()); break;
         case 'chat': this.handlers.chat(message.message as Parameters<Handlers['chat']>[0]); break;
         case 'inventory_sync': this.handlers.inventorySync(message.items as InventoryItem[], Number(message.totalCaught) || 0, message.personalBest as InventoryItem | null, message.collection as InventoryItem[] ?? []); break;
         case 'inventory_add': this.handlers.inventoryAdd(message.item as InventoryItem); break;

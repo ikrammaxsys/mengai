@@ -127,6 +127,9 @@ try {
   assert.ok(riverJoined.weather.endsAt > riverJoined.weather.startedAt);
   const initialRiver = riverJoined.players.find((player) => player.id === riverJoined.selfId);
   river.moveSeq = 0;
+  assert.ok(riverJoined.chickens.length >= 5 && riverJoined.chickens.length <= 8);
+  const chickenState = await waitFor(river, 'chicken_state');
+  assert.equal(chickenState.chickens.length, riverJoined.chickens.length);
   assert.ok(riverJoined.stones.some((stone) => stone.id === 'pebble-3' && stone.state === 'ground'));
 
   const skye = await connect();
@@ -134,6 +137,8 @@ try {
   const skyeJoined = await waitFor(skye, 'joined');
   assert.deepEqual(skyeJoined.weather, riverJoined.weather, 'room join snapshots should carry the same server weather');
   skye.moveSeq = 0;
+  assert.deepEqual(skyeJoined.chickens.map((chicken) => chicken.id), riverJoined.chickens.map((chicken) => chicken.id),
+    'same-room joiners should receive the same chicken flock');
   await waitFor(river, 'player_joined');
   const roomsResponse = await fetch(`http://127.0.0.1:${port}/api/rooms`);
   const roomList = await roomsResponse.json();

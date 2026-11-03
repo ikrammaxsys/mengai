@@ -7,6 +7,7 @@ import { WORLD_CONFIG } from '../../shared/worldConfig';
 import { Campfire } from './campfire';
 import { WeatherEffects } from './weatherEffects';
 import type { WeatherSnapshot } from '../../shared/weatherConfig';
+import type { ChickenSnapshot } from '../../shared/chickenConfig';
 import { PHOTOBOOTH_CONFIG } from './photobooth';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
@@ -85,7 +86,7 @@ export class GameScene {
     this.camera.lookAt(0, 0, 0);
     this.buildWorld();
     this.weatherEffects = new WeatherEffects(this.scene, this.ambientLight, this.directionalLight, this.waterGeometry, this.waterMaterial);
-    this.chickens = new ChickenFlock(this.scene);
+    this.chickens = new ChickenFlock(this.scene, this.labels);
     this.campfire = new Campfire(this.scene, this.labels);
     window.addEventListener('resize', this.onResize);
   }
@@ -351,9 +352,11 @@ export class GameScene {
 
   setHeldFishClickHandler(handler: (playerId: string, catchId: string) => void): void { this.heldFishClickHandler = handler; }
 
-  hitChicken(message: { chickenId: string; startTime: number; directionX: number; directionZ: number }): void {
-    this.chickens.hit(message.chickenId, message.startTime, message.directionX, message.directionZ);
+  hitChicken(message: { chickenId: string; startTime: number }): void {
+    this.chickens.hit(message);
   }
+
+  setChickens(chickens: ChickenSnapshot[], serverTime: number): void { this.chickens.setSnapshots(chickens, serverTime); }
 
   setCampfireCooking(cooking: CampfireCooking | null): void { this.campfire.setCooking(cooking); }
 
@@ -880,7 +883,7 @@ export class GameScene {
       }
     }
     this.renderStones(serverNow);
-    this.chickens.render(serverNow);
+    this.chickens.render(serverNow, this.camera);
     this.campfire.render(serverNow, this.camera, this.getPosition());
     this.weatherEffects.update(serverNow, this.camera);
     this.renderer.render(this.scene, this.camera);

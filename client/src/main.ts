@@ -22,6 +22,7 @@ const formError = document.querySelector<HTMLElement>('#form-error')!;
 const hud = document.querySelector<HTMLElement>('#hud')!;
 const roomHud = document.querySelector<HTMLElement>('#hud-room')!;
 const playerCount = document.querySelector<HTMLElement>('#player-count')!;
+const chickenScoreElement = document.querySelector<HTMLElement>('#chicken-score')!;
 const connectionDot = document.querySelector<HTMLElement>('#connection-dot')!;
 const connectionLabel = document.querySelector<HTMLElement>('#connection-label')!;
 const viewToggle = document.querySelector<HTMLButtonElement>('#view-toggle')!;
@@ -179,6 +180,7 @@ const whatsNewItems = [
   { icon: '🌦️', title: 'Weather', description: 'The pond has moods now. Rain, fog and storms change what’s biting.' },
   { icon: '🗺️', title: 'Island minimap', description: 'Find the pond, campfire, stones, and other fishers at a glance. Press M to expand the map.' },
   { icon: '🪨', title: 'Friendly splash', description: 'Want to keep your friend off the top spot? Toss a stone while they’re fishing!' },
+  { icon: '🐔', title: 'Chicken hits', description: 'Toss a stone at a wandering chicken to earn a hit. Hit chickens pop out and respawn somewhere new.' },
   { icon: '⌨️', title: 'Quick controls', description: 'Press Escape to close the chatbox.' },
 ];
 
@@ -353,6 +355,10 @@ function finishReel(success: boolean, notifyServer = true): void {
 }
 
 function updateCount(): void { playerCount.textContent = String(scene.playerCount()); }
+
+function updateChickenScore(score: number): void {
+  chickenScoreElement.textContent = String(Math.max(0, Math.floor(score)));
+}
 
 function hasForwardInput(): boolean { return keys.has('w') || keys.has('s'); }
 
@@ -877,9 +883,11 @@ function join(room: string, name: string): void {
       scene.setFirstPersonView(firstPersonView);
       const me = message.players.find((player) => player.id === selfId);
       myHeldFish = me?.holdingFish ?? null;
+      updateChickenScore(me?.chickenScore ?? 0);
       if (me) scene.addLocal(me);
       for (const player of message.players) if (player.id !== selfId) scene.upsert(player, message.serverTime);
       scene.setStones(message.stones ?? []);
+      scene.setChickens(message.chickens ?? [], message.serverTime);
       scene.setCampfireCooking(message.campfireCooking ?? null);
       roomHud.textContent = `Room ${message.room}`;
       updateLeaderboard(message.leaderboard ?? []);
@@ -914,6 +922,8 @@ function join(room: string, name: string): void {
     state: (players, serverTime) => {
       observeServerTime(serverTime);
       for (const player of players) if (player.id !== selfId) scene.upsert(player, serverTime);
+      const me = players.find((player) => player.id === selfId);
+      if (me) updateChickenScore(me.chickenScore);
       updateCount();
     },
     playerJoined: (player, serverTime) => { observeServerTime(serverTime); scene.upsert(player, serverTime); updateCount(); showToast(`${player.name} joined the pond`); },
@@ -987,7 +997,11 @@ function join(room: string, name: string): void {
     stoneLanded: (message) => scene.landStone(message),
     stoneRespawn: (message) => scene.respawnStone(message.stoneId, message.position),
     stoneHit: handleStoneHit,
-    chickenHit: (message) => scene.hitChicken(message),
+    chickenHit: (message) => {
+      scene.hitChicken(message);
+      if (message.playerId === selfId) updateChickenScore(message.newScore);
+    },
+    chickenState: (chickens, serverTime) => scene.setChickens(chickens, serverTime),
     disconnected: () => {
       joined = false;
       if (isPhotoboothMode) exitPhotobooth();

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FishingProfile, Player, PlayerSnapshot, Room } from './types.js';
 import { FISH_CONFIG } from '../../shared/fishConfig.js';
 import { createWeatherSnapshot } from '../../shared/weatherConfig.js';
+import { createChickenFlock } from './chickens.js';
 
 const COLORS = ['#f07853', '#5c9ee8', '#e6b84b', '#a978d1', '#4cb89b', '#e37eae', '#7eb653', '#e08a43'];
 export const RESUME_GRACE_MS = 10_000;
@@ -13,10 +14,11 @@ export class Rooms {
     let room = this.rooms.get(roomId);
     if (!room) {
       const stones = new Map(FISH_CONFIG.stones.pebbles.map((pebble) => [pebble.id, {
-        id: pebble.id, originX: pebble.x, originZ: pebble.z, x: pebble.x, z: pebble.z, color: pebble.color,
-        state: 'ground' as const, carriedBy: null, flight: null, respawnAt: null,
-      }]));
-       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', Date.now()) };
+         id: pebble.id, originX: pebble.x, originZ: pebble.z, x: pebble.x, z: pebble.z, color: pebble.color,
+         state: 'ground' as const, carriedBy: null, flight: null, chickenHitId: null, respawnAt: null,
+       }]));
+       const createdAt = Date.now();
+       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt) };
        this.rooms.set(roomId, room);
     } else if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', Date.now());
     const normalized = name.toLocaleLowerCase();
@@ -71,6 +73,7 @@ export class Rooms {
       reelCandidates: null,
       pendingCatch: null,
       carryingStoneId: null,
+      chickenScore: 0,
       inPhotobooth: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
@@ -112,9 +115,10 @@ export class Rooms {
   }
 
   snapshot(room: Room, includeHoldingFish = true): PlayerSnapshot[] {
-    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth }) => ({
+    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
+      chickenScore,
       ...(includeHoldingFish ? { holdingFish } : {}),
       moving,
     }));

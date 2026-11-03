@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import type { FishRarity, FishSpeciesId } from '../../shared/fishConfig.js';
 import type { CatchRecord } from './inventory.js';
 import type { WeatherSnapshot } from '../../shared/weatherConfig.js';
+import type { ChickenAgent, ChickenSnapshot } from '../../shared/chickenConfig.js';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -55,6 +56,7 @@ export interface StoneFlight {
   startTime: number;
   flightMs: number;
   targetId: string | null;
+  throwerId: string;
   waterLanding: boolean;
 }
 
@@ -68,6 +70,7 @@ export interface Stone {
   state: StoneState;
   carriedBy: string | null;
   flight: StoneFlight | null;
+  chickenHitId: string | null;
   respawnAt: number | null;
 }
 
@@ -95,6 +98,7 @@ export interface Player {
   reelCandidates: { normal: ReelCatchCandidate; quick: ReelCatchCandidate } | null;
   pendingCatch: ReelCatchCandidate | null;
   carryingStoneId: string | null;
+  chickenScore: number;
   inPhotobooth: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
@@ -114,6 +118,7 @@ export interface Room {
   campfireCooking: CampfireCooking | null;
   campfireReserved: boolean;
   weather: WeatherSnapshot;
+  chickens: Map<string, ChickenAgent>;
 }
 
 export interface PlayerSnapshot {
@@ -129,4 +134,7 @@ export interface PlayerSnapshot {
   carryingStoneId: string | null;
   holdingFish?: CatchRecord | null;
   inPhotobooth: boolean;
+  chickenScore: number;
 }
+
+export type { ChickenSnapshot };

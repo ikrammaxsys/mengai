@@ -8,7 +8,8 @@ import { RESUME_GRACE_MS, Rooms } from './rooms.js';
 import { rollSpecies, rollWeight } from './fishing.js';
 import type { CatchEntry, Player, Room } from './types.js';
 import { InMemoryInventoryStore, type CatchRecord, type InventoryStore } from './inventory.js';
-import { chickenNear, CHICKEN_HIT_RADIUS } from '../../shared/chickenPaths.js';
+import { awardChickenScore, chickenSnapshots, hitChickenAt, updateChickenFlock } from './chickens.js';
+import { CHICKEN_CONFIG } from '../../shared/chickenConfig.js';
 import { JsonGameDataStore, type PersistentGameDataStore } from './persistence.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
@@ -111,6 +112,7 @@ function roomSnapshot(room: Room, player: Player) {
     stones: rooms.stoneSnapshot(room),
     campfireCooking: room.campfireCooking,
     weather: room.weather,
+    chickens: chickenSnapshots(room.chickens),
     resumeToken: player.resumeToken,
   };
 }
@@ -377,6 +379,7 @@ wss.on('connection', (socket) => {
       stone.state = 'carried';
       stone.carriedBy = player.id;
       player.carryingStoneId = stone.id;
+      stone.chickenHitId = null;
       broadcast(room, { type: 'stone_picked', stoneId: stone.id, playerId: player.id });
       return;
     }
@@ -501,11 +504,12 @@ wss.on('connection', (socket) => {
         Math.min(FISH_CONFIG.stones.maxFlightMs, FISH_CONFIG.stones.minFlightMs + distance * FISH_CONFIG.stones.flightDistanceMs));
       stone.state = 'flying';
       stone.carriedBy = null;
-      stone.flight = { start, end: { x: endX, y: 0.2, z: endZ }, startTime: now, flightMs, targetId, waterLanding };
+      stone.chickenHitId = null;
+      stone.flight = { start, end: { x: endX, y: 0.2, z: endZ }, startTime: now, flightMs, targetId, throwerId: player.id, waterLanding };
       stone.respawnAt = null;
       player.carryingStoneId = null;
       player.lastStoneThrowAt = now;
-      broadcast(room, { type: 'stone_thrown', stoneId: stone.id, fromId: player.id, targetId, start: stone.flight.start, end: stone.flight.end, startTime: now, flightMs });
+      broadcast(room, { type: 'stone_thrown', stoneId: stone.id, fromId: player.id, targetId, throwerId: player.id, start: stone.flight.start, end: stone.flight.end, startTime: now, flightMs });
       return;
     }
 
@@ -653,6 +657,26 @@ setInterval(() => {
       }).finally(() => { room.campfireReserved = false; });
     }
     for (const stone of room.stones.values()) {
+      if (stone.state === 'flying' && stone.flight && stone.chickenHitId === null) {
+        const flight = stone.flight;
+        const progress = Math.max(0, Math.min(1, (now - flight.startTime) / flight.flightMs));
+        const eased = 1 - (1 - progress) * (1 - progress);
+        const stoneX = flight.start.x + (flight.end.x - flight.start.x) * eased;
+        const stoneZ = flight.start.z + (flight.end.z - flight.start.z) * eased;
+        const thrower = room.players.get(flight.throwerId);
+        const chickenHit = hitChickenAt(room.chickens, stoneX, stoneZ, now);
+        if (chickenHit) {
+          stone.chickenHitId = chickenHit.id;
+          const newScore = thrower ? awardChickenScore(thrower) : 0;
+          broadcast(room, {
+            type: 'chicken_hit',
+            chickenId: chickenHit.id,
+            playerId: flight.throwerId,
+            newScore,
+            startTime: now,
+          });
+        }
+      }
       if (stone.state === 'flying' && stone.flight && now >= stone.flight.startTime + stone.flight.flightMs) {
         const flight = stone.flight;
         const hit = !flight.waterLanding && flight.targetId ? room.players.get(flight.targetId) : undefined;
@@ -675,20 +699,23 @@ setInterval(() => {
           }
           broadcast(room, { type: 'stone_hit', playerId: hitPlayerId, stoneId: stone.id, fishingCancelled });
         }
-        const chicken = flight.waterLanding ? null : chickenNear(stone.x, stone.z, now, CHICKEN_HIT_RADIUS);
-        if (chicken) {
-          const directionX = flight.end.x - flight.start.x;
-          const directionZ = flight.end.z - flight.start.z;
-          broadcast(room, { type: 'chicken_hit', chickenId: chicken.chickenId, startTime: now, directionX, directionZ });
-        }
       } else if (stone.state === 'respawning' && stone.respawnAt !== null && now >= stone.respawnAt) {
-        stone.state = 'ground'; stone.x = stone.originX; stone.z = stone.originZ; stone.respawnAt = null;
+        stone.state = 'ground'; stone.x = stone.originX; stone.z = stone.originZ; stone.chickenHitId = null; stone.respawnAt = null;
         broadcast(room, { type: 'stone_respawn', stoneId: stone.id, position: { x: stone.x, z: stone.z } });
       }
     }
     if ((changed || room.players.size) && room.players.size) broadcast(room, { type: 'state', players: rooms.snapshot(room, false), serverTime: now });
   }
 }, 50);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.all()) {
+    if (!room.players.size) continue;
+    updateChickenFlock(room.chickens, now, CHICKEN_CONFIG.snapshotIntervalMs / 1000);
+    broadcast(room, { type: 'chicken_state', chickens: chickenSnapshots(room.chickens), serverTime: now });
+  }
+}, CHICKEN_CONFIG.snapshotIntervalMs);
 
 setInterval(() => {
   const now = Date.now();
