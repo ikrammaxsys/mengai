@@ -274,8 +274,26 @@ wss.on('connection', (socket) => {
       const seq = Number(message.seq);
       if (!Number.isSafeInteger(seq) || seq <= player.lastMoveSeq) return;
       player.lastMoveSeq = seq;
+      const wasPhotobooth = player.inPhotobooth;
       const reportedRtt = Number(message.rttMs);
       if (Number.isFinite(reportedRtt)) player.latencyRttMs = Math.max(0, Math.min(500, reportedRtt));
+      if (typeof message.inPhotobooth === 'boolean') {
+        player.inPhotobooth = message.inPhotobooth && player.fishing === 'idle';
+      }
+      if (wasPhotobooth && !player.inPhotobooth) {
+        const facing = Number(message.rotY);
+        if (Number.isFinite(facing)) player.facing = normalizeRotation(facing);
+        player.moving = false; player.velocityX = 0; player.velocityZ = 0;
+        player.lastMoveAt = Date.now();
+        return;
+      }
+      if (player.inPhotobooth) {
+        const facing = Number(message.rotY);
+        if (Number.isFinite(facing)) player.facing = normalizeRotation(facing);
+        player.moving = false; player.velocityX = 0; player.velocityZ = 0;
+        player.lastMoveAt = Date.now();
+        return;
+      }
       if (player.fishing !== 'idle') {
         player.moving = false;
         player.velocityX = 0;
@@ -305,6 +323,8 @@ wss.on('connection', (socket) => {
       player.lastMoveAt = now;
       return;
     }
+
+    if (player.inPhotobooth) return;
 
     if (message.type === 'fish_cast') {
       if (player.carryingStoneId) {
@@ -562,6 +582,7 @@ wss.on('connection', (socket) => {
       departing.carryingStoneId = null;
     }
     if (departing) {
+      departing.inPhotobooth = false;
       if (departing.holdingFish) {
         departing.resumeHoldingCatchId = departing.holdingFish.catchId;
         departing.holdingFish = null;
@@ -635,7 +656,7 @@ setInterval(() => {
       if (stone.state === 'flying' && stone.flight && now >= stone.flight.startTime + stone.flight.flightMs) {
         const flight = stone.flight;
         const hit = !flight.waterLanding && flight.targetId ? room.players.get(flight.targetId) : undefined;
-        const hitPlayerId = hit && Math.hypot(hit.x - flight.end.x, hit.z - flight.end.z) <= FISH_CONFIG.stones.hitRadius ? hit.id : null;
+        const hitPlayerId = hit && hit.disconnectedAt === null && Math.hypot(hit.x - flight.end.x, hit.z - flight.end.z) <= FISH_CONFIG.stones.hitRadius ? hit.id : null;
         stone.x = flight.end.x; stone.z = flight.end.z; stone.flight = null;
         if (flight.waterLanding) {
           stone.state = 'respawning';
@@ -645,7 +666,15 @@ setInterval(() => {
           stone.respawnAt = null;
         }
         broadcast(room, { type: 'stone_landed', stoneId: stone.id, position: { x: stone.x, z: stone.z }, water: flight.waterLanding, hitPlayerId });
-        if (hitPlayerId) broadcast(room, { type: 'stone_hit', playerId: hitPlayerId, stoneId: stone.id });
+        if (hitPlayerId) {
+          const hitPlayer = room.players.get(hitPlayerId)!;
+          const fishingCancelled = hitPlayer.fishing !== 'idle';
+          if (fishingCancelled) {
+            if (hitPlayer.fishing === 'fighting') broadcast(room, { type: 'reel_state', playerId: hitPlayer.id, active: false });
+            clearFishing(hitPlayer);
+          }
+          broadcast(room, { type: 'stone_hit', playerId: hitPlayerId, stoneId: stone.id, fishingCancelled });
+        }
         const chicken = flight.waterLanding ? null : chickenNear(stone.x, stone.z, now, CHICKEN_HIT_RADIUS);
         if (chicken) {
           const directionX = flight.end.x - flight.start.x;

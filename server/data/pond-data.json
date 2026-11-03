@@ -281,11 +281,53 @@
           "weightKg": 0.21,
           "rarity": "common",
           "timestamp": 1793631134160
+        },
+        {
+          "id": "3b64dc12-a2d7-459d-ac42-6066a0c898f3",
+          "playerId": "59a9d16c-af32-488e-9d6a-89eaff67410e",
+          "playerName": "1",
+          "species": "bluegill",
+          "weightKg": 0.23,
+          "rarity": "common",
+          "timestamp": 1793668502987
+        },
+        {
+          "id": "4a6c35e9-cd62-44fe-8259-e53f2b7b9a82",
+          "playerId": "1f072e58-9e14-4f51-b003-7b28528878cb",
+          "playerName": "1",
+          "species": "common-carp",
+          "weightKg": 5.89,
+          "rarity": "epic",
+          "timestamp": 1793668703136
+        },
+        {
+          "id": "c52cbb15-fb9c-40da-82dc-6af27dc2acb7",
+          "playerId": "1f072e58-9e14-4f51-b003-7b28528878cb",
+          "playerName": "1",
+          "species": "bluegill",
+          "weightKg": 0.35,
+          "rarity": "common",
+          "timestamp": 1793668923281
         }
       ],
       "players": {
         "1": {
-          "inventory": []
+          "inventory": [
+            {
+              "catchId": "3b64dc12-a2d7-459d-ac42-6066a0c898f3",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.23,
+              "caughtAt": 1793668502987
+            },
+            {
+              "catchId": "c52cbb15-fb9c-40da-82dc-6af27dc2acb7",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.35,
+              "caughtAt": 1793668923281
+            }
+          ]
         },
         "core api": {
           "inventory": [

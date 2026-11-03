@@ -95,6 +95,30 @@ async function walkTo(socket, player, targetX, targetZ) {
   sendMove(socket, x, z, facing, false);
 }
 
+async function turnInPlace(socket, player, targetFacing) {
+  let facing = player.facing;
+  while (Math.abs(Math.atan2(Math.sin(targetFacing - facing), Math.cos(targetFacing - facing))) > 0.08) {
+    const delta = Math.atan2(Math.sin(targetFacing - facing), Math.cos(targetFacing - facing));
+    facing += Math.max(-0.1, Math.min(0.1, delta));
+    sendMove(socket, player.x, player.z, facing, false);
+    await delay(50);
+  }
+  sendMove(socket, player.x, player.z, targetFacing, false);
+}
+
+function latestPlayer(socket, playerId) {
+  const snapshot = [...socket.messages].reverse().find((message) => message.type === 'state' && message.players.some((player) => player.id === playerId));
+  return snapshot?.players.find((player) => player.id === playerId);
+}
+
+async function waitForPlayerAt(socket, playerId, x, z) {
+  const state = await waitFor(socket, 'state', (message) => {
+    const player = message.players.find((entry) => entry.id === playerId);
+    return player && Math.hypot(player.x - x, player.z - z) <= 0.35;
+  });
+  return state.players.find((player) => player.id === playerId);
+}
+
 try {
   const river = await connect();
   river.send(JSON.stringify({ type: 'join', room: 'pond-test', name: 'River' }));
@@ -242,9 +266,44 @@ try {
   await waitFor(skye, 'fish_escaped', (message) => message.playerId === riverJoined.selfId, 2500);
   assert.equal(river.messages.filter((message) => message.type === 'catch_result').length, 1, 'missed bite must not create a catch');
 
+  await waitFor(skye, 'stone_respawn', (message) => message.stoneId === 'pebble-3', 7000);
+  const riverAtPond = latestPlayer(river, riverJoined.selfId);
+  const skyeAtPond = latestPlayer(skye, skyeJoined.selfId);
+  assert.ok(riverAtPond && skyeAtPond, 'missing player state before the interruption test');
+  await walkTo(river, riverAtPond, 6.2, 9.2);
+  river.send(JSON.stringify({ type: 'stone_pickup', stoneId: 'pebble-3' }));
+  await waitFor(skye, 'stone_picked', (message) => message.stoneId === 'pebble-3');
+  const riverAtStone = await waitForPlayerAt(river, riverJoined.selfId, 6.2, 9.2);
+  await walkTo(river, riverAtStone, 5.5, 0.4);
+  const riverAtThrow = await waitForPlayerAt(river, riverJoined.selfId, 5.5, 0.4);
+
+  await walkTo(skye, skyeAtPond, -4, 5.5);
+  let skyeFishingPosition = await waitForPlayerAt(skye, skyeJoined.selfId, -4, 5.5);
+  await walkTo(skye, skyeFishingPosition, 0, 5.5);
+  skyeFishingPosition = await waitForPlayerAt(skye, skyeJoined.selfId, 0, 5.5);
+  await walkTo(skye, skyeFishingPosition, 5.5, 4.5);
+  await waitForPlayerAt(skye, skyeJoined.selfId, 5.5, 4.5);
+  await turnInPlace(river, riverAtThrow, 0);
+  skye.send(JSON.stringify({ type: 'fish_cast', targetX: 0, targetZ: 1.5 }));
+  await waitFor(skye, 'fish_cast_broadcast', (message) => message.playerId === skyeJoined.selfId);
+  const interruptingThrowTime = Date.now();
+  river.send(JSON.stringify({ type: 'stone_throw' }));
+  const interruptingThrow = await waitFor(skye, 'stone_thrown', (message) => message.stoneId === 'pebble-3' && message.startTime >= interruptingThrowTime);
+  assert.equal(interruptingThrow.targetId, skyeJoined.selfId,
+    `stone throw should target the fishing player (${JSON.stringify({ throw: interruptingThrow, river: latestPlayer(river, riverJoined.selfId), skye: latestPlayer(skye, skyeJoined.selfId) })})`);
+  const interruption = await waitFor(river, 'stone_hit', (message) => message.playerId === skyeJoined.selfId && message.fishingCancelled === true);
+  assert.equal(interruption.fishingCancelled, true, 'stone hit should interrupt fishing');
+  const interruptedState = await waitFor(river, 'state', (message) => {
+    const target = message.players.find((player) => player.id === skyeJoined.selfId);
+    return target?.fishing === 'idle' && target.cast === null;
+  });
+  assert.equal(interruptedState.players.find((player) => player.id === skyeJoined.selfId).fishing, 'idle');
+
   river.send(JSON.stringify({ type: 'hold_fish', catchId: caught.entry.id }));
   await waitFor(skye, 'player_holding', (message) => message.playerId === riverJoined.selfId && message.fish?.catchId === caught.entry.id);
 
+  const finalRiverPosition = latestPlayer(river, riverJoined.selfId);
+  assert.ok(finalRiverPosition, 'missing final River position');
   skye.close();
   river.close();
   await delay(150);
@@ -253,7 +312,7 @@ try {
   const returned = await waitFor(returning, 'joined');
   assert.equal(returned.selfId, riverJoined.selfId, 'reconnect should reclaim the same player ID');
   const returnedPlayer = returned.players.find((player) => player.id === returned.selfId);
-  assert.ok(returnedPlayer && Math.hypot(returnedPlayer.x - movedRiver.x, returnedPlayer.z - movedRiver.z) < 0.01, 'reconnect should preserve the player position');
+  assert.ok(returnedPlayer && Math.hypot(returnedPlayer.x - finalRiverPosition.x, returnedPlayer.z - finalRiverPosition.z) < 0.01, 'reconnect should preserve the player position');
   assert.ok(returned.leaderboard.some((entry) => entry.id === caught.entry.id), 'leaderboard should remain in memory after room empties');
   assert.equal(returned.personalBest.id, caught.entry.id);
   const restoredPlayer = returned.players.find((player) => player.id === returned.selfId);
@@ -297,7 +356,7 @@ try {
   assert.ok(cookingFinished.recipientIds.includes(friendJoined.selfId), 'nearby player receives the shared-fish popup');
   assert.equal(cookingFinished.recipientIds.includes(distantJoined.selfId), false, 'players outside the serving radius do not receive it');
   assert.ok(restartedJoin.leaderboard.some((entry) => entry.id === caught.entry.id), 'releasing after restart must leave the leaderboard record intact');
-  console.log('Smoke test passed: multiplayer gameplay, inventory privacy/release, held-fish sync, reconnect and JSON restart restoration, campfire cooking, and range-limited sharing.');
+  console.log('Smoke test passed: multiplayer gameplay, stone-hit fishing interruption, inventory privacy/release, held-fish sync, reconnect and JSON restart restoration, campfire cooking, and range-limited sharing.');
 } finally {
   for (const socket of clients) socket.close();
   stopServer(server);

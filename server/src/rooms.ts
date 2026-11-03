@@ -71,6 +71,7 @@ export class Rooms {
       reelCandidates: null,
       pendingCatch: null,
       carryingStoneId: null,
+      inPhotobooth: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
       lastSpecies: profile.lastSpecies,
@@ -111,8 +112,9 @@ export class Rooms {
   }
 
   snapshot(room: Room, includeHoldingFish = true): PlayerSnapshot[] {
-    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving }) => ({
+    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
+      inPhotobooth,
       ...(includeHoldingFish ? { holdingFish } : {}),
       moving,
     }));

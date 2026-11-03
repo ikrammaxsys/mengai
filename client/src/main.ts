@@ -3,6 +3,8 @@ import { Network, type BigCatchEvent, type CatchEntry, type CatchResult, type He
 import { GameScene } from './scene';
 import { FishArt } from './fishModels';
 import { FishViewer } from './fishViewer';
+import { Minimap } from './minimap';
+import { Photobooth, PHOTOBOOTH_CONFIG } from './photobooth';
 import { FISH_CONFIG, reelParametersForDifficulty, type FishSpeciesId, type ReelParameters } from '../../shared/fishConfig';
 import { ReelGame } from './reelGame';
 import { MOVEMENT_RULES, stepMovement } from '../../shared/movement';
@@ -24,16 +26,18 @@ const connectionDot = document.querySelector<HTMLElement>('#connection-dot')!;
 const connectionLabel = document.querySelector<HTMLElement>('#connection-label')!;
 const viewToggle = document.querySelector<HTMLButtonElement>('#view-toggle')!;
 const whatsNew = document.querySelector<HTMLElement>('#whats-new')!;
+const whatsNewGrid = document.querySelector<HTMLElement>('#whats-new-grid')!;
 const whatsNewClose = document.querySelector<HTMLButtonElement>('#whats-new-close')!;
 const whatsNewDismiss = document.querySelector<HTMLButtonElement>('#whats-new-dismiss')!;
 const toast = document.querySelector<HTMLElement>('#toast')!;
+const hitFlash = document.querySelector<HTMLElement>('#hit-flash')!;
+const photoboothEnter = document.querySelector<HTMLButtonElement>('#photobooth-enter')!;
+const photoboothPrompt = document.querySelector<HTMLElement>('#photobooth-prompt')!;
 const weatherControl = document.querySelector<HTMLElement>('#weather-control')!;
 const weatherBadge = document.querySelector<HTMLButtonElement>('#weather-badge')!;
 const weatherIcon = document.querySelector<HTMLElement>('#weather-icon')!;
 const weatherName = document.querySelector<HTMLElement>('#weather-name')!;
 const weatherHint = document.querySelector<HTMLElement>('#weather-hint')!;
-const weatherDebugControl = document.querySelector<HTMLElement>('#weather-debug-control')!;
-const weatherDebugSelect = document.querySelector<HTMLSelectElement>('#weather-debug-select')!;
 const fishPrompt = document.querySelector<HTMLElement>('#fish-prompt')!;
 const chatUi = document.querySelector<HTMLElement>('#chat-ui')!;
 const chatToggle = document.querySelector<HTMLButtonElement>('#chat-toggle')!;
@@ -59,6 +63,10 @@ const collectionStrip = document.querySelector<HTMLElement>('#collection-strip')
 const backpackFilters = document.querySelector<HTMLElement>('#backpack-filters')!;
 const backpackSort = document.querySelector<HTMLSelectElement>('#backpack-sort')!;
 const backpackList = document.querySelector<HTMLElement>('#backpack-list')!;
+const expandedMap = document.querySelector<HTMLElement>('#expanded-map')!;
+const expandedMapButton = document.querySelector<HTMLButtonElement>('#map-expand')!;
+const expandedMapClose = document.querySelector<HTMLButtonElement>('#expanded-map-close')!;
+const expandedMapBackdrop = document.querySelector<HTMLButtonElement>('#expanded-map-backdrop')!;
 const catchPopup = document.querySelector<HTMLElement>('#catch-popup')!;
 const catchName = document.querySelector<HTMLElement>('#catch-name')!;
 const catchWeight = document.querySelector<HTMLElement>('#catch-weight')!;
@@ -82,10 +90,28 @@ const reelResult = document.querySelector<HTMLElement>('#reel-result')!;
 const netDebug = document.querySelector<HTMLElement>('#net-debug')!;
 const netDebugEnabled = import.meta.env.DEV && new URLSearchParams(location.search).has('netdebug');
 if (netDebugEnabled) netDebug.classList.remove('hidden');
-if (import.meta.env.DEV) weatherDebugControl.classList.remove('hidden');
 
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
 const gameCanvas = scene.renderer.domElement;
+gameCanvas.tabIndex = 0;
+const minimap = new Minimap(
+  document.querySelector<HTMLCanvasElement>('#minimap-canvas')!,
+  document.querySelector<HTMLCanvasElement>('#expanded-map-canvas')!,
+  expandedMap,
+);
+const photoboothUi = new Photobooth(document.querySelector<HTMLElement>('#photobooth-overlay')!, {
+  onExit: exitPhotobooth,
+  prepareCapture: () => scene.preparePhotoboothCapture(),
+  captureScene: (showName) => {
+    scene.render(1 / 60);
+    return {
+      source: scene.renderer.domElement,
+      namePoint: showName ? scene.photoboothNamePoint(selfId) : null,
+      room: currentRoom,
+      playerName: nameInput.value.trim(),
+    };
+  },
+});
 const fishArt = new FishArt(document.querySelector<HTMLCanvasElement>('#catch-fish-canvas')!);
 let currentLeaderboard: CatchEntry[] = [];
 let inventoryItems: InventoryItem[] = [];
@@ -105,18 +131,24 @@ let joined = false;
 let firstPersonView = false;
 let selfId = '';
 let currentRoom = '';
+let isPhotoboothMode = false;
+let previousPhotoboothFacing = 0;
 let availableRooms: { room: string; playerCount: number }[] = [];
 let roomPollTimer = 0;
 let keys = new Set<string>();
 let mouseTurnRemaining = 0;
 let lastFrame = performance.now();
+let lastMinimapRenderAt = 0;
 let movementSequence = 0;
 let lastMovementSentAt = 0;
 let lastMovementHeartbeatAt = 0;
-let lastSentMotion: { x: number; z: number; rotY: number; moving: boolean } | null = null;
+let lastSentMotion: { x: number; z: number; rotY: number; moving: boolean; inPhotobooth: boolean } | null = null;
 let lastDebugUpdate = 0;
 let toastTimer = 0;
+let hitFlashTimer = 0;
 let unreadMessages = 0;
+let openSidePanel: 'leaderboard' | 'backpack' | null = null;
+let backpackPulseTimer = 0;
 let currentCatch: CatchEntry | null = null;
 let serverClockOffset = 0;
 let hasServerClockSample = false;
@@ -137,6 +169,18 @@ const forcedWeather = (() => {
   return isWeatherType(value) ? value : null;
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
+const whatsNewItems = [
+  { icon: '🎒', title: 'Your Backpack', description: 'Catch records, species collection, filters, sorting, and fish release.' },
+  { icon: '🐟', title: 'Hold your catch', description: 'Press F to show a fish in your hands. Bigger catches look bigger, and everyone can see it.' },
+  { icon: '💾', title: 'Catches that stay', description: 'Your catch history, personal bests, Backpack fish, and room leaderboards are now saved for your next visit.' },
+  { icon: '👑', title: 'Leaderboard crown', description: 'The room’s top fisher wears a crown.' },
+  { icon: '🍲', title: 'Cook and share at the campfire', description: 'Choose Cook in your Backpack or press C near the campfire.' },
+  { icon: '👁️', title: 'First-person view', description: 'Switch views with V or the view button.' },
+  { icon: '🌦️', title: 'Weather', description: 'The pond has moods now. Rain, fog and storms change what’s biting.' },
+  { icon: '🗺️', title: 'Island minimap', description: 'Find the pond, campfire, stones, and other fishers at a glance. Press M to expand the map.' },
+  { icon: '🪨', title: 'Friendly splash', description: 'Want to keep your friend off the top spot? Toss a stone while they’re fishing!' },
+  { icon: '⌨️', title: 'Quick controls', description: 'Press Escape to close the chatbox.' },
+];
 
 function showToast(message: string): void {
   toast.textContent = message;
@@ -145,20 +189,59 @@ function showToast(message: string): void {
   toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2600);
 }
 
+function showHitFlash(): void {
+  hitFlash.classList.remove('show');
+  void hitFlash.offsetWidth;
+  hitFlash.classList.add('show');
+  window.clearTimeout(hitFlashTimer);
+  hitFlashTimer = window.setTimeout(() => hitFlash.classList.remove('show'), 600);
+}
+
+function handleStoneHit(playerId: string, fishingCancelled: boolean): void {
+  scene.showBonk(playerId);
+  if (playerId === selfId) showHitFlash();
+  if (!fishingCancelled) return;
+  scene.cancelFishing(playerId);
+  if (playerId !== selfId) return;
+  if (reelGame) {
+    reelGame.setHeld(false);
+    reelGame = null;
+    keys.clear();
+  }
+  pendingReelSuccess = null;
+  localReelEnding = false;
+  window.clearTimeout(reelHideTimer);
+  reelElement.classList.add('hidden');
+  reelElement.classList.remove('is-ending', 'is-success', 'is-escaped', 'is-pulling');
+  showToast('A stone hit you. Fishing cancelled.');
+}
+
 function updateWeatherBadge(): void {
   if (!currentWeather) return;
   const state = WEATHER_CONFIG.states[currentWeather.type];
   const minutesLeft = Math.max(0, Math.ceil((currentWeather.endsAt - (Date.now() + serverClockOffset)) / 60_000));
-  weatherIcon.textContent = state.emoji;
+  weatherIcon.innerHTML = weatherIconSvg(currentWeather.type);
   weatherName.textContent = state.name;
   weatherBadge.setAttribute('aria-label', `Weather: ${state.name}`);
-  weatherHint.textContent = `${state.emoji} ${state.name} · ${minutesLeft} min left — ${state.hint}`;
+  const biteRate = Math.round((1 / state.fishing.biteWaitMultiplier - 1) * 100);
+  const biteCopy = biteRate > 0 ? `Bites ${biteRate}% faster` : biteRate < 0 ? `Bites ${Math.abs(biteRate)}% slower` : 'Bite pace unchanged';
+  weatherHint.textContent = `${state.hint.replace(/\s*🎣/gu, '')} · ${biteCopy} · ${minutesLeft} min left`;
+}
+
+function weatherIconSvg(type: WeatherType): string {
+  const paths: Record<WeatherType, string> = {
+    clear: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>',
+    cloudy: '<path d="M7 18h10a4 4 0 0 0 .4-8A6 6 0 0 0 6 11a3.5 3.5 0 0 0 1 7Z"/>',
+    rain: '<path d="M7 14h10a4 4 0 0 0 .4-8A6 6 0 0 0 6 7a3.5 3.5 0 0 0 1 7Zm1 3-1 2m6-2-1 2m6-2-1 2"/>',
+    fog: '<path d="M7 10h10a4 4 0 0 0 .4-8A6 6 0 0 0 6 3a3.5 3.5 0 0 0 1 7Zm-4 4h18m-15 4h12"/>',
+    storm: '<path d="M7 13h10a4 4 0 0 0 .4-8A6 6 0 0 0 6 6a3.5 3.5 0 0 0 1 7Zm5 1-2 4h3l-1 4 4-6h-3l1-2"/>',
+  };
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[type]}</g></svg>`;
 }
 
 function applyWeather(weather: WeatherSnapshot, announce: boolean): void {
   currentWeather = weather;
   scene.setWeather(weather);
-  weatherDebugSelect.value = weather.type;
   updateWeatherBadge();
   if (announce) showToast(WEATHER_CONFIG.states[weather.type].toast);
 }
@@ -174,8 +257,39 @@ if (import.meta.env.DEV) Object.assign(window, { setMengaiWeather });
 
 function closeWhatsNew(): void {
   whatsNew.classList.add('hidden');
-  roomInput.focus();
+  gameCanvas.focus({ preventScroll: true });
 }
+
+function renderWhatsNew(): void {
+  whatsNewGrid.replaceChildren();
+  whatsNewGrid.classList.toggle('five-columns', whatsNewItems.length >= 10);
+  for (const item of whatsNewItems) {
+    const card = document.createElement('article');
+    card.className = 'whats-new-item';
+    const iconTile = document.createElement('span');
+    iconTile.className = 'whats-new-icon';
+    iconTile.setAttribute('aria-hidden', 'true');
+    iconTile.textContent = item.icon;
+    const title = document.createElement('h3');
+    title.textContent = item.title;
+    const description = document.createElement('p');
+    description.className = 'whats-new-description';
+    for (const part of item.description.split(/(Escape|\bF\b|\bC\b|\bV\b|\bM\b)/g)) {
+      if (!part) continue;
+      if (['Escape', 'F', 'C', 'V', 'M'].includes(part)) {
+        const key = document.createElement('kbd');
+        key.className = 'whats-new-key';
+        key.textContent = part === 'Escape' ? 'Esc' : part;
+        if (part === 'Escape') key.setAttribute('aria-label', 'Escape');
+        description.append(key);
+      } else description.append(document.createTextNode(part));
+    }
+    card.append(iconTile, title, description);
+    whatsNewGrid.append(card);
+  }
+}
+
+renderWhatsNew();
 
 function drawReel(snapshot = reelGame?.current): void {
   if (!snapshot) return;
@@ -246,19 +360,52 @@ function sendLocalMovement(force = false): void {
   if (!joined || typeof network === 'undefined') return;
   const position = scene.getPosition();
   const rotY = scene.localFacing();
-  const moving = !reelGame && scene.fishingState() === 'idle' && hasForwardInput();
+  const moving = !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle' && hasForwardInput();
   const previous = lastSentMotion;
   const changed = !previous || Math.hypot(position.x - previous.x, position.z - previous.z) > 0.002 ||
-    Math.abs(Math.atan2(Math.sin(rotY - previous.rotY), Math.cos(rotY - previous.rotY))) > 0.002 || moving !== previous.moving;
+    Math.abs(Math.atan2(Math.sin(rotY - previous.rotY), Math.cos(rotY - previous.rotY))) > 0.002 || moving !== previous.moving ||
+    isPhotoboothMode !== previous.inPhotobooth;
   const now = performance.now();
   const dueToChange = changed && now - lastMovementSentAt >= 50;
   const heartbeat = now - lastMovementHeartbeatAt >= 1000;
   if (!force && !dueToChange && !heartbeat) return;
   movementSequence += 1;
-  network.sendMove(movementSequence, position.x, position.z, rotY, moving, Date.now());
-  lastSentMotion = { x: position.x, z: position.z, rotY, moving };
+  network.sendMove(movementSequence, position.x, position.z, rotY, moving, Date.now(), isPhotoboothMode);
+  lastSentMotion = { x: position.x, z: position.z, rotY, moving, inPhotobooth: isPhotoboothMode };
   lastMovementSentAt = now;
   lastMovementHeartbeatAt = now;
+}
+
+function isNearPhotobooth(): boolean {
+  const position = scene.getPosition();
+  return Math.hypot(position.x - PHOTOBOOTH_CONFIG.position.x, position.z - PHOTOBOOTH_CONFIG.position.z) <= PHOTOBOOTH_CONFIG.interactionRadius;
+}
+
+function enterPhotobooth(): void {
+  if (!joined || isPhotoboothMode || !isNearPhotobooth() || reelGame || scene.fishingState() !== 'idle') return;
+  isPhotoboothMode = true;
+  previousPhotoboothFacing = scene.localFacing();
+  keys.clear();
+  cancelMouseTurn();
+  setChatOpen(false);
+  setOpenSidePanel(null);
+  document.querySelector<HTMLElement>('#app')!.classList.add('photobooth-mode');
+  scene.setPhotoboothMode(true);
+  scene.setPhotoboothState(selfId, true);
+  photoboothUi.open();
+  sendLocalMovement(true);
+}
+
+function exitPhotobooth(): void {
+  if (!isPhotoboothMode) return;
+  isPhotoboothMode = false;
+  photoboothUi.close();
+  const position = scene.getPosition();
+  scene.setLocalMotion(position.x, position.z, previousPhotoboothFacing);
+  scene.setPhotoboothState(selfId, false);
+  scene.setPhotoboothMode(false);
+  document.querySelector<HTMLElement>('#app')!.classList.remove('photobooth-mode');
+  sendLocalMovement(true);
 }
 
 function updateNetDebug(now: number): void {
@@ -292,13 +439,20 @@ function observeServerTime(serverTime: number): void {
 function setConnected(value: boolean): void {
   connectionDot.classList.toggle('offline', !value);
   connectionLabel.textContent = value ? 'Connected' : 'Disconnected';
+  document.querySelector<HTMLButtonElement>('#connection-control')!.setAttribute('aria-label', value ? 'Connected' : 'Disconnected');
 }
 
 function setViewMode(firstPerson: boolean): void {
   firstPersonView = firstPerson;
   scene.setFirstPersonView(firstPersonView);
-  viewToggle.textContent = firstPersonView ? 'Third-person view' : 'First-person view';
+  const action = firstPersonView ? 'Switch to third-person view' : 'Switch to first-person view';
+  viewToggle.setAttribute('aria-label', `${action} (V)`);
+  viewToggle.title = `${action} · V`;
   viewToggle.setAttribute('aria-pressed', String(firstPersonView));
+  viewToggle.classList.toggle('active', firstPersonView);
+  document.querySelector<SVGElement>('#view-icon')!.innerHTML = firstPersonView
+    ? '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>'
+    : '<path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-8Zm5 9v-6h8v6M9 9h.01M15 9h.01"/>';
 }
 
 function renderRoomList(): void {
@@ -351,6 +505,7 @@ function selectRoom(room: string): void {
 }
 
 function setChatOpen(open: boolean): void {
+  if (open && openSidePanel) setOpenSidePanel(null);
   chatPanel.classList.toggle('hidden', !open);
   chatToggle.setAttribute('aria-expanded', String(open));
   if (open) {
@@ -476,7 +631,7 @@ function renderBackpack(): void {
 
   backpackList.replaceChildren();
   if (inventoryItems.length === 0) {
-    const empty = document.createElement('p'); empty.className = 'backpack-empty'; empty.textContent = 'No fish yet. Cast a line at the pond!';
+    const empty = document.createElement('p'); empty.className = 'backpack-empty'; empty.textContent = 'No fish yet. Go cast a line!';
     backpackList.append(empty); return;
   }
   if (sorted.length === 0) {
@@ -543,9 +698,17 @@ function syncInventory(items: InventoryItem[], caught: number, best: InventoryIt
 }
 
 function addInventoryItem(item: InventoryItem): void {
-  if (!inventoryItems.some((existing) => existing.catchId === item.catchId)) {
+  const isNewCatch = !inventoryItems.some((existing) => existing.catchId === item.catchId);
+  if (isNewCatch) {
     inventoryItems.push(item);
     totalCaught += 1;
+    if (joined) {
+      backpackToggle.classList.remove('pulse');
+      void backpackToggle.offsetWidth;
+      backpackToggle.classList.add('pulse');
+      window.clearTimeout(backpackPulseTimer);
+      backpackPulseTimer = window.setTimeout(() => backpackToggle.classList.remove('pulse'), 900);
+    }
   }
   if (!personalBestFish || item.weightKg > personalBestFish.weightKg) personalBestFish = item;
   const speciesBest = collectionBests.get(item.species);
@@ -559,13 +722,33 @@ function holdFish(catchId: string): void {
   network.holdFish(catchId);
 }
 
+function setOpenSidePanel(panel: 'leaderboard' | 'backpack' | null): void {
+  if (panel && !chatPanel.classList.contains('hidden')) setChatOpen(false);
+  openSidePanel = panel;
+  const leaderboardOpen = panel === 'leaderboard';
+  const backpackOpen = panel === 'backpack';
+  leaderboardPanel.classList.toggle('hidden', !leaderboardOpen);
+  backpackPanel.classList.toggle('hidden', !backpackOpen);
+  leaderboardPanel.setAttribute('aria-hidden', String(!leaderboardOpen));
+  backpackPanel.setAttribute('aria-hidden', String(!backpackOpen));
+  leaderboardPanel.inert = !leaderboardOpen;
+  backpackPanel.inert = !backpackOpen;
+  leaderboardToggle.setAttribute('aria-expanded', String(leaderboardOpen));
+  backpackToggle.setAttribute('aria-expanded', String(backpackOpen));
+  leaderboardToggle.classList.toggle('active', leaderboardOpen);
+  backpackToggle.classList.toggle('active', backpackOpen);
+}
+
 function setBackpackOpen(open: boolean): void {
-  backpackPanel.classList.toggle('hidden', !open);
-  backpackToggle.setAttribute('aria-expanded', String(open));
+  setOpenSidePanel(open ? 'backpack' : null);
+}
+
+function toggleExpandedMap(open = expandedMap.classList.contains('hidden')): void {
   if (open) {
-    leaderboardPanel.classList.add('hidden');
-    leaderboardToggle.setAttribute('aria-expanded', 'false');
+    setOpenSidePanel(null);
+    setChatOpen(false);
   }
+  minimap.toggleExpanded(open);
 }
 
 function presentNextBigCatch(): void {
@@ -618,7 +801,8 @@ function updateLeaderboard(entries: CatchEntry[]): void {
   for (const [index, entry] of entries.entries()) {
     const species = speciesConfig(entry.species);
     const row = document.createElement('li');
-    row.className = `leaderboard-entry${entry.playerName.toLocaleLowerCase() === nameInput.value.trim().toLocaleLowerCase() ? ' own-entry' : ''}`;
+    const medal = index < 3 ? ['gold', 'silver', 'bronze'][index] : '';
+    row.className = `leaderboard-entry${medal ? ` podium-${medal}` : ''}${entry.playerName.toLocaleLowerCase() === nameInput.value.trim().toLocaleLowerCase() ? ' own-entry' : ''}`;
     row.style.setProperty('--rarity-color', species.rarityColor);
     const rank = document.createElement('span'); rank.className = 'leaderboard-rank'; rank.textContent = String(index + 1);
     const icon = document.createElement('img'); icon.className = 'leaderboard-fish'; icon.alt = '';
@@ -707,13 +891,10 @@ function join(room: string, name: string): void {
       unreadMessages = 0;
       chatUnread.classList.add('hidden');
       chatUi.classList.remove('hidden');
-      setChatOpen(true);
+      setChatOpen(false);
       leaderboardUi.classList.remove('hidden');
       backpackUi.classList.remove('hidden');
-      leaderboardPanel.classList.add('hidden');
-      backpackPanel.classList.add('hidden');
-      leaderboardToggle.setAttribute('aria-expanded', 'false');
-      backpackToggle.setAttribute('aria-expanded', 'false');
+      setOpenSidePanel(null);
       updateCount();
       joined = true;
       const debugWeather = pendingDebugWeather ?? forcedWeather;
@@ -805,18 +986,19 @@ function join(room: string, name: string): void {
     stoneThrown: (message) => scene.throwStone(message),
     stoneLanded: (message) => scene.landStone(message),
     stoneRespawn: (message) => scene.respawnStone(message.stoneId, message.position),
-    stoneHit: (playerId) => scene.showBonk(playerId),
+    stoneHit: handleStoneHit,
     chickenHit: (message) => scene.hitChicken(message),
     disconnected: () => {
       joined = false;
+      if (isPhotoboothMode) exitPhotobooth();
       cancelMouseTurn();
       scene.clearPlayers();
       chatUi.classList.add('hidden');
       setChatOpen(false);
       leaderboardUi.classList.add('hidden');
-      leaderboardPanel.classList.add('hidden');
       backpackUi.classList.add('hidden');
-      backpackPanel.classList.add('hidden');
+      setOpenSidePanel(null);
+      minimap.toggleExpanded(false);
       myHeldFish = null;
       catchPopup.classList.add('hidden');
       fishViewer.close();
@@ -874,9 +1056,6 @@ weatherBadge.addEventListener('click', () => {
   weatherBadge.setAttribute('aria-expanded', String(open));
   if (!open) weatherBadge.blur();
 });
-weatherDebugSelect.addEventListener('change', () => {
-  if (joined && isWeatherType(weatherDebugSelect.value)) network.setDebugWeather(weatherDebugSelect.value);
-});
 document.addEventListener('click', (event) => {
   if (weatherControl.contains(event.target as Node)) return;
   weatherControl.classList.remove('is-open');
@@ -889,18 +1068,29 @@ chatClose.addEventListener('click', () => setChatOpen(false));
 whatsNewClose.addEventListener('click', closeWhatsNew);
 whatsNewDismiss.addEventListener('click', closeWhatsNew);
 whatsNew.querySelector<HTMLElement>('.whats-new-backdrop')!.addEventListener('click', closeWhatsNew);
+whatsNew.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab') return;
+  const focusable = [...whatsNew.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => element.getClientRects().length > 0);
+  if (focusable.length === 0) { event.preventDefault(); return; }
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !whatsNew.contains(document.activeElement))) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !whatsNew.contains(document.activeElement))) {
+    event.preventDefault(); first.focus();
+  }
+});
 leaderboardToggle.addEventListener('click', () => {
-  const open = leaderboardPanel.classList.contains('hidden');
-  leaderboardPanel.classList.toggle('hidden', !open);
-  leaderboardToggle.setAttribute('aria-expanded', String(open));
-  if (open) setBackpackOpen(false);
+  setOpenSidePanel(openSidePanel === 'leaderboard' ? null : 'leaderboard');
 });
 viewToggle.addEventListener('click', () => setViewMode(!firstPersonView));
-leaderboardClose.addEventListener('click', () => {
-  leaderboardPanel.classList.add('hidden'); leaderboardToggle.setAttribute('aria-expanded', 'false');
-});
+photoboothEnter.addEventListener('click', enterPhotobooth);
+leaderboardClose.addEventListener('click', () => setOpenSidePanel(null));
 backpackToggle.addEventListener('click', () => setBackpackOpen(backpackPanel.classList.contains('hidden')));
 backpackClose.addEventListener('click', () => setBackpackOpen(false));
+expandedMapButton.addEventListener('click', () => toggleExpandedMap());
+expandedMapClose.addEventListener('click', () => toggleExpandedMap(false));
+expandedMapBackdrop.addEventListener('click', () => toggleExpandedMap(false));
 backpackSort.addEventListener('change', renderBackpack);
 chatForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -918,15 +1108,15 @@ function cancelMouseTurn(): void {
 }
 
 gameCanvas.addEventListener('pointerdown', (event) => {
-  if (!joined || reelGame || scene.fishingState() !== 'idle' || event.pointerType !== 'mouse' || event.button !== 0) return;
+  if (!joined || isPhotoboothMode || reelGame || scene.fishingState() !== 'idle' || event.pointerType !== 'mouse' || event.button !== 0) return;
   if (document.pointerLockElement === gameCanvas) return;
   event.preventDefault();
   try { void Promise.resolve(gameCanvas.requestPointerLock()).catch(() => {}); }
   catch { showToast('Mouse look could not be enabled. Use A/D to turn.'); }
 });
 gameCanvas.addEventListener('pointermove', (event) => {
-  if (document.pointerLockElement !== gameCanvas || !joined || reelGame || scene.fishingState() !== 'idle') return;
-  mouseTurnRemaining = Math.max(-0.5, Math.min(0.5, mouseTurnRemaining + event.movementX * 0.006));
+  if (document.pointerLockElement !== gameCanvas || !joined || isPhotoboothMode || reelGame || scene.fishingState() !== 'idle') return;
+  mouseTurnRemaining = Math.max(-0.5, Math.min(0.5, mouseTurnRemaining - event.movementX * 0.006));
   event.preventDefault();
 });
 document.addEventListener('pointerlockchange', () => {
@@ -943,6 +1133,14 @@ window.addEventListener('keydown', (event) => {
     closeWhatsNew();
     return;
   }
+  if (!whatsNew.classList.contains('hidden')) {
+    if (!whatsNew.contains(event.target as Node)) event.preventDefault();
+    return;
+  }
+  if (isPhotoboothMode) {
+    photoboothUi.handleKey(event);
+    return;
+  }
   if (event.key === 'Escape' && !fishViewerRoot.classList.contains('hidden')) {
     fishViewer.close();
     return;
@@ -950,11 +1148,10 @@ window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault();
     if (document.pointerLockElement === gameCanvas) cancelMouseTurn();
+    if (!expandedMap.classList.contains('hidden')) toggleExpandedMap(false);
+    else if (openSidePanel) setOpenSidePanel(null);
     else if (!chatPanel.classList.contains('hidden') && chatPanel.contains(document.activeElement)) setChatOpen(false);
-    else if (!backpackPanel.classList.contains('hidden')) setBackpackOpen(false);
-    else if (!leaderboardPanel.classList.contains('hidden')) {
-      leaderboardPanel.classList.add('hidden'); leaderboardToggle.setAttribute('aria-expanded', 'false');
-    } else if (!chatPanel.classList.contains('hidden')) setChatOpen(false);
+    else if (!chatPanel.classList.contains('hidden')) setChatOpen(false);
     else if (document.activeElement === chatInput) chatInput.blur();
     return;
   }
@@ -965,6 +1162,22 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (key === 'p' && joined && !event.repeat) {
+    event.preventDefault();
+    if (isPhotoboothMode) exitPhotobooth();
+    else enterPhotobooth();
+    return;
+  }
+  if (key === 'm' && joined && !event.repeat) {
+    event.preventDefault();
+    toggleExpandedMap();
+    return;
+  }
+  if (key === 'l' && joined && !event.repeat) {
+    event.preventDefault();
+    setOpenSidePanel(openSidePanel === 'leaderboard' ? null : 'leaderboard');
+    return;
+  }
   if (key === 'i' && joined && !event.repeat) {
     event.preventDefault();
     setBackpackOpen(backpackPanel.classList.contains('hidden'));
@@ -1035,6 +1248,7 @@ window.addEventListener('keydown', (event) => {
   keys.add(key);
 });
 window.addEventListener('keyup', (event) => {
+  if (isPhotoboothMode) return;
   if (event.code === 'Space') reelGame?.setHeld(false);
   const key = keyNames[event.key] ?? event.key.toLowerCase();
   if (['w', 'a', 's', 'd'].includes(key)) {
@@ -1071,7 +1285,7 @@ function animate(now: number): void {
     if (reelGame.result !== 'active') finishReel(reelGame.result === 'success');
   }
   if (joined) scene.stepCorrection(delta);
-  if (joined && !reelGame && scene.fishingState() === 'idle') {
+  if (joined && !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
     let turn = keyboardTurn;
@@ -1085,12 +1299,22 @@ function animate(now: number): void {
     const next = stepMovement({ x: position.x, z: position.z, rotY: scene.localFacing() }, forward, turn, delta);
     scene.setLocalMotion(next.x, next.z, next.rotY);
   }
+  if (joined && now - lastMinimapRenderAt >= 66) {
+    lastMinimapRenderAt = now;
+    minimap.render(now, scene.mapPlayers());
+  }
   if (joined) {
     sendLocalMovement(false);
     const distance = Math.hypot(scene.getPosition().x, scene.getPosition().z);
     const fishing = scene.fishingState();
-    fishPrompt.classList.toggle('hidden', reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
+    const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
+    photoboothPrompt.classList.toggle('hidden', !nearPhotobooth);
+    photoboothEnter.disabled = !nearPhotobooth;
+    fishPrompt.classList.toggle('hidden', isPhotoboothMode || reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
     fishPrompt.textContent = fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
+  } else {
+    photoboothPrompt.classList.add('hidden');
+    photoboothEnter.disabled = true;
   }
   catchPopup.classList.toggle('hidden', !fishArt.render(now));
   scene.render(delta);

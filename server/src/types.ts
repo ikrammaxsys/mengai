@@ -95,6 +95,7 @@ export interface Player {
   reelCandidates: { normal: ReelCatchCandidate; quick: ReelCatchCandidate } | null;
   pendingCatch: ReelCatchCandidate | null;
   carryingStoneId: string | null;
+  inPhotobooth: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
   lastSpecies: FishSpeciesId | null;
@@ -127,4 +128,5 @@ export interface PlayerSnapshot {
   cast: CastSnapshot | null;
   carryingStoneId: string | null;
   holdingFish?: CatchRecord | null;
+  inPhotobooth: boolean;
 }

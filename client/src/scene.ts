@@ -7,10 +7,11 @@ import { WORLD_CONFIG } from '../../shared/worldConfig';
 import { Campfire } from './campfire';
 import { WeatherEffects } from './weatherEffects';
 import type { WeatherSnapshot } from '../../shared/weatherConfig';
+import { PHOTOBOOTH_CONFIG } from './photobooth';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
@@ -26,6 +27,7 @@ export class GameScene {
   private readonly bonks = new Map<string, BonkFx>();
   private readonly labels: HTMLElement;
   private readonly stoneHint: HTMLDivElement;
+  private readonly photoboothLabel: HTMLDivElement;
   private readonly ray = new THREE.Vector3();
   private readonly cameraOffset = new THREE.Vector3(0, 8.5, -11);
   private localId = '';
@@ -43,6 +45,18 @@ export class GameScene {
   private waterGeometry!: THREE.BufferGeometry;
   private waterMaterial!: THREE.MeshStandardMaterial;
   private firstPersonView = false;
+  private photoboothCameraActive = false;
+  private photoboothLogoReady: Promise<void> = Promise.resolve();
+  private readonly photoboothCameraPosition = new THREE.Vector3(
+    PHOTOBOOTH_CONFIG.position.x + PHOTOBOOTH_CONFIG.cameraOffset.x,
+    PHOTOBOOTH_CONFIG.cameraOffset.y,
+    PHOTOBOOTH_CONFIG.position.z + PHOTOBOOTH_CONFIG.cameraOffset.z,
+  );
+  private readonly photoboothCameraTarget = new THREE.Vector3(
+    PHOTOBOOTH_CONFIG.position.x + PHOTOBOOTH_CONFIG.targetOffset.x,
+    PHOTOBOOTH_CONFIG.targetOffset.y,
+    PHOTOBOOTH_CONFIG.position.z + PHOTOBOOTH_CONFIG.targetOffset.z,
+  );
   private heldFishClickHandler?: (playerId: string, catchId: string) => void;
   private readonly chickens: ChickenFlock;
   private readonly campfire: Campfire;
@@ -52,6 +66,10 @@ export class GameScene {
     this.labels = labels;
     this.stoneHint = document.createElement('div'); this.stoneHint.className = 'pebble-hint hidden';
     labels.appendChild(this.stoneHint);
+    this.photoboothLabel = document.createElement('div');
+    this.photoboothLabel.className = 'photobooth-world-label';
+    this.photoboothLabel.textContent = 'Photobooth 📸';
+    labels.appendChild(this.photoboothLabel);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.setSize(innerWidth, innerHeight);
@@ -127,6 +145,84 @@ export class GameScene {
       splash.rotation.x = Math.PI / 2; splash.visible = false; this.scene.add(splash);
       this.stones.set(pebble.id, { group, state: 'ground', x: pebble.x, z: pebble.z, color: pebble.color, carriedBy: null, flight: null, respawnAt: null, splashStartedAt: null, splash });
     }
+    this.buildPhotobooth();
+  }
+
+  private buildPhotobooth(): void {
+    const booth = new THREE.Group();
+    booth.position.set(PHOTOBOOTH_CONFIG.position.x, 0, PHOTOBOOTH_CONFIG.position.z);
+    this.scene.add(booth);
+
+    const platform = new THREE.Mesh(new THREE.BoxGeometry(PHOTOBOOTH_CONFIG.stageWidth, 0.3, PHOTOBOOTH_CONFIG.stageDepth), this.material('#b98b6e'));
+    platform.position.y = 0.15; platform.receiveShadow = true; platform.castShadow = true; booth.add(platform);
+    const inset = new THREE.Mesh(new THREE.BoxGeometry(PHOTOBOOTH_CONFIG.stageWidth - 0.4, 0.08, PHOTOBOOTH_CONFIG.stageDepth - 0.4), this.material('#d9b39b'));
+    inset.position.y = 0.32; inset.receiveShadow = true; booth.add(inset);
+    const rug = new THREE.Mesh(new THREE.CylinderGeometry(2.65, 2.65, 0.055, 12), this.material('#9c7084'));
+    rug.position.set(0, 0.38, 0.45); rug.receiveShadow = true; booth.add(rug);
+
+    const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(6.25, 3.65), this.material('#e4ead6'));
+    backdrop.position.set(0, 2.15, -3.32); backdrop.receiveShadow = true; booth.add(backdrop);
+    const timber = this.material('#8c684f');
+    for (const x of [-3.22, 3.22]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 4.05, 0.28), timber);
+      post.position.set(x, 2.02, -3.36); post.castShadow = true; booth.add(post);
+    }
+    const header = new THREE.Mesh(new THREE.BoxGeometry(6.65, 0.24, 0.32), timber);
+    header.position.set(0, 4.03, -3.36); header.castShadow = true; booth.add(header);
+    const plaque = new THREE.Mesh(new THREE.BoxGeometry(2.75, 0.5, 0.12), this.material('#f4e7cf'));
+    plaque.position.set(0, 4.38, -3.34); plaque.castShadow = true; booth.add(plaque);
+
+    const fallback = this.makePhotoboothPlaceholderTexture();
+    const logoMaterial = new THREE.MeshBasicMaterial({ map: fallback, transparent: true, side: THREE.DoubleSide, toneMapped: false });
+    const logoGeometry = new THREE.PlaneGeometry(3.8, 3.8 / PHOTOBOOTH_CONFIG.logoAspect);
+    const logo = new THREE.Mesh(logoGeometry, logoMaterial);
+    logo.position.set(0, 2.75, -3.12); booth.add(logo);
+    this.photoboothLogoReady = new Promise((resolve) => {
+      new THREE.TextureLoader().load(PHOTOBOOTH_CONFIG.logoPath, (texture) => {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = Math.min(this.renderer.capabilities.getMaxAnisotropy(), 8);
+        const image = texture.image as { width?: number; height?: number };
+        const aspect = image.width && image.height ? image.width / image.height : PHOTOBOOTH_CONFIG.logoAspect;
+        logo.geometry.dispose();
+        logo.geometry = new THREE.PlaneGeometry(3.8, 3.8 / aspect);
+        logoMaterial.map = texture;
+        logoMaterial.needsUpdate = true;
+        fallback.dispose();
+        resolve();
+      }, undefined, () => {
+        // Keep the canvas-texture LOGO plate if the supplied image is unavailable.
+        resolve();
+      });
+    });
+
+    const tripod = new THREE.Group();
+    tripod.position.set(2.55, 0, 3.85);
+    booth.add(tripod);
+    const legMaterial = this.material('#735b4b');
+    const legTop = new THREE.Vector3(0, 1.22, 0);
+    for (const [x, z] of [[-0.42, 0.42], [0.42, 0.42], [0, -0.48]]) {
+      const foot = new THREE.Vector3(x, 0.08, z);
+      const delta = foot.clone().sub(legTop);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, delta.length(), 5), legMaterial);
+      leg.position.copy(foot).add(legTop).multiplyScalar(0.5);
+      leg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+      leg.castShadow = true; tripod.add(leg);
+    }
+    const cameraBody = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.48, 0.46), this.material('#51675f'));
+    cameraBody.position.set(0, 1.45, 0); cameraBody.castShadow = true; tripod.add(cameraBody);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.28, 8), this.material('#718b80'));
+    lens.rotation.x = -Math.PI / 2; lens.position.set(0, 1.45, -0.34); lens.castShadow = true; tripod.add(lens);
+    const cameraTop = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.22), this.material('#d5bd8b'));
+    cameraTop.position.set(-0.12, 1.77, 0); cameraTop.castShadow = true; tripod.add(cameraTop);
+  }
+
+  private makePhotoboothPlaceholderTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas'); canvas.width = 566; canvas.height = 100;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = 'rgba(255,255,255,.94)'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#284d43'; context.font = '800 54px Trebuchet MS, Segoe UI, sans-serif';
+    context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText('LOGO', canvas.width / 2, canvas.height / 2 + 2);
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
   }
 
   private addTree(x: number, z: number, scale: number): void {
@@ -171,7 +267,7 @@ export class GameScene {
       if (catchId) this.heldFishClickHandler?.(player.id, catchId);
     });
     this.labels.appendChild(label);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
@@ -187,6 +283,39 @@ export class GameScene {
     if (local) {
       for (const part of local.bodyParts) part.visible = !enabled;
       this.updateLeaderAppearance(local);
+    }
+  }
+
+  setPhotoboothMode(active: boolean): void {
+    this.photoboothCameraActive = active;
+    if (active) {
+      const local = this.avatars.get(this.localId);
+      if (local) {
+        local.targetFacing = 0;
+        local.group.rotation.y = 0;
+        for (const part of local.bodyParts) part.visible = true;
+      }
+    } else this.setFirstPersonView(this.firstPersonView);
+  }
+
+  setPhotoboothState(id: string, active: boolean): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    avatar.inPhotobooth = active;
+  }
+
+  photoboothNamePoint(id: string): { x: number; y: number } | null {
+    const avatar = this.avatars.get(id); if (!avatar) return null;
+    const point = avatar.group.localToWorld(new THREE.Vector3(0, 2.25, 0)).project(this.camera);
+    if (point.z > 1 || Math.abs(point.x) > 1 || Math.abs(point.y) > 1) return null;
+    return { x: point.x * 0.5 + 0.5, y: -point.y * 0.5 + 0.5 };
+  }
+
+  async preparePhotoboothCapture(): Promise<void> {
+    await this.photoboothLogoReady;
+    if (this.photoboothCameraActive) {
+      this.camera.position.copy(this.photoboothCameraPosition);
+      this.camera.lookAt(this.photoboothCameraTarget);
+      this.camera.updateMatrixWorld();
     }
   }
 
@@ -270,6 +399,7 @@ export class GameScene {
       }
     }
     avatar.fishing = player.fishing;
+    this.setPhotoboothState(player.id, player.inPhotobooth ?? false);
     if (player.holdingFish !== undefined) this.setHoldingFish(player.id, player.holdingFish);
     avatar.reelActive = player.fishing === 'fighting';
     if (avatar.reelActive) avatar.lineTaut = true;
@@ -296,6 +426,13 @@ export class GameScene {
     const avatar = this.avatars.get(id); if (!avatar) return;
     avatar.fishing = state;
     avatar.rod.visible = state !== 'idle';
+  }
+
+  cancelFishing(id: string): void {
+    const avatar = this.avatars.get(id); if (!avatar) return;
+    avatar.reelActive = false;
+    avatar.lineTaut = false;
+    this.clearCast(avatar);
   }
 
   setHoldingFish(id: string, fish: HeldFish | null): void {
@@ -605,6 +742,17 @@ export class GameScene {
 
   fishingState(): FishingState { return this.avatars.get(this.localId)?.fishing ?? 'idle'; }
   playerCount(): number { return this.avatars.size; }
+  mapPlayers(): { x: number; z: number; facing: number; color: string; name: string; fishing: boolean; local: boolean }[] {
+    return [...this.avatars.values()].map((avatar) => ({
+      x: avatar.group.position.x,
+      z: avatar.group.position.z,
+      facing: avatar.local ? avatar.targetFacing : avatar.group.rotation.y,
+      color: avatar.color,
+      name: avatar.label.dataset.name ?? '',
+      fishing: avatar.fishing !== 'idle',
+      local: avatar.local,
+    }));
+  }
 
   showChatBubble(id: string, text: string): void {
     if (!this.avatars.has(id)) return;
@@ -640,7 +788,11 @@ export class GameScene {
     const local = this.avatars.get(this.localId);
     if (local) {
       local.group.rotation.y += this.angleDelta(local.group.rotation.y, local.targetFacing) * 0.24;
-      if (this.firstPersonView) {
+      if (this.photoboothCameraActive) {
+        const damping = 1 - Math.exp(-7 * Math.max(0, deltaSeconds));
+        this.camera.position.lerp(this.photoboothCameraPosition, damping);
+        this.camera.lookAt(this.photoboothCameraTarget);
+      } else if (this.firstPersonView) {
         const eye = local.group.localToWorld(new THREE.Vector3(0, 1.56, 0.02));
         const facing = local.group.rotation.y;
         const damping = 1 - Math.exp(-15 * Math.max(0, deltaSeconds));
@@ -654,6 +806,10 @@ export class GameScene {
       }
     }
     this.camera.updateMatrixWorld();
+    this.ray.set(PHOTOBOOTH_CONFIG.position.x, 5.1, PHOTOBOOTH_CONFIG.position.z).project(this.camera);
+    this.photoboothLabel.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
+    this.photoboothLabel.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
+    this.photoboothLabel.style.display = this.ray.z <= 1 && Math.abs(this.ray.x) <= 1.2 && Math.abs(this.ray.y) <= 1.2 ? 'block' : 'none';
     for (const [id, avatar] of this.avatars) {
       avatar.rod.rotation.z = -0.42 + (avatar.reelActive ? 0.12 + Math.sin(Date.now() * 0.006) * 0.035 : 0);
       if (avatar.heldModel) {
@@ -689,7 +845,8 @@ export class GameScene {
       const fishChip = fish && fishSpecies
         ? `<button class="held-fish-chip" data-catch-id="${this.escape(fish.catchId)}" style="--rarity-color:${fishSpecies.rarityColor}" type="button">🐟 ${this.escape(fishSpecies.name)} · ${fish.weightKg.toFixed(1)} kg</button>`
         : '';
-      const labelMarkup = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}</span>${fishChip}`;
+      const photoMark = avatar.inPhotobooth ? '<span class="photo-camera-mark" aria-label="In photobooth">📸</span>' : '';
+      const labelMarkup = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span>${fishChip}`;
       if (avatar.renderedLabelMarkup !== labelMarkup) {
         avatar.label.innerHTML = labelMarkup;
         avatar.renderedLabelMarkup = labelMarkup;

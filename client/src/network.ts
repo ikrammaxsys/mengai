@@ -110,6 +110,7 @@ export interface PlayerSnapshot {
   carryingStoneId: string | null;
   holdingFish?: HeldFish | null;
   moving: boolean;
+  inPhotobooth: boolean;
 }
 
 type Handlers = {
@@ -135,7 +136,7 @@ type Handlers = {
   stoneThrown: (message: { stoneId: string; fromId: string; targetId: string | null } & StoneFlight) => void;
   stoneLanded: (message: { stoneId: string; position: { x: number; z: number }; water: boolean; hitPlayerId: string | null }) => void;
   stoneRespawn: (message: { stoneId: string; position: { x: number; z: number } }) => void;
-  stoneHit: (playerId: string) => void;
+  stoneHit: (playerId: string, fishingCancelled: boolean) => void;
   chickenHit: (message: { chickenId: string; startTime: number; directionX: number; directionZ: number }) => void;
   chat: (message: { playerId: string; name: string; text: string; at: number; catch?: CatchEntry }) => void;
   inventorySync: (items: InventoryItem[], totalCaught: number, personalBest: InventoryItem | null, collection: InventoryItem[]) => void;
@@ -263,7 +264,7 @@ export class Network {
         case 'stone_thrown': this.handlers.stoneThrown(message as unknown as Parameters<Handlers['stoneThrown']>[0]); break;
         case 'stone_landed': this.handlers.stoneLanded(message as unknown as Parameters<Handlers['stoneLanded']>[0]); break;
         case 'stone_respawn': this.handlers.stoneRespawn(message as unknown as Parameters<Handlers['stoneRespawn']>[0]); break;
-        case 'stone_hit': this.handlers.stoneHit(String(message.playerId)); break;
+        case 'stone_hit': this.handlers.stoneHit(String(message.playerId), Boolean(message.fishingCancelled)); break;
         case 'chicken_hit': this.handlers.chickenHit(message as unknown as Parameters<Handlers['chickenHit']>[0]); break;
         case 'chat': this.handlers.chat(message.message as Parameters<Handlers['chat']>[0]); break;
         case 'inventory_sync': this.handlers.inventorySync(message.items as InventoryItem[], Number(message.totalCaught) || 0, message.personalBest as InventoryItem | null, message.collection as InventoryItem[] ?? []); break;
@@ -317,8 +318,8 @@ export class Network {
     return false;
   }
 
-  sendMove(seq: number, x: number, z: number, rotY: number, moving: boolean, t: number): void {
-    this.send({ type: 'move', seq, x, z, rotY, moving, t, rttMs: this.rttMs ?? 0 });
+  sendMove(seq: number, x: number, z: number, rotY: number, moving: boolean, t: number, inPhotobooth = false): void {
+    this.send({ type: 'move', seq, x, z, rotY, moving, t, rttMs: this.rttMs ?? 0, inPhotobooth });
   }
   castFish(targetX: number, targetZ: number): void { this.send({ type: 'fish_cast', targetX, targetZ }); }
   startReel(): void { this.send({ type: 'reel_start', rttMs: this.rttMs ?? 0 }); }
