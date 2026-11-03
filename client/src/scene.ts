@@ -31,6 +31,8 @@ export class GameScene {
   private readonly photoboothLabel: HTMLDivElement;
   private readonly ray = new THREE.Vector3();
   private readonly cameraOffset = new THREE.Vector3(0, 8.5, -11);
+  private readonly crocodilePortal = new THREE.Group();
+  private readonly crocodilePortalRing = new THREE.Group();
   private localId = '';
   private leaderboardLeader = '';
   private serverClockOffset = 0;
@@ -109,6 +111,22 @@ export class GameScene {
 
     this.island = new THREE.Group();
     this.scene.add(this.island);
+    this.crocodilePortal.position.set(WORLD_CONFIG.crocodilePortal.x, 0, WORLD_CONFIG.crocodilePortal.z);
+    const portalPad = new THREE.Mesh(new THREE.CircleGeometry(2.25, 12), this.material('#5e6564'));
+    portalPad.rotation.x = -Math.PI / 2; portalPad.position.y = 0.035; this.crocodilePortal.add(portalPad);
+    const padRing = new THREE.Mesh(new THREE.TorusGeometry(2.15, 0.12, 5, 18), new THREE.MeshStandardMaterial({ color: '#70e8df', emissive: '#1ab8b6', emissiveIntensity: 1.4, roughness: 0.45, flatShading: true }));
+    padRing.rotation.x = Math.PI / 2; padRing.position.y = 0.08; this.crocodilePortal.add(padRing);
+    const portalSurface = new THREE.Mesh(new THREE.CircleGeometry(1.38, 16), new THREE.MeshBasicMaterial({ color: '#48d9d4', transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+    portalSurface.position.set(0, 1.62, 0); this.crocodilePortalRing.add(portalSurface);
+    const portalFrame = new THREE.Mesh(new THREE.TorusGeometry(1.45, 0.16, 6, 20), new THREE.MeshStandardMaterial({ color: '#97fff0', emissive: '#1ecbc3', emissiveIntensity: 1.8, roughness: 0.35, flatShading: true }));
+    portalFrame.position.set(0, 1.62, 0); this.crocodilePortalRing.add(portalFrame);
+    const portalBase = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.55, 0.32), this.material('#6b7370'));
+    portalBase.position.set(-1.3, 0.32, 0); this.crocodilePortal.add(portalBase);
+    const portalBaseRight = portalBase.clone(); portalBaseRight.position.x = 1.3; this.crocodilePortal.add(portalBaseRight);
+    this.crocodilePortal.add(this.crocodilePortalRing);
+    const portalLight = new THREE.PointLight('#45e3dd', 1.8, 9, 2);
+    portalLight.position.set(0, 1.6, 0); this.crocodilePortal.add(portalLight);
+    this.scene.add(this.crocodilePortal);
     const ground = new THREE.Mesh(new THREE.CylinderGeometry(WORLD_CONFIG.groundRadius - 1, WORLD_CONFIG.groundRadius, 1.2, 20), this.material('#7fbd83'));
     ground.position.y = -0.62; ground.receiveShadow = true; ground.castShadow = true; this.island.add(ground);
     const top = new THREE.Mesh(new THREE.CircleGeometry(WORLD_CONFIG.grassRadius, 20), this.material('#a7d38e'));
@@ -787,6 +805,9 @@ export class GameScene {
 
   render(deltaSeconds = 1 / 60): void {
     const serverNow = Date.now() + this.serverClockOffset;
+    const portalPulse = Math.sin(serverNow * 0.0025);
+    this.crocodilePortalRing.rotation.y = Math.sin(serverNow * 0.0007) * 0.12;
+    this.crocodilePortalRing.position.y = portalPulse * 0.06;
     const remoteRenderTime = serverNow - this.interpolationDelayMs;
     const local = this.avatars.get(this.localId);
     if (local) {

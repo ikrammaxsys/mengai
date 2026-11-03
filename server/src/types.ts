@@ -99,6 +99,8 @@ export interface Player {
   pendingCatch: ReelCatchCandidate | null;
   carryingStoneId: string | null;
   chickenScore: number;
+  crocodilesSlain: number;
+  arenaInstanceId: string | null;
   inPhotobooth: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
@@ -119,6 +121,7 @@ export interface Room {
   campfireReserved: boolean;
   weather: WeatherSnapshot;
   chickens: Map<string, ChickenAgent>;
+  crocodileScores: Map<string, { playerId: string; playerName: string; count: number }>;
 }
 
 export interface PlayerSnapshot {
@@ -135,6 +138,7 @@ export interface PlayerSnapshot {
   holdingFish?: CatchRecord | null;
   inPhotobooth: boolean;
   chickenScore: number;
+  crocodilesSlain: number;
 }
 
 export type { ChickenSnapshot };

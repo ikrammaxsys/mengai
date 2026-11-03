@@ -2,6 +2,7 @@ import type { FishRarity, FishSpeciesId, ReelParameters } from '../../shared/fis
 import { FISH_CONFIG } from '../../shared/fishConfig';
 import type { WeatherSnapshot, WeatherType } from '../../shared/weatherConfig';
 import type { ChickenSnapshot } from '../../shared/chickenConfig';
+import type { ArenaSnapshot } from '../../shared/arenaConfig';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -77,6 +78,30 @@ export interface StoneFlight {
   throwerId: string;
 }
 
+export interface CrocodileScore {
+  playerId: string;
+  playerName: string;
+  count: number;
+}
+
+export interface ArenaPartyMember {
+  playerId: string;
+  name: string;
+  color: string;
+}
+
+export interface ArenaPartyInvitation {
+  playerId: string;
+  name: string;
+}
+
+export interface ArenaPartyState {
+  partyId: string;
+  leaderId: string;
+  members: ArenaPartyMember[];
+  invited: ArenaPartyInvitation[];
+}
+
 export interface StoneSnapshot {
   id: string;
   originX: number;
@@ -118,7 +143,7 @@ export interface PlayerSnapshot {
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[] }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[] }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -134,6 +159,17 @@ type Handlers = {
   reelState: (playerId: string, active: boolean) => void;
   catchResult: (result: CatchResult) => void;
   leaderboard: (entries: CatchEntry[]) => void;
+  crocodileScore: (score: CrocodileScore) => void;
+  portalEntered: (arena: ArenaSnapshot) => void;
+  arenaState: (arena: ArenaSnapshot) => void;
+  arenaPartyState: (party: ArenaPartyState) => void;
+  arenaPartyInvite: (invitation: { partyId: string; leaderId: string; leaderName: string }) => void;
+  arenaPartyClosed: (message: { partyId: string; reason: string }) => void;
+  monsterHit: (message: { damage: number; hp: number; maxHp: number }) => void;
+  playerDamaged: (message: { playerId: string; damage: number; hp: number; maxHp: number; skill: 'bite' | 'tailSweep' | 'lunge' }) => void;
+  monsterDied: () => void;
+  playerDied: (respawnAt: number) => void;
+  portalExited: (respawned: boolean) => void;
   announcement: (message: string) => void;
   bigCatch: (message: BigCatchEvent) => void;
   stonePicked: (stoneId: string, playerId: string) => void;
@@ -263,6 +299,17 @@ export class Network {
         case 'reel_state': this.handlers.reelState(String(message.playerId), Boolean(message.active)); break;
         case 'catch_result': this.handlers.catchResult(message as unknown as CatchResult); break;
         case 'leaderboard_update': this.handlers.leaderboard(message.entries as CatchEntry[]); break;
+        case 'crocodile_score': this.handlers.crocodileScore(message as unknown as CrocodileScore); break;
+        case 'portalEnter': this.handlers.portalEntered(message.arena as ArenaSnapshot); break;
+        case 'arenaState': this.handlers.arenaState(message.arena as ArenaSnapshot); break;
+        case 'arenaPartyState': this.handlers.arenaPartyState(message as unknown as ArenaPartyState); break;
+        case 'arenaPartyInvite': this.handlers.arenaPartyInvite(message as unknown as Parameters<Handlers['arenaPartyInvite']>[0]); break;
+        case 'arenaPartyClosed': this.handlers.arenaPartyClosed(message as unknown as Parameters<Handlers['arenaPartyClosed']>[0]); break;
+        case 'monsterHit': this.handlers.monsterHit(message as unknown as Parameters<Handlers['monsterHit']>[0]); break;
+        case 'playerDamaged': this.handlers.playerDamaged(message as unknown as Parameters<Handlers['playerDamaged']>[0]); break;
+        case 'monsterDied': this.handlers.monsterDied(); break;
+        case 'playerDied': this.handlers.playerDied(Number(message.respawnAt)); break;
+        case 'portalExit': this.handlers.portalExited(Boolean(message.respawned)); break;
         case 'room_announcement': this.handlers.announcement(String(message.message)); break;
         case 'big_catch': this.handlers.bigCatch(message as unknown as BigCatchEvent); break;
         case 'stone_picked': this.handlers.stonePicked(String(message.stoneId), String(message.playerId)); break;
@@ -338,6 +385,15 @@ export class Network {
   releaseFish(catchId: string): void { this.send({ type: 'inventory_release', catchId }); }
   holdFish(catchId: string | null): void { this.send({ type: 'hold_fish', catchId }); }
   cookFish(catchId: string): void { this.send({ type: 'campfire_cook', catchId }); }
+  createArenaParty(): void { this.send({ type: 'arenaPartyCreate' }); }
+  inviteArenaPartyPlayer(playerId: string): void { this.send({ type: 'arenaPartyInvite', playerId }); }
+  respondArenaPartyInvite(partyId: string, accept: boolean): void { this.send({ type: 'arenaPartyRespond', partyId, accept }); }
+  leaveArenaParty(): void { this.send({ type: 'arenaPartyLeave' }); }
+  startArenaParty(): void { this.send({ type: 'arenaPartyStart' }); }
+  moveArena(x: number, z: number, facing: number): void { this.send({ type: 'arenaMove', x, z, facing }); }
+  arenaStoneAction(): void { this.send({ type: 'arenaStoneAction' }); }
+  leaveArena(): void { this.send({ type: 'arenaLeave' }); }
+  restartArena(): void { this.send({ type: 'arenaRestart' }); }
   close(): void {
     this.intentionalClose = true;
     window.clearInterval(this.pingTimer);

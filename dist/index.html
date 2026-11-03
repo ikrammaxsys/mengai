@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#c9e8e5" />
+    <title>Mengai — a little fishing getaway</title>
+    <script type="module" crossorigin src="/assets/index-D-rJWOc2.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-l2EMfaPj.css">
+  </head>
+  <body>
+    <main id="app">
+      <div id="game"></div>
+      <section id="join-screen" class="screen-card">
+        <div class="eyebrow">A LITTLE MULTIPLAYER GETAWAY</div>
+        <h1>Welcome to<br /><span>Mengai</span></h1>
+        <p class="intro">Find a quiet spot by the water and see who else is out fishing.</p>
+        <form id="join-form">
+          <label for="room">Room number</label>
+          <input id="room" name="room" maxlength="24" autocomplete="off" placeholder="e.g. 42" required />
+          <label for="name">Your name</label>
+          <input id="name" name="name" maxlength="16" autocomplete="nickname" placeholder="What should we call you?" required />
+          <p id="form-error" class="error" aria-live="polite"></p>
+          <button id="join-button" type="submit">Join the pond <span aria-hidden="true">→</span></button>
+        </form>
+        <section class="room-picker" aria-label="Available rooms">
+          <div class="room-picker-heading"><strong>Open rooms</strong><button id="refresh-rooms" type="button">Refresh</button></div>
+          <div id="room-list" class="room-list" aria-live="polite"><p class="rooms-empty">Loading rooms…</p></div>
+          <button id="create-room" class="create-room-button" type="button">＋ Create a new room</button>
+        </section>
+        <p class="footnote">No account needed. Just bring your best fishing luck.</p>
+      </section>
+
+      <section id="hud" class="hud hidden" aria-live="polite">
+        <div class="hud-top-left hud-card room-card"><strong id="hud-room">Room —</strong><span class="people-dot" aria-hidden="true"></span><span class="room-separator">·</span><span id="player-count">1</span><span>at the pond</span><span class="room-separator">·</span><span class="chicken-score"><span aria-hidden="true">🐔</span><span>hits</span><strong id="chicken-score">0</strong></span></div>
+        <div id="weather-control" class="weather-control">
+          <button id="weather-badge" class="weather-badge" type="button" aria-describedby="weather-hint"><span id="weather-icon" class="weather-badge-icon" aria-hidden="true"></span><span id="weather-name">Clear</span></button>
+          <span id="weather-hint" class="weather-tooltip" role="tooltip">Common fish are biting</span>
+        </div>
+        <div id="minimap" class="minimap" aria-label="Minimap">
+          <canvas id="minimap-canvas" width="320" height="320" aria-hidden="true"></canvas>
+          <button id="connection-control" class="map-connection" type="button" aria-label="Connected"><span id="connection-dot" class="connection-dot"></span><span id="connection-label" class="connection-tooltip">Connected</span></button>
+          <div class="map-controls" aria-label="Map controls">
+            <button id="map-zoom-in" class="map-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+            <button id="map-zoom-out" class="map-button" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+            <button id="map-expand" class="map-button map-expand" type="button" aria-label="Expand map" title="Expand map (M)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M4 16v4h4M20 16v4h-4"/></svg></button>
+          </div>
+        </div>
+        <nav class="hud-dock" aria-label="Game panels and view">
+          <button id="leaderboard-toggle" class="dock-button" type="button" aria-label="Leaderboard (L)" title="Leaderboard · L" aria-expanded="false" aria-controls="leaderboard-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v4a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 0v5m-4 3h8m-7-3h6v3H9z"/></svg><span class="dock-tooltip">Leaderboard <kbd>L</kbd></span></button>
+          <button id="backpack-toggle" class="dock-button" type="button" aria-label="Backpack (I)" title="Backpack · I" aria-expanded="false" aria-controls="backpack-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6V5a4 4 0 0 1 8 0v1m-9 0h10a3 3 0 0 1 3 3v10H4V9a3 3 0 0 1 3-3Zm-3 6h5v3h6v-3h5M9 10h6"/></svg><span id="backpack-count" class="backpack-count">0</span><span class="dock-tooltip">Backpack <kbd>I</kbd></span></button>
+          <button id="view-toggle" class="dock-button" type="button" aria-label="Switch to first-person view (V)" title="Switch view · V" aria-pressed="false"><svg id="view-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-8Zm5 9v-6h8v6M9 9h.01M15 9h.01"/></svg><span class="dock-tooltip">Switch view <kbd>V</kbd></span></button>
+          <button id="photobooth-enter" class="dock-button" type="button" aria-label="Photobooth (P)" title="Photobooth · P" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span class="dock-tooltip">Photobooth <kbd>P</kbd></span></button>
+        </nav>
+        <div id="toast" class="toast" aria-live="assertive"></div>
+        <div id="portal-prompt" class="portal-prompt hidden" role="dialog" aria-label="Arena portal">
+          <strong>Form an arena party?</strong>
+          <span>Wait for friends, invite people in your room, and start the fight together.</span>
+          <div><button id="portal-enter" type="button">Wait for party</button><button id="portal-cancel" type="button">Later <kbd>Esc</kbd></button></div>
+        </div>
+        <section id="arena-party-panel" class="arena-party-panel hidden" role="dialog" aria-modal="true" aria-labelledby="arena-party-title">
+          <div class="arena-party-card">
+            <header><div><strong id="arena-party-title">Arena party</strong><span>Invite room members. They enter only when the leader starts.</span></div></header>
+            <h3>Party</h3><div id="arena-party-members" class="arena-party-list"></div>
+            <h3>Invite players in your room</h3><div id="arena-party-room" class="arena-party-list"></div>
+            <footer><button id="arena-party-start" type="button">Start arena</button><button id="arena-party-leave" type="button">Leave party</button></footer>
+          </div>
+        </section>
+        <section id="arena-party-invites" class="arena-party-invites hidden" aria-label="Arena invitations">
+          <strong>You’re invited to an arena party</strong><div id="arena-party-invites-list"></div>
+        </section>
+        <div id="photobooth-prompt" class="photobooth-prompt hidden"><kbd>P</kbd><span>Press P to use the photobooth</span></div>
+        <div id="fish-prompt" class="fish-prompt hidden">Space to cast</div>
+        <section id="reel-game" class="reel-game hidden" aria-live="polite">
+          <div class="reel-title"><span>KEEP THE LINE IN THE GREEN</span><strong id="reel-percent">30%</strong></div>
+          <div id="reel-track" class="reel-track">
+            <div id="reel-zone" class="reel-zone"></div>
+            <div id="reel-marker" class="reel-marker"><span></span></div>
+          </div>
+          <div class="reel-meter"><div id="reel-meter-fill" class="reel-meter-fill"></div></div>
+          <p id="reel-helper" class="reel-helper">Hold Space to lift · release to ease off</p>
+          <div id="reel-result" class="reel-result"></div>
+        </section>
+      </section>
+      <div id="name-labels" aria-hidden="true"></div>
+      <div id="hit-flash" class="hit-flash" aria-hidden="true"></div>
+      <section id="arena-overlay" class="arena-overlay hidden" aria-label="Crocodile Arena">
+        <div id="arena-canvas-host" class="arena-canvas-host"></div>
+        <div class="arena-hud">
+          <div id="arena-party-health" class="arena-party-health" aria-label="Party health"></div>
+          <div class="arena-boss-health"><strong id="arena-boss-name">Crocodile</strong><div class="arena-health-track"><div id="arena-boss-hp" class="arena-health-fill boss-health-fill"></div></div><span id="arena-boss-hp-label">500 / 500</span></div>
+          <div class="arena-stone-count">🪨 <span id="arena-stones-held">0</span> / 5 <span class="arena-pile-count">Pile <span id="arena-pile-count">8</span></span></div>
+          <p class="arena-controls">WASD move · E pick up / throw · Reach the exit portal to leave</p>
+          <div id="arena-exit-prompt" class="arena-exit-prompt hidden">Enter the glowing portal and press <kbd>Enter</kbd> to leave</div>
+        </div>
+        <div id="arena-defeated" class="arena-result hidden" role="alert"><strong>Defeated</strong><span>Returning to the island…</span></div>
+        <div id="arena-victory" class="arena-result arena-victory hidden" role="dialog" aria-modal="true" aria-labelledby="arena-victory-title">
+          <span class="arena-result-emoji" aria-hidden="true">🐊</span><strong id="arena-victory-title">Crocodile Slain!</strong><span>You earned a Crocodile Slain.</span>
+          <div><button id="arena-leave-button" type="button">Leave</button><button id="arena-retry-button" type="button">Fight again</button></div>
+        </div>
+      </section>
+      <section id="photobooth-overlay" class="photobooth-overlay hidden" aria-label="Photobooth controls" tabindex="-1">
+        <div class="photo-frame-guide" aria-hidden="true"><span>4:5 PHOTO</span></div>
+        <div id="photobooth-countdown" class="photobooth-countdown hidden" aria-live="assertive"></div>
+        <div id="photobooth-gallery" class="photobooth-gallery hidden" aria-label="Recent photos"></div>
+        <div class="photobooth-controls">
+          <button id="photo-exit" class="photo-exit" type="button">Exit</button>
+          <label class="photo-setting photo-timer-setting">Timer<select id="photo-timer" aria-label="Capture timer"><option value="0">Off</option><option value="3">3s</option><option value="5">5s</option></select></label>
+          <button id="photo-capture" class="photo-capture" type="button" aria-label="Take photo">📸</button>
+          <label class="photo-setting photo-filter-setting">Frame<select id="photo-filter" aria-label="Choose photo frame"><option value="none">Natural</option><option value="warm">Warm</option><option value="sunset">Sunset</option><option value="mono">B&amp;W</option></select></label>
+          <label class="photo-show-name"><input id="photo-show-name" type="checkbox" />Show name</label>
+        </div>
+        <p id="photobooth-status" class="photobooth-status" aria-live="polite"></p>
+        <div id="photobooth-flash" class="photobooth-flash" aria-hidden="true"></div>
+      </section>
+      <section id="photo-result" class="photo-result hidden" aria-label="Captured photo">
+        <button class="photo-result-backdrop" type="button" aria-label="Close photo preview"></button>
+        <div class="photo-result-dialog" role="dialog" aria-modal="true" aria-labelledby="photo-result-title">
+          <header><h2 id="photo-result-title">Your photo</h2><button id="photo-result-close" class="chat-close" type="button" aria-label="Close photo">×</button></header>
+          <img id="photo-result-image" alt="Your photobooth picture" />
+          <footer><button id="photo-retake" class="photo-secondary" type="button">Retake</button><button id="photo-share" class="photo-secondary" type="button">Share</button><button id="photo-download" type="button">Download</button></footer>
+        </div>
+      </section>
+      <div id="chat-ui" class="chat-ui hidden">
+        <button id="chat-toggle" class="chat-toggle" type="button" aria-expanded="false" aria-controls="chat-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5Zm4 5h8m-8 4h5"/></svg> Room chat <span id="chat-unread" class="chat-unread hidden">0</span></button>
+        <section id="chat-panel" class="chat-panel hidden" aria-label="Room chat">
+          <header class="chat-header"><div><strong>Pond chat</strong><span>Only players in this room</span></div><button id="chat-close" class="chat-close" type="button" aria-label="Close chat">×</button></header>
+          <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions"><p class="chat-empty">Say hello to everyone in this room.</p></div>
+          <form id="chat-form" class="chat-form">
+            <input id="chat-input" type="text" maxlength="240" autocomplete="off" placeholder="Say hello…" aria-label="Chat message" />
+            <button type="submit" aria-label="Send message">Send</button>
+          </form>
+        </section>
+      </div>
+      <div id="leaderboard-ui" class="leaderboard-ui hidden">
+        <section id="leaderboard-panel" class="leaderboard-panel hidden" aria-label="Pond leaderboard">
+          <header class="leaderboard-header"><div><strong>Heaviest catches</strong><span>Top 10 in this room</span></div><button id="leaderboard-close" class="chat-close" type="button" aria-label="Close leaderboard">×</button></header>
+          <ol id="leaderboard-list" class="leaderboard-list"></ol>
+          <section class="crocodile-scoreboard" aria-label="Crocodile Slain scores"><h3>Crocodile Slain</h3><ol id="crocodile-score-list"></ol></section>
+        </section>
+      </div>
+      <div id="backpack-ui" class="backpack-ui hidden">
+        <section id="backpack-panel" class="backpack-panel hidden" aria-label="Backpack">
+          <header class="backpack-header"><div><strong id="backpack-summary">Backpack · 0 fish</strong><span id="backpack-stats">0 total fish caught · Personal best —</span></div><button id="backpack-close" class="chat-close" type="button" aria-label="Close backpack">×</button></header>
+          <div id="collection-strip" class="collection-strip" aria-label="Fish collection"></div>
+          <div class="backpack-controls"><div id="backpack-filters" class="backpack-filters" aria-label="Filter by species"></div><label class="backpack-sort-label">Sort <select id="backpack-sort" aria-label="Sort backpack"><option value="newest">Newest</option><option value="heaviest">Heaviest</option><option value="rarity">Rarity</option></select></label></div>
+          <div id="backpack-list" class="backpack-list" aria-live="polite"></div>
+        </section>
+      </div>
+      <section id="catch-popup" class="catch-popup hidden" aria-live="polite">
+        <button id="catch-view-button" class="catch-view-button" type="button" aria-label="View caught fish"><canvas id="catch-fish-canvas" width="300" height="190" aria-hidden="true"></canvas></button>
+        <div class="catch-copy"><div class="catch-eyebrow">NICE CATCH</div><strong id="catch-name"></strong><span id="catch-weight"></span><span id="catch-rarity" class="catch-rarity"></span><div id="catch-tags" class="catch-tags"></div><button id="catch-hold-button" class="catch-hold-button" type="button">Hold it (F)</button></div>
+      </section>
+      <div id="big-catch-banner" class="big-catch-banner hidden">
+        <button id="big-catch-button" class="big-catch-button" type="button" aria-label="View notable catch">
+          <img id="big-catch-icon" alt="" />
+          <span class="big-catch-copy"><span id="big-catch-tier" class="big-catch-tier"></span><strong id="big-catch-text"></strong></span>
+          <span class="big-catch-open" aria-hidden="true">↗</span>
+        </button>
+      </div>
+      <section id="expanded-map" class="expanded-map hidden" aria-label="Expanded map">
+        <button id="expanded-map-backdrop" class="expanded-map-backdrop" type="button" aria-label="Close map"></button>
+        <div class="expanded-map-card" role="dialog" aria-modal="true" aria-labelledby="expanded-map-title">
+          <header><div><span>THE ISLAND</span><h2 id="expanded-map-title">Pond map</h2></div><button id="expanded-map-close" class="chat-close" type="button" aria-label="Close map">×</button></header>
+          <canvas id="expanded-map-canvas" width="640" height="640" aria-label="Top-down island map"></canvas>
+          <p>North is up · <kbd>M</kbd> to close</p>
+        </div>
+      </section>
+      <div id="whats-new" class="whats-new">
+        <div class="whats-new-backdrop"></div>
+        <section class="whats-new-card" role="dialog" aria-modal="true" aria-labelledby="whats-new-title" aria-describedby="whats-new-intro">
+          <header class="whats-new-header">
+            <div class="whats-new-heading"><span class="whats-new-eyebrow">PONDSIDE UPDATE</span><h2 id="whats-new-title">What’s new</h2><p id="whats-new-intro" class="whats-new-intro">A few new things to discover around the pond.</p></div>
+            <button id="whats-new-close" class="chat-close" type="button" aria-label="Close patch notes">×</button>
+          </header>
+          <div id="whats-new-grid" class="whats-new-grid" aria-label="What's new updates"></div>
+          <footer class="whats-new-footer"><span>Happy fishing 🌿</span><button id="whats-new-dismiss" type="button">Got it, let’s fish <span aria-hidden="true">→</span></button></footer>
+        </section>
+      </div>
+      <div id="fish-viewer" class="fish-viewer hidden">
+        <div id="fish-viewer-backdrop" class="fish-viewer-backdrop"></div>
+        <section class="fish-viewer-card" role="dialog" aria-modal="true" aria-labelledby="fish-viewer-name">
+          <button id="fish-viewer-close" class="fish-viewer-close" type="button" aria-label="Close fish viewer">×</button>
+          <div id="fish-viewer-stage" class="fish-viewer-stage"></div>
+          <div class="fish-viewer-info">
+            <span id="fish-viewer-rarity" class="fish-viewer-rarity"></span>
+            <h2 id="fish-viewer-name"></h2>
+            <div class="fish-viewer-stats"><strong id="fish-viewer-weight" class="fish-viewer-weight"></strong><span id="fish-viewer-length" class="fish-viewer-length"></span></div>
+            <p id="fish-viewer-catcher"></p>
+            <p id="fish-viewer-time"></p>
+            <p id="fish-viewer-rank"></p>
+            <p class="viewer-drag-hint">Drag the fish to turn it</p>
+          </div>
+        </section>
+      </div>
+      <pre id="net-debug" class="net-debug hidden" aria-live="off"></pre>
+    </main>
+  </body>
+</html>

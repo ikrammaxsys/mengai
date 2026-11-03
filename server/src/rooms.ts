@@ -3,6 +3,7 @@ import type { FishingProfile, Player, PlayerSnapshot, Room } from './types.js';
 import { FISH_CONFIG } from '../../shared/fishConfig.js';
 import { createWeatherSnapshot } from '../../shared/weatherConfig.js';
 import { createChickenFlock } from './chickens.js';
+import { WORLD_CONFIG } from '../../shared/worldConfig.js';
 
 const COLORS = ['#f07853', '#5c9ee8', '#e6b84b', '#a978d1', '#4cb89b', '#e37eae', '#7eb653', '#e08a43'];
 export const RESUME_GRACE_MS = 10_000;
@@ -18,7 +19,7 @@ export class Rooms {
          state: 'ground' as const, carriedBy: null, flight: null, chickenHitId: null, respawnAt: null,
        }]));
        const createdAt = Date.now();
-       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt) };
+       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map() };
        this.rooms.set(roomId, room);
     } else if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', Date.now());
     const normalized = name.toLocaleLowerCase();
@@ -28,9 +29,15 @@ export class Rooms {
         if (existing.disconnectedAt !== null && now - existing.disconnectedAt >= RESUME_GRACE_MS) {
           room.players.delete(existing.id);
           if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', now);
-      } else if (existing.disconnectedAt !== null && resumeToken && existing.resumeToken === resumeToken) {
-        existing.socket = socket;
-        existing.disconnectedAt = null;
+        } else if (existing.disconnectedAt !== null && resumeToken && existing.resumeToken === resumeToken) {
+          existing.socket = socket;
+          existing.disconnectedAt = null;
+          if (existing.arenaInstanceId) {
+            existing.arenaInstanceId = null;
+            existing.x = WORLD_CONFIG.crocodilePortal.x;
+            existing.z = WORLD_CONFIG.crocodilePortal.z;
+            existing.facing = 0;
+          }
         existing.lastMoveSeq = 0;
         existing.lastMoveAt = now;
         existing.velocityX = 0;
@@ -74,6 +81,8 @@ export class Rooms {
       pendingCatch: null,
       carryingStoneId: null,
       chickenScore: 0,
+      crocodilesSlain: 0,
+      arenaInstanceId: null,
       inPhotobooth: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
@@ -110,15 +119,16 @@ export class Rooms {
 
   list(): { room: string; playerCount: number }[] {
     return [...this.rooms.values()]
-      .map((room) => ({ room: room.id, playerCount: room.players.size }))
+      .map((room) => ({ room: room.id, playerCount: [...room.players.values()].filter((player) => player.arenaInstanceId === null).length }))
       .sort((a, b) => a.room.localeCompare(b.room, undefined, { numeric: true, sensitivity: 'base' }));
   }
 
   snapshot(room: Room, includeHoldingFish = true): PlayerSnapshot[] {
-    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore }) => ({
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore, crocodilesSlain }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
       chickenScore,
+      crocodilesSlain,
       ...(includeHoldingFish ? { holdingFish } : {}),
       moving,
     }));

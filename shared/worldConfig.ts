@@ -3,6 +3,7 @@ export const WORLD_CONFIG = {
   stoneThrowRadius: 27.5,
   groundRadius: 35,
   grassRadius: 33,
+  crocodilePortal: { x: 18, z: -20, useRadius: 2.8 },
   campfire: { x: 0, z: 20, useRadius: 4.8, shareRadius: 8, cookDurationMs: 9000 },
   trees: [
     [-12, -8], [-13, 7], [12, -10], [13, 7], [-7, 14], [8, 13], [16, -1], [-16, 0],

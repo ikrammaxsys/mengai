@@ -8,7 +8,7 @@
     "dev:server": "tsx watch server/src/index.ts",
     "dev:client": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "test": "tsx scripts/test-reel-game.ts && tsx scripts/test-persistence.ts && tsx scripts/test-weather.ts && tsx scripts/test-chickens.ts && node scripts/smoke-test.mjs",
+    "test": "tsx scripts/test-reel-game.ts && tsx scripts/test-persistence.ts && tsx scripts/test-weather.ts && tsx scripts/test-chickens.ts && tsx scripts/test-arenas.ts && node scripts/smoke-test.mjs",
     "simulate:fishing": "tsx scripts/simulate-fishing.ts",
     "start": "tsx server/src/index.ts"
   },

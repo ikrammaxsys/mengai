@@ -1,0 +1,93 @@
+export const ARENA_CONFIG = {
+  platformRadius: 22,
+  playerMaxHp: 100,
+  playerMoveSpeed: 4.2,
+  playerMoveSlack: 0.5,
+  playerTurnRate: 3.2,
+  playerCollisionRadius: 0.55,
+  playerSpawn: { x: -10, z: 0, facing: Math.PI / 2 },
+  exitPortal: { x: -13, z: -5, useRadius: 2.4 },
+  stonePile: { x: -6, z: -1, maxCount: 8, refillEveryMs: 2600, refillAmount: 2, useRadius: 2.4 },
+  maxCarriedStones: 5,
+  stoneThrowDistance: 18,
+  stoneFlightMs: 900,
+  stoneHitRadius: 1.7,
+  stoneDamage: 20,
+  monsterMaxHp: 500,
+  monsterRadius: 1.8,
+  monsterMoveSpeed: 1.45,
+  monsterAttackCooldownMs: 850,
+  playerRespawnDelayMs: 3000,
+  monsterDeathDurationMs: 1400,
+  tickIntervalMs: 100,
+  attacks: {
+    bite: { damage: 15, range: 2, windupMs: 550, cooldownMs: 2400 },
+    tailSweep: { damage: 20, range: 4.1, warningMs: 1000, cooldownMs: 5600 },
+    lunge: { damage: 25, range: 12, windupMs: 1000, chargeMs: 650, speed: 11, hitRadius: 1.25, cooldownMs: 7600 },
+  },
+} as const;
+
+export type ArenaState = 'active' | 'victory' | 'defeat';
+export type MonsterState = 'idle' | 'chase' | 'attack' | 'cooldown' | 'dead';
+export type MonsterSkill = keyof typeof ARENA_CONFIG.attacks;
+export type MonsterAttackPhase = 'windup' | 'charge';
+
+export interface ArenaParticipantSnapshot {
+  playerId: string;
+  name: string;
+  color: string;
+  x: number;
+  z: number;
+  facing: number;
+  hp: number;
+  maxHp: number;
+  stones: number;
+}
+
+export interface ArenaAttackSnapshot {
+  skill: MonsterSkill;
+  phase: MonsterAttackPhase;
+  startedAt: number;
+  resolveAt: number;
+  endsAt: number;
+  originX: number;
+  originZ: number;
+  directionX: number;
+  directionZ: number;
+  radius: number;
+}
+
+export interface ArenaMonsterSnapshot {
+  id: string;
+  kind: 'crocodile';
+  name: 'Crocodile';
+  x: number;
+  z: number;
+  facing: number;
+  hp: number;
+  maxHp: number;
+  state: MonsterState;
+  attack: ArenaAttackSnapshot | null;
+}
+
+export interface ArenaProjectileSnapshot {
+  id: string;
+  startX: number;
+  startZ: number;
+  endX: number;
+  endZ: number;
+  startedAt: number;
+  durationMs: number;
+}
+
+export interface ArenaSnapshot {
+  instanceId: string;
+  state: ArenaState;
+  serverTime: number;
+  players: ArenaParticipantSnapshot[];
+  monster: ArenaMonsterSnapshot;
+  stonePile: { x: number; z: number; count: number; maxCount: number; nextRefillAt: number };
+  projectiles: ArenaProjectileSnapshot[];
+  exitPortal: { x: number; z: number; useRadius: number };
+  respawnAt: number | null;
+}

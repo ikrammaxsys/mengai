@@ -51,6 +51,22 @@
           <button id="photobooth-enter" class="dock-button" type="button" aria-label="Photobooth (P)" title="Photobooth · P" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span class="dock-tooltip">Photobooth <kbd>P</kbd></span></button>
         </nav>
         <div id="toast" class="toast" aria-live="assertive"></div>
+        <div id="portal-prompt" class="portal-prompt hidden" role="dialog" aria-label="Arena portal">
+          <strong>Form an arena party?</strong>
+          <span>Wait for friends, invite people in your room, and start the fight together.</span>
+          <div><button id="portal-enter" type="button">Wait for party</button><button id="portal-cancel" type="button">Later <kbd>Esc</kbd></button></div>
+        </div>
+        <section id="arena-party-panel" class="arena-party-panel hidden" role="dialog" aria-modal="true" aria-labelledby="arena-party-title">
+          <div class="arena-party-card">
+            <header><div><strong id="arena-party-title">Arena party</strong><span>Invite room members. They enter only when the leader starts.</span></div></header>
+            <h3>Party</h3><div id="arena-party-members" class="arena-party-list"></div>
+            <h3>Invite players in your room</h3><div id="arena-party-room" class="arena-party-list"></div>
+            <footer><button id="arena-party-start" type="button">Start arena</button><button id="arena-party-leave" type="button">Leave party</button></footer>
+          </div>
+        </section>
+        <section id="arena-party-invites" class="arena-party-invites hidden" aria-label="Arena invitations">
+          <strong>You’re invited to an arena party</strong><div id="arena-party-invites-list"></div>
+        </section>
         <div id="photobooth-prompt" class="photobooth-prompt hidden"><kbd>P</kbd><span>Press P to use the photobooth</span></div>
         <div id="fish-prompt" class="fish-prompt hidden">Space to cast</div>
         <section id="reel-game" class="reel-game hidden" aria-live="polite">
@@ -66,6 +82,21 @@
       </section>
       <div id="name-labels" aria-hidden="true"></div>
       <div id="hit-flash" class="hit-flash" aria-hidden="true"></div>
+      <section id="arena-overlay" class="arena-overlay hidden" aria-label="Crocodile Arena">
+        <div id="arena-canvas-host" class="arena-canvas-host"></div>
+        <div class="arena-hud">
+          <div id="arena-party-health" class="arena-party-health" aria-label="Party health"></div>
+          <div class="arena-boss-health"><strong id="arena-boss-name">Crocodile</strong><div class="arena-health-track"><div id="arena-boss-hp" class="arena-health-fill boss-health-fill"></div></div><span id="arena-boss-hp-label">500 / 500</span></div>
+          <div class="arena-stone-count">🪨 <span id="arena-stones-held">0</span> / 5 <span class="arena-pile-count">Pile <span id="arena-pile-count">8</span></span></div>
+          <p class="arena-controls">WASD move · E pick up / throw · Reach the exit portal to leave</p>
+          <div id="arena-exit-prompt" class="arena-exit-prompt hidden">Enter the glowing portal and press <kbd>Enter</kbd> to leave</div>
+        </div>
+        <div id="arena-defeated" class="arena-result hidden" role="alert"><strong>Defeated</strong><span>Returning to the island…</span></div>
+        <div id="arena-victory" class="arena-result arena-victory hidden" role="dialog" aria-modal="true" aria-labelledby="arena-victory-title">
+          <span class="arena-result-emoji" aria-hidden="true">🐊</span><strong id="arena-victory-title">Crocodile Slain!</strong><span>You earned a Crocodile Slain.</span>
+          <div><button id="arena-leave-button" type="button">Leave</button><button id="arena-retry-button" type="button">Fight again</button></div>
+        </div>
+      </section>
       <section id="photobooth-overlay" class="photobooth-overlay hidden" aria-label="Photobooth controls" tabindex="-1">
         <div class="photo-frame-guide" aria-hidden="true"><span>4:5 PHOTO</span></div>
         <div id="photobooth-countdown" class="photobooth-countdown hidden" aria-live="assertive"></div>
@@ -103,6 +134,7 @@
         <section id="leaderboard-panel" class="leaderboard-panel hidden" aria-label="Pond leaderboard">
           <header class="leaderboard-header"><div><strong>Heaviest catches</strong><span>Top 10 in this room</span></div><button id="leaderboard-close" class="chat-close" type="button" aria-label="Close leaderboard">×</button></header>
           <ol id="leaderboard-list" class="leaderboard-list"></ol>
+          <section class="crocodile-scoreboard" aria-label="Crocodile Slain scores"><h3>Crocodile Slain</h3><ol id="crocodile-score-list"></ol></section>
         </section>
       </div>
       <div id="backpack-ui" class="backpack-ui hidden">

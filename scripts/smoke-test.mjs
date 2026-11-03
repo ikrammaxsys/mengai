@@ -361,7 +361,41 @@ try {
   assert.ok(cookingFinished.recipientIds.includes(friendJoined.selfId), 'nearby player receives the shared-fish popup');
   assert.equal(cookingFinished.recipientIds.includes(distantJoined.selfId), false, 'players outside the serving radius do not receive it');
   assert.ok(restartedJoin.leaderboard.some((entry) => entry.id === caught.entry.id), 'releasing after restart must leave the leaderboard record intact');
-  console.log('Smoke test passed: multiplayer gameplay, stone-hit fishing interruption, inventory privacy/release, held-fish sync, reconnect and JSON restart restoration, campfire cooking, and range-limited sharing.');
+
+  const currentRiverPosition = latestPlayer(afterRestart, restartedJoin.selfId);
+  const currentFriendPosition = latestPlayer(nearbyFriend, friendJoined.selfId);
+  await Promise.all([
+    walkTo(afterRestart, currentRiverPosition, 18, -20),
+    walkTo(nearbyFriend, currentFriendPosition, 18, -20),
+  ]);
+  await Promise.all([
+    waitForPlayerAt(afterRestart, restartedJoin.selfId, 18, -20),
+    waitForPlayerAt(nearbyFriend, friendJoined.selfId, 18, -20),
+  ]);
+  afterRestart.send(JSON.stringify({ type: 'arenaPartyCreate' }));
+  const createdParty = await waitFor(afterRestart, 'arenaPartyState');
+  afterRestart.send(JSON.stringify({ type: 'arenaPartyInvite', playerId: friendJoined.selfId }));
+  const invitation = await waitFor(nearbyFriend, 'arenaPartyInvite');
+  assert.equal(invitation.partyId, createdParty.partyId);
+  nearbyFriend.send(JSON.stringify({ type: 'arenaPartyRespond', partyId: invitation.partyId, accept: true }));
+  await waitFor(afterRestart, 'arenaPartyState', (message) => message.partyId === invitation.partyId && message.members.length === 2);
+  await waitFor(nearbyFriend, 'arenaPartyState', (message) => message.partyId === invitation.partyId && message.members.length === 2);
+  nearbyFriend.send(JSON.stringify({ type: 'portalEnter' }));
+  await waitFor(nearbyFriend, 'notice', (message) => /Create a party/i.test(message.message));
+  assert.equal(nearbyFriend.messages.some((message) => message.type === 'portalEnter'), false,
+    'players should not be able to bypass party acceptance and enter directly');
+  afterRestart.send(JSON.stringify({ type: 'arenaPartyStart' }));
+  const riverArena = await waitFor(afterRestart, 'portalEnter');
+  const friendArena = await waitFor(nearbyFriend, 'portalEnter');
+  assert.equal(friendArena.arena.instanceId, riverArena.arena.instanceId, 'players entering the same room portal should join one arena instance');
+  assert.deepEqual(friendArena.arena.players.map((player) => player.playerId).sort(), [restartedJoin.selfId, friendJoined.selfId].sort(),
+    'the joined arena should snapshot both party members');
+  const sharedArenaState = await waitFor(afterRestart, 'arenaState', (message) => message.arena.instanceId === riverArena.arena.instanceId && message.arena.players.length === 2);
+  assert.equal(sharedArenaState.arena.players.length, 2, 'existing party members should receive the updated party snapshot');
+  await delay(150);
+  assert.equal(distantFriend.messages.some((message) => message.type === 'arenaState' || message.type === 'portalEnter'), false,
+    'arena snapshots should only be sent to members of the arena instance');
+  console.log('Smoke test passed: multiplayer gameplay, stone-hit fishing interruption, inventory privacy/release, held-fish sync, reconnect and JSON restart restoration, campfire cooking, range-limited sharing, and invite-based shared arena entry.');
 } finally {
   for (const socket of clients) socket.close();
   stopServer(server);

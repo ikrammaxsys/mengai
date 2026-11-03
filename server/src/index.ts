@@ -13,6 +13,8 @@ import { CHICKEN_CONFIG } from '../../shared/chickenConfig.js';
 import { JsonGameDataStore, type PersistentGameDataStore } from './persistence.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
+import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
+import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
 
 const PORT = Number(process.env.PORT ?? 3002);
 const server = createServer((request, response) => {
@@ -27,6 +29,16 @@ const server = createServer((request, response) => {
 });
 const wss = new WebSocketServer({ server, maxPayload: 16 * 1024, perMessageDeflate: false });
 const rooms = new Rooms();
+const arenaInstances = new Map<string, { roomId: string; arena: ArenaInstance }>();
+interface ArenaParty {
+  id: string;
+  roomId: string;
+  leaderId: string;
+  memberIds: string[];
+  invitedIds: Set<string>;
+}
+const arenaParties = new Map<string, ArenaParty>();
+const playerArenaParties = new Map<string, string>();
 const inventoryStore: InventoryStore = new InMemoryInventoryStore();
 const persistentData: PersistentGameDataStore = new JsonGameDataStore();
 const memberships = new Map<WebSocket, { roomId: string; playerId: string }>();
@@ -113,8 +125,136 @@ function roomSnapshot(room: Room, player: Player) {
     campfireCooking: room.campfireCooking,
     weather: room.weather,
     chickens: chickenSnapshots(room.chickens),
+    crocodileScores: [...room.crocodileScores.values()].sort((a, b) => b.count - a.count),
     resumeToken: player.resumeToken,
   };
+}
+
+function sendArenaSnapshot(player: Player, arena: ArenaInstance, now = Date.now()): void {
+  send(player.socket, { type: 'arenaState', arena: arenaSnapshot(arena, now) });
+}
+
+function broadcastArenaSnapshot(room: Room, arena: ArenaInstance, now = Date.now()): void {
+  const snapshot = arenaSnapshot(arena, now);
+  for (const participant of arena.players) {
+    const player = room.players.get(participant.playerId);
+    if (player?.disconnectedAt === null) send(player.socket, { type: 'arenaState', arena: snapshot });
+  }
+}
+
+function arenaPartyState(room: Room, party: ArenaParty): object {
+  const members = party.memberIds.map((id) => room.players.get(id)).filter((player): player is Player => Boolean(player));
+  const invited = [...party.invitedIds].map((id) => room.players.get(id)).filter((player): player is Player => Boolean(player));
+  return {
+    type: 'arenaPartyState',
+    partyId: party.id,
+    leaderId: party.leaderId,
+    members: members.map(({ id, name, color }) => ({ playerId: id, name, color })),
+    invited: invited.map(({ id, name }) => ({ playerId: id, name })),
+  };
+}
+
+function broadcastArenaParty(room: Room, party: ArenaParty): void {
+  const message = arenaPartyState(room, party);
+  for (const id of party.memberIds) {
+    const player = room.players.get(id);
+    if (player?.disconnectedAt === null) send(player.socket, message);
+  }
+}
+
+function closeArenaParty(room: Room, party: ArenaParty, reason: string): void {
+  const recipients = new Set([...party.memberIds, ...party.invitedIds]);
+  for (const playerId of party.memberIds) playerArenaParties.delete(playerId);
+  arenaParties.delete(party.id);
+  for (const playerId of recipients) {
+    const player = room.players.get(playerId);
+    if (player?.disconnectedAt === null) send(player.socket, { type: 'arenaPartyClosed', partyId: party.id, reason });
+  }
+}
+
+function removeArenaPartyMember(room: Room, party: ArenaParty, playerId: string): void {
+  party.memberIds = party.memberIds.filter((id) => id !== playerId);
+  playerArenaParties.delete(playerId);
+  if (party.memberIds.length === 0) {
+    closeArenaParty(room, party, 'empty');
+    return;
+  }
+  if (party.leaderId === playerId) party.leaderId = party.memberIds[0];
+  broadcastArenaParty(room, party);
+}
+
+function clearArenaInvites(room: Room, playerId: string): void {
+  for (const party of arenaParties.values()) {
+    if (!party.invitedIds.delete(playerId)) continue;
+    broadcastArenaParty(room, party);
+  }
+}
+
+function dropPlayerStone(room: Room, player: Player): void {
+  if (!player.carryingStoneId) return;
+  const stone = room.stones.get(player.carryingStoneId);
+  if (stone) {
+    stone.state = 'ground'; stone.x = player.x; stone.z = player.z; stone.carriedBy = null; stone.flight = null; stone.chickenHitId = null;
+    broadcast(room, { type: 'stone_landed', stoneId: stone.id, position: { x: stone.x, z: stone.z }, water: false, hitPlayerId: null });
+  }
+  player.carryingStoneId = null;
+}
+
+function startArenaParty(room: Room, party: ArenaParty, now: number): ArenaInstance | null {
+  const members = party.memberIds.map((id) => room.players.get(id));
+  if (members.some((player) => !player || player.disconnectedAt !== null || player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle')) return null;
+  const leader = room.players.get(party.leaderId);
+  if (!leader || Math.hypot(leader.x - WORLD_CONFIG.crocodilePortal.x, leader.z - WORLD_CONFIG.crocodilePortal.z) > WORLD_CONFIG.crocodilePortal.useRadius) return null;
+  const readyMembers = members as Player[];
+  const arena = createCrocodileArena(readyMembers[0], now);
+  for (const member of readyMembers.slice(1)) addArenaPlayer(arena, member, now);
+  arenaInstances.set(arena.id, { roomId: room.id, arena });
+  const snapshot = arenaSnapshot(arena, now);
+  for (const member of readyMembers) {
+    dropPlayerStone(room, member);
+    member.arenaInstanceId = arena.id;
+    broadcast(room, { type: 'player_left', playerId: member.id });
+  }
+  closeArenaParty(room, party, 'started');
+  for (const member of readyMembers) send(member.socket, { type: 'portalEnter', arena: snapshot });
+  return arena;
+}
+
+function detachArenaPlayer(room: Room, player: Player, arena: ArenaInstance): void {
+  removeArenaPlayer(arena, player.id);
+  player.arenaInstanceId = null;
+  if (arena.players.length === 0) arenaInstances.delete(arena.id);
+  else broadcastArenaSnapshot(room, arena);
+}
+
+function leaveArena(room: Room, player: Player, now: number, respawned = false): void {
+  const reference = player.arenaInstanceId ? arenaInstances.get(player.arenaInstanceId) : undefined;
+  if (reference) detachArenaPlayer(room, player, reference.arena);
+  player.x = WORLD_CONFIG.crocodilePortal.x;
+  player.z = WORLD_CONFIG.crocodilePortal.z;
+  player.facing = 0;
+  player.moving = false;
+  player.velocityX = 0;
+  player.velocityZ = 0;
+  const returned = rooms.snapshot(room).find((entry) => entry.id === player.id);
+  if (returned) broadcast(room, { type: 'player_joined', player: returned, serverTime: now });
+  send(player.socket, { type: 'portalExit', respawned, serverTime: now });
+}
+
+function publishArenaEvents(room: Room, arena: ArenaInstance, events: ArenaEvent[], now: number): void {
+  const participants = arena.players.map((participant) => room.players.get(participant.playerId))
+    .filter((player): player is Player => Boolean(player && player.disconnectedAt === null));
+  for (const event of events) {
+    if (event.type === 'monsterDied') {
+      for (const owner of participants) {
+        owner.crocodilesSlain += 1;
+        const score = { playerId: owner.id, playerName: owner.name, count: owner.crocodilesSlain };
+        room.crocodileScores.set(owner.id, score);
+        broadcast(room, { type: 'crocodile_score', ...score });
+      }
+      for (const participant of participants) send(participant.socket, event);
+    } else for (const participant of participants) send(participant.socket, event);
+  }
 }
 
 function updateWeather(room: Room, now: number): void {
@@ -261,6 +401,144 @@ wss.on('connection', (socket) => {
     const player = rooms.getPlayer(membership.roomId, membership.playerId);
     const room = rooms.getRoom(membership.roomId);
     if (!player || !room) return;
+
+    if (message.type === 'arenaPartyCreate') {
+      if (player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle') {
+        send(socket, { type: 'notice', message: 'Finish your current activity before forming an arena party.' });
+        return;
+      }
+      const portalDistance = Math.hypot(player.x - WORLD_CONFIG.crocodilePortal.x, player.z - WORLD_CONFIG.crocodilePortal.z);
+      if (portalDistance > WORLD_CONFIG.crocodilePortal.useRadius) {
+        send(socket, { type: 'notice', message: 'Walk closer to the portal to start an arena party.' });
+        return;
+      }
+      const existingPartyId = playerArenaParties.get(player.id);
+      const existingParty = existingPartyId ? arenaParties.get(existingPartyId) : undefined;
+      if (existingParty) {
+        send(socket, arenaPartyState(room, existingParty));
+        return;
+      }
+      clearArenaInvites(room, player.id);
+      const party: ArenaParty = { id: randomUUID(), roomId: room.id, leaderId: player.id, memberIds: [player.id], invitedIds: new Set() };
+      arenaParties.set(party.id, party);
+      playerArenaParties.set(player.id, party.id);
+      send(socket, arenaPartyState(room, party));
+      return;
+    }
+
+    if (message.type === 'arenaPartyInvite') {
+      const partyId = playerArenaParties.get(player.id);
+      const party = partyId ? arenaParties.get(partyId) : undefined;
+      const targetId = typeof message.playerId === 'string' ? message.playerId : '';
+      const target = room.players.get(targetId);
+      if (!party || party.leaderId !== player.id) {
+        send(socket, { type: 'notice', message: 'Only the party leader can invite players.' });
+        return;
+      }
+      if (!target || targetId === player.id || target.disconnectedAt !== null || target.arenaInstanceId || playerArenaParties.has(targetId)) {
+        send(socket, { type: 'notice', message: 'That player is unavailable to join this party.' });
+        return;
+      }
+      if (!party.invitedIds.has(targetId)) {
+        party.invitedIds.add(targetId);
+        send(target.socket, { type: 'arenaPartyInvite', partyId: party.id, leaderId: player.id, leaderName: player.name });
+        broadcastArenaParty(room, party);
+      }
+      return;
+    }
+
+    if (message.type === 'arenaPartyRespond') {
+      const partyId = typeof message.partyId === 'string' ? message.partyId : '';
+      const party = arenaParties.get(partyId);
+      if (!party || party.roomId !== room.id || !party.invitedIds.has(player.id)) return;
+      party.invitedIds.delete(player.id);
+      if (message.accept === true && !player.arenaInstanceId && !playerArenaParties.has(player.id) && player.disconnectedAt === null) {
+        party.memberIds.push(player.id);
+        playerArenaParties.set(player.id, party.id);
+        clearArenaInvites(room, player.id);
+        broadcastArenaParty(room, party);
+      } else {
+        send(socket, { type: 'arenaPartyClosed', partyId: party.id, reason: 'declined' });
+        broadcastArenaParty(room, party);
+      }
+      return;
+    }
+
+    if (message.type === 'arenaPartyLeave') {
+      const partyId = playerArenaParties.get(player.id);
+      const party = partyId ? arenaParties.get(partyId) : undefined;
+      if (!party) return;
+      if (party.leaderId === player.id) closeArenaParty(room, party, 'cancelled');
+      else {
+        removeArenaPartyMember(room, party, player.id);
+        send(socket, { type: 'arenaPartyClosed', partyId: party.id, reason: 'left' });
+      }
+      return;
+    }
+
+    if (message.type === 'arenaPartyStart') {
+      const partyId = playerArenaParties.get(player.id);
+      const party = partyId ? arenaParties.get(partyId) : undefined;
+      if (!party || party.leaderId !== player.id) {
+        send(socket, { type: 'notice', message: 'Only the party leader can start the arena.' });
+        return;
+      }
+      if (!startArenaParty(room, party, Date.now())) {
+        send(socket, { type: 'notice', message: 'The leader must be at the portal and every party member must be available.' });
+      }
+      return;
+    }
+
+    if (message.type === 'portalEnter') {
+      send(socket, { type: 'notice', message: 'Create a party at the portal, invite your room, then start the fight together.' });
+      return;
+    }
+
+    if (message.type === 'arenaMove') {
+      const reference = player.arenaInstanceId ? arenaInstances.get(player.arenaInstanceId) : undefined;
+      if (!reference) return;
+      const accepted = moveArenaPlayer(reference.arena, player.id, Number(message.x), Number(message.z), Number(message.facing), Date.now());
+      if (!accepted) sendArenaSnapshot(player, reference.arena);
+      return;
+    }
+
+    if (message.type === 'arenaStoneAction') {
+      const reference = player.arenaInstanceId ? arenaInstances.get(player.arenaInstanceId) : undefined;
+      if (!reference) return;
+      const result = arenaStoneAction(reference.arena, player.id, Date.now());
+      if (result === 'empty') send(socket, { type: 'notice', message: 'Get a stone from the pile before throwing.' });
+      else if (result === 'full') send(socket, { type: 'notice', message: 'You can carry up to five stones.' });
+      sendArenaSnapshot(player, reference.arena);
+      return;
+    }
+
+    if (message.type === 'arenaLeave') {
+      const reference = player.arenaInstanceId ? arenaInstances.get(player.arenaInstanceId) : undefined;
+      if (!reference) return;
+      const participant = reference.arena.players.find((entry) => entry.playerId === player.id);
+      const atExit = participant && Math.hypot(participant.x - ARENA_CONFIG.exitPortal.x, participant.z - ARENA_CONFIG.exitPortal.z) <= ARENA_CONFIG.exitPortal.useRadius;
+      if (reference.arena.state !== 'victory' && !atExit) {
+        send(socket, { type: 'notice', message: 'Walk to the exit portal to leave the arena.' });
+        return;
+      }
+      leaveArena(room, player, Date.now());
+      return;
+    }
+
+    if (message.type === 'arenaRestart') {
+      const reference = player.arenaInstanceId ? arenaInstances.get(player.arenaInstanceId) : undefined;
+      if (!reference || reference.arena.state !== 'victory') return;
+      const now = Date.now();
+      restartCrocodileArena(reference.arena, now);
+      const snapshot = arenaSnapshot(reference.arena, now);
+      for (const participant of reference.arena.players) {
+        const member = room.players.get(participant.playerId);
+        if (member?.disconnectedAt === null) send(member.socket, { type: 'portalEnter', arena: snapshot });
+      }
+      return;
+    }
+
+    if (player.arenaInstanceId && message.type !== 'chat') return;
 
     if (message.type === 'weather:debug') {
       if (process.env.NODE_ENV === 'production') return;
@@ -574,6 +852,16 @@ wss.on('connection', (socket) => {
     memberships.delete(socket);
     const departing = rooms.getPlayer(membership.roomId, membership.playerId);
     const existingRoom = rooms.getRoom(membership.roomId);
+    if (departing && existingRoom) {
+      const partyId = playerArenaParties.get(departing.id);
+      const party = partyId ? arenaParties.get(partyId) : undefined;
+      if (party) removeArenaPartyMember(existingRoom, party, departing.id);
+      clearArenaInvites(existingRoom, departing.id);
+    }
+    if (departing?.arenaInstanceId) {
+      const reference = arenaInstances.get(departing.arenaInstanceId);
+      if (reference && existingRoom && departing) detachArenaPlayer(existingRoom, departing, reference.arena);
+    }
     if (departing?.fishing === 'fighting' && existingRoom) {
       broadcast(existingRoom, { type: 'reel_state', playerId: departing.id, active: false }, socket);
     }
@@ -716,6 +1004,40 @@ setInterval(() => {
     broadcast(room, { type: 'chicken_state', chickens: chickenSnapshots(room.chickens), serverTime: now });
   }
 }, CHICKEN_CONFIG.snapshotIntervalMs);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [instanceId, reference] of [...arenaInstances]) {
+    const room = rooms.getRoom(reference.roomId);
+    if (!room) {
+      arenaInstances.delete(instanceId);
+      continue;
+    }
+    for (const participant of [...reference.arena.players]) {
+      const member = room.players.get(participant.playerId);
+      if (!member || member.disconnectedAt !== null) {
+        if (member) detachArenaPlayer(room, member, reference.arena);
+        else removeArenaPlayer(reference.arena, participant.playerId);
+      }
+    }
+    if (reference.arena.players.length === 0) {
+      arenaInstances.delete(instanceId);
+      continue;
+    }
+    publishArenaEvents(room, reference.arena, updateArena(reference.arena, now), now);
+    if (reference.arena.state === 'defeat' && reference.arena.respawnAt !== null && now >= reference.arena.respawnAt) {
+      for (const participant of [...reference.arena.players]) {
+        const member = room.players.get(participant.playerId);
+        if (member) leaveArena(room, member, now, true);
+      }
+      continue;
+    }
+    if (now >= reference.arena.nextStateAt) {
+      broadcastArenaSnapshot(room, reference.arena, now);
+      reference.arena.nextStateAt = now + ARENA_CONFIG.tickIntervalMs;
+    }
+  }
+}, 50);
 
 setInterval(() => {
   const now = Date.now();

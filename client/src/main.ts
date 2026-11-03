@@ -1,16 +1,20 @@
 import './style.css';
-import { Network, type BigCatchEvent, type CatchEntry, type CatchResult, type HeldFish, type InventoryItem, type PlayerSnapshot } from './network';
+import { Network, type ArenaPartyState, type BigCatchEvent, type CatchEntry, type CatchResult, type CrocodileScore, type HeldFish, type InventoryItem, type PlayerSnapshot } from './network';
 import { GameScene } from './scene';
 import { FishArt } from './fishModels';
 import { FishViewer } from './fishViewer';
 import { Minimap } from './minimap';
+import { ArenaView } from './arenaView';
 import { Photobooth, PHOTOBOOTH_CONFIG } from './photobooth';
 import { FISH_CONFIG, reelParametersForDifficulty, type FishSpeciesId, type ReelParameters } from '../../shared/fishConfig';
 import { ReelGame } from './reelGame';
 import { MOVEMENT_RULES, stepMovement } from '../../shared/movement';
+import { ARENA_CONFIG, type ArenaSnapshot } from '../../shared/arenaConfig';
+import { WORLD_CONFIG } from '../../shared/worldConfig';
 import { isWeatherType, WEATHER_CONFIG, type WeatherSnapshot, type WeatherType } from '../../shared/weatherConfig';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
+const appRoot = document.querySelector<HTMLElement>('#app')!;
 const form = document.querySelector<HTMLFormElement>('#join-form')!;
 const roomInput = document.querySelector<HTMLInputElement>('#room')!;
 const nameInput = document.querySelector<HTMLInputElement>('#name')!;
@@ -32,6 +36,17 @@ const whatsNewClose = document.querySelector<HTMLButtonElement>('#whats-new-clos
 const whatsNewDismiss = document.querySelector<HTMLButtonElement>('#whats-new-dismiss')!;
 const toast = document.querySelector<HTMLElement>('#toast')!;
 const hitFlash = document.querySelector<HTMLElement>('#hit-flash')!;
+const portalPrompt = document.querySelector<HTMLElement>('#portal-prompt')!;
+const portalEnterButton = document.querySelector<HTMLButtonElement>('#portal-enter')!;
+const portalCancelButton = document.querySelector<HTMLButtonElement>('#portal-cancel')!;
+const arenaPartyPanel = document.querySelector<HTMLElement>('#arena-party-panel')!;
+const arenaPartyMembers = document.querySelector<HTMLElement>('#arena-party-members')!;
+const arenaPartyRoom = document.querySelector<HTMLElement>('#arena-party-room')!;
+const arenaPartyStartButton = document.querySelector<HTMLButtonElement>('#arena-party-start')!;
+const arenaPartyLeaveButton = document.querySelector<HTMLButtonElement>('#arena-party-leave')!;
+const arenaPartyInvites = document.querySelector<HTMLElement>('#arena-party-invites')!;
+const arenaPartyInvitesList = document.querySelector<HTMLElement>('#arena-party-invites-list')!;
+const arenaOverlay = document.querySelector<HTMLElement>('#arena-overlay')!;
 const photoboothEnter = document.querySelector<HTMLButtonElement>('#photobooth-enter')!;
 const photoboothPrompt = document.querySelector<HTMLElement>('#photobooth-prompt')!;
 const weatherControl = document.querySelector<HTMLElement>('#weather-control')!;
@@ -53,6 +68,7 @@ const leaderboardToggle = document.querySelector<HTMLButtonElement>('#leaderboar
 const leaderboardPanel = document.querySelector<HTMLElement>('#leaderboard-panel')!;
 const leaderboardClose = document.querySelector<HTMLButtonElement>('#leaderboard-close')!;
 const leaderboardList = document.querySelector<HTMLOListElement>('#leaderboard-list')!;
+const crocodileScoreList = document.querySelector<HTMLOListElement>('#crocodile-score-list')!;
 const backpackUi = document.querySelector<HTMLElement>('#backpack-ui')!;
 const backpackToggle = document.querySelector<HTMLButtonElement>('#backpack-toggle')!;
 const backpackPanel = document.querySelector<HTMLElement>('#backpack-panel')!;
@@ -115,6 +131,7 @@ const photoboothUi = new Photobooth(document.querySelector<HTMLElement>('#photob
 });
 const fishArt = new FishArt(document.querySelector<HTMLCanvasElement>('#catch-fish-canvas')!);
 let currentLeaderboard: CatchEntry[] = [];
+let currentCrocodileScores: CrocodileScore[] = [];
 let inventoryItems: InventoryItem[] = [];
 let totalCaught = 0;
 let personalBestFish: InventoryItem | null = null;
@@ -129,9 +146,19 @@ let bigCatchTimer = 0;
 const fishViewer = new FishViewer(fishViewerRoot, () => currentLeaderboard);
 let network: Network;
 let joined = false;
+let arenaMode = false;
+let portalPromptDismissedUntilExit = false;
+let lastArenaMoveAt = 0;
 let firstPersonView = false;
 let selfId = '';
 let currentRoom = '';
+let currentArenaParty: ArenaPartyState | null = null;
+const incomingArenaInvites = new Map<string, { partyId: string; leaderId: string; leaderName: string }>();
+const roomPlayers = new Map<string, PlayerSnapshot>();
+const arenaView = new ArenaView(arenaOverlay, {
+  leave: () => network.leaveArena(),
+  restart: () => network.restartArena(),
+});
 let isPhotoboothMode = false;
 let previousPhotoboothFacing = 0;
 let availableRooms: { room: string; playerCount: number }[] = [];
@@ -358,6 +385,167 @@ function updateCount(): void { playerCount.textContent = String(scene.playerCoun
 
 function updateChickenScore(score: number): void {
   chickenScoreElement.textContent = String(Math.max(0, Math.floor(score)));
+}
+
+function enterCrocodileArena(snapshot: ArenaSnapshot): void {
+  arenaMode = true;
+  portalPrompt.classList.add('hidden');
+  cancelMouseTurn();
+  keys.clear();
+  lastArenaMoveAt = 0;
+  appRoot.classList.add('in-arena');
+  arenaView.enter(snapshot, selfId);
+}
+
+function exitCrocodileArena(respawned: boolean): void {
+  arenaMode = false;
+  arenaView.close();
+  appRoot.classList.remove('in-arena');
+  keys.clear();
+  portalPromptDismissedUntilExit = true;
+  if (respawned) showToast('You have respawned by the portal.');
+}
+
+function syncRoomPlayerRoster(players: PlayerSnapshot[]): void {
+  const nextIds = new Set(players.map((player) => player.id));
+  let rosterChanged = nextIds.size !== roomPlayers.size;
+  for (const player of players) {
+    const existing = roomPlayers.get(player.id);
+    if (!existing || existing.name !== player.name || existing.color !== player.color) rosterChanged = true;
+  }
+  roomPlayers.clear();
+  for (const player of players) roomPlayers.set(player.id, player);
+  if (rosterChanged) renderArenaParty();
+}
+
+function renderArenaParty(): void {
+  const party = currentArenaParty;
+  arenaPartyPanel.classList.toggle('hidden', !party);
+  if (!party) return;
+
+  arenaPartyMembers.replaceChildren();
+  for (const member of party.members) {
+    const row = document.createElement('div');
+    row.className = 'arena-party-member';
+    const name = document.createElement('strong');
+    name.textContent = `${member.name}${member.playerId === selfId ? ' · You' : ''}`;
+    const role = document.createElement('span');
+    role.className = 'arena-party-role';
+    role.textContent = member.playerId === party.leaderId ? 'Leader' : 'Joined';
+    row.append(name, role);
+    arenaPartyMembers.append(row);
+  }
+  for (const invited of party.invited) {
+    const row = document.createElement('div');
+    row.className = 'arena-party-member';
+    const name = document.createElement('strong');
+    name.textContent = invited.name;
+    const role = document.createElement('span');
+    role.className = 'arena-party-role';
+    role.textContent = 'Invite pending';
+    row.append(name, role);
+    arenaPartyMembers.append(row);
+  }
+
+  arenaPartyRoom.replaceChildren();
+  const memberIds = new Set([...party.members.map((member) => member.playerId), ...party.invited.map((member) => member.playerId)]);
+  const available = [...roomPlayers.values()].filter((player) => player.id !== selfId && !memberIds.has(player.id));
+  if (available.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'arena-party-empty';
+    empty.textContent = 'No other players are currently in the room.';
+    arenaPartyRoom.append(empty);
+  }
+  for (const player of available) {
+    const row = document.createElement('div');
+    row.className = 'arena-party-player';
+    const name = document.createElement('span');
+    name.textContent = player.name;
+    const invite = document.createElement('button');
+    invite.type = 'button';
+    invite.textContent = 'Invite';
+    invite.disabled = party.leaderId !== selfId;
+    invite.addEventListener('click', () => network.inviteArenaPartyPlayer(player.id));
+    row.append(name, invite);
+    arenaPartyRoom.append(row);
+  }
+
+  const isLeader = party.leaderId === selfId;
+  arenaPartyStartButton.disabled = !isLeader;
+  arenaPartyStartButton.textContent = isLeader
+    ? party.members.length > 1 ? 'Start together' : 'Start solo'
+    : 'Waiting for leader';
+  arenaPartyLeaveButton.textContent = isLeader ? 'Cancel party' : 'Leave party';
+}
+
+function renderArenaInvites(): void {
+  arenaPartyInvitesList.replaceChildren();
+  arenaPartyInvites.classList.toggle('hidden', incomingArenaInvites.size === 0);
+  for (const invitation of incomingArenaInvites.values()) {
+    const row = document.createElement('div');
+    row.className = 'arena-party-invite';
+    const name = document.createElement('span');
+    name.textContent = `${invitation.leaderName} invited you`;
+    const actions = document.createElement('div');
+    const accept = document.createElement('button');
+    accept.type = 'button';
+    accept.textContent = 'Join';
+    accept.addEventListener('click', () => {
+      incomingArenaInvites.delete(invitation.partyId);
+      renderArenaInvites();
+      network.respondArenaPartyInvite(invitation.partyId, true);
+    });
+    const decline = document.createElement('button');
+    decline.type = 'button';
+    decline.textContent = 'No thanks';
+    decline.addEventListener('click', () => {
+      incomingArenaInvites.delete(invitation.partyId);
+      renderArenaInvites();
+      network.respondArenaPartyInvite(invitation.partyId, false);
+    });
+    actions.append(accept, decline);
+    row.append(name, actions);
+    arenaPartyInvitesList.append(row);
+  }
+}
+
+function updateArenaPartyState(party: ArenaPartyState): void {
+  currentArenaParty = party;
+  incomingArenaInvites.delete(party.partyId);
+  renderArenaInvites();
+  portalPrompt.classList.add('hidden');
+  renderArenaParty();
+}
+
+function closeArenaParty(partyId: string, reason: string): void {
+  incomingArenaInvites.delete(partyId);
+  if (currentArenaParty?.partyId === partyId) {
+    currentArenaParty = null;
+    renderArenaParty();
+    if (reason === 'cancelled') showToast('The arena party was cancelled.');
+    else if (reason === 'left') showToast('You left the arena party.');
+  }
+  renderArenaInvites();
+}
+
+function requestPortalEntry(): void {
+  if (!joined || arenaMode) return;
+  portalPromptDismissedUntilExit = true;
+  portalPrompt.classList.add('hidden');
+  network.createArenaParty();
+}
+
+function updatePortalPrompt(): void {
+  if (!joined || arenaMode) {
+    portalPrompt.classList.add('hidden');
+    return;
+  }
+  const position = scene.getPosition();
+  const distance = Math.hypot(position.x - WORLD_CONFIG.crocodilePortal.x, position.z - WORLD_CONFIG.crocodilePortal.z);
+  if (distance > WORLD_CONFIG.crocodilePortal.useRadius) {
+    portalPromptDismissedUntilExit = false;
+    portalPrompt.classList.add('hidden');
+  } else portalPrompt.classList.toggle('hidden', portalPromptDismissedUntilExit);
 }
 
 function hasForwardInput(): boolean { return keys.has('w') || keys.has('s'); }
@@ -825,6 +1013,28 @@ function updateLeaderboard(entries: CatchEntry[]): void {
   }
 }
 
+function updateCrocodileScores(scores: CrocodileScore[]): void {
+  const normalized = [...scores].filter((score) => score.count > 0).sort((a, b) => b.count - a.count || a.playerName.localeCompare(b.playerName));
+  if (JSON.stringify(normalized) === JSON.stringify(currentCrocodileScores)) return;
+  currentCrocodileScores = normalized;
+  crocodileScoreList.replaceChildren();
+  if (normalized.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'crocodile-score-empty';
+    empty.textContent = 'No crocodiles slain yet.';
+    crocodileScoreList.append(empty);
+    return;
+  }
+  for (const [index, score] of normalized.slice(0, 10).entries()) {
+    const row = document.createElement('li');
+    const rank = document.createElement('span'); rank.textContent = `${index + 1}.`;
+    const player = document.createElement('strong'); player.textContent = score.playerName;
+    const count = document.createElement('span'); count.textContent = String(score.count);
+    row.append(rank, player, count);
+    crocodileScoreList.append(row);
+  }
+}
+
 function showCatch(result: CatchResult): void {
   currentCatch = result.entry;
   cacheCatch(result.entry);
@@ -872,6 +1082,14 @@ function join(room: string, name: string): void {
   network = new Network({
     joined: (message) => {
       observeServerTime(message.serverTime);
+      arenaMode = false;
+      appRoot.classList.remove('in-arena');
+      arenaView.close();
+      currentArenaParty = null;
+      incomingArenaInvites.clear();
+      renderArenaParty();
+      renderArenaInvites();
+      portalPromptDismissedUntilExit = false;
       applyWeather(message.weather, false);
       selfId = message.selfId;
       movementSequence = 0; lastSentMotion = null; lastMovementSentAt = 0; lastMovementHeartbeatAt = 0;
@@ -881,6 +1099,7 @@ function join(room: string, name: string): void {
       scene.clearPlayers();
       scene.setLocalId(selfId);
       scene.setFirstPersonView(firstPersonView);
+      syncRoomPlayerRoster(message.players);
       const me = message.players.find((player) => player.id === selfId);
       myHeldFish = me?.holdingFish ?? null;
       updateChickenScore(me?.chickenScore ?? 0);
@@ -891,6 +1110,7 @@ function join(room: string, name: string): void {
       scene.setCampfireCooking(message.campfireCooking ?? null);
       roomHud.textContent = `Room ${message.room}`;
       updateLeaderboard(message.leaderboard ?? []);
+      updateCrocodileScores(message.crocodileScores ?? []);
       chatMessages.replaceChildren();
       const emptyHint = document.createElement('p');
       emptyHint.className = 'chat-empty';
@@ -921,13 +1141,14 @@ function join(room: string, name: string): void {
     },
     state: (players, serverTime) => {
       observeServerTime(serverTime);
+      syncRoomPlayerRoster(players);
       for (const player of players) if (player.id !== selfId) scene.upsert(player, serverTime);
       const me = players.find((player) => player.id === selfId);
       if (me) updateChickenScore(me.chickenScore);
       updateCount();
     },
-    playerJoined: (player, serverTime) => { observeServerTime(serverTime); scene.upsert(player, serverTime); updateCount(); showToast(`${player.name} joined the pond`); },
-    playerLeft: (id) => { scene.remove(id); updateCount(); },
+    playerJoined: (player, serverTime) => { observeServerTime(serverTime); roomPlayers.set(player.id, player); scene.upsert(player, serverTime); updateCount(); renderArenaParty(); showToast(`${player.name} joined the pond`); },
+    playerLeft: (id) => { roomPlayers.delete(id); scene.remove(id); updateCount(); renderArenaParty(); },
     correction: (message) => { if (message.seq >= movementSequence) scene.applyCorrection(message.x, message.z); },
     clockOffset: (offsetMs) => {
       serverClockOffset = offsetMs; hasServerClockSample = true; scene.setServerClockOffset(offsetMs);
@@ -964,6 +1185,7 @@ function join(room: string, name: string): void {
     reelState: (id, active) => scene.setReelActive(id, active),
     catchResult: (result) => { pendingReelSuccess = null; showCatch(result); },
     leaderboard: updateLeaderboard,
+    crocodileScore: (score) => updateCrocodileScores([...currentCrocodileScores.filter((entry) => entry.playerId !== score.playerId), score]),
     inventorySync: syncInventory,
     inventoryAdd: addInventoryItem,
     inventoryRemove: (catchId) => {
@@ -1002,8 +1224,26 @@ function join(room: string, name: string): void {
       if (message.playerId === selfId) updateChickenScore(message.newScore);
     },
     chickenState: (chickens, serverTime) => scene.setChickens(chickens, serverTime),
+    portalEntered: (arena) => enterCrocodileArena(arena),
+    arenaState: (arena) => arenaView.receive(arena),
+    arenaPartyState: updateArenaPartyState,
+    arenaPartyInvite: (invitation) => {
+      incomingArenaInvites.set(invitation.partyId, invitation);
+      renderArenaInvites();
+    },
+    arenaPartyClosed: (message) => closeArenaParty(message.partyId, message.reason),
+    monsterHit: (message) => arenaView.monsterHit(message),
+    playerDamaged: (message) => arenaView.playerDamaged(message),
+    monsterDied: () => arenaView.monsterDied(),
+    playerDied: () => arenaView.playerDied(),
+    portalExited: (respawned) => exitCrocodileArena(respawned),
     disconnected: () => {
       joined = false;
+      roomPlayers.clear();
+      currentArenaParty = null;
+      incomingArenaInvites.clear();
+      renderArenaParty();
+      renderArenaInvites();
       if (isPhotoboothMode) exitPhotobooth();
       cancelMouseTurn();
       scene.clearPlayers();
@@ -1099,6 +1339,13 @@ leaderboardToggle.addEventListener('click', () => {
 });
 viewToggle.addEventListener('click', () => setViewMode(!firstPersonView));
 photoboothEnter.addEventListener('click', enterPhotobooth);
+portalEnterButton.addEventListener('click', requestPortalEntry);
+arenaPartyStartButton.addEventListener('click', () => network.startArenaParty());
+arenaPartyLeaveButton.addEventListener('click', () => network.leaveArenaParty());
+portalCancelButton.addEventListener('click', () => {
+  portalPromptDismissedUntilExit = true;
+  portalPrompt.classList.add('hidden');
+});
 leaderboardClose.addEventListener('click', () => setOpenSidePanel(null));
 backpackToggle.addEventListener('click', () => setBackpackOpen(backpackPanel.classList.contains('hidden')));
 backpackClose.addEventListener('click', () => setBackpackOpen(false));
@@ -1159,8 +1406,20 @@ window.addEventListener('keydown', (event) => {
     fishViewer.close();
     return;
   }
+  if (event.key === 'Escape' && !arenaMode && !arenaPartyPanel.classList.contains('hidden')) {
+    event.preventDefault();
+    network.leaveArenaParty();
+    return;
+  }
+  if (event.key === 'Escape' && !arenaMode && !portalPrompt.classList.contains('hidden')) {
+    event.preventDefault();
+    portalPromptDismissedUntilExit = true;
+    portalPrompt.classList.add('hidden');
+    return;
+  }
   if (event.key === 'Escape') {
     event.preventDefault();
+    if (arenaMode) return;
     if (document.pointerLockElement === gameCanvas) cancelMouseTurn();
     if (!expandedMap.classList.contains('hidden')) toggleExpandedMap(false);
     else if (openSidePanel) setOpenSidePanel(null);
@@ -1176,6 +1435,30 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (!arenaMode && event.key === 'Enter' && !portalPrompt.classList.contains('hidden') && !(event.target instanceof HTMLButtonElement)) {
+    event.preventDefault();
+    requestPortalEntry();
+    return;
+  }
+  if (arenaMode) {
+    if (key === 'e' && joined && !event.repeat) {
+      event.preventDefault();
+      network.arenaStoneAction();
+      return;
+    }
+    if (event.key === 'Enter' && !(event.target instanceof HTMLButtonElement)) {
+      event.preventDefault();
+      if (arenaView.isNearExit()) network.leaveArena();
+      return;
+    }
+    if (['w', 'a', 's', 'd'].includes(key)) {
+      event.preventDefault();
+      if (!event.repeat) keys.add(key);
+      return;
+    }
+    if (event.key === ' ' || event.key.startsWith('Arrow')) event.preventDefault();
+    return;
+  }
   if (key === 'p' && joined && !event.repeat) {
     event.preventDefault();
     if (isPhotoboothMode) exitPhotobooth();
@@ -1298,8 +1581,17 @@ function animate(now: number): void {
     drawReel(snapshot);
     if (reelGame.result !== 'active') finishReel(reelGame.result === 'success');
   }
-  if (joined) scene.stepCorrection(delta);
-  if (joined && !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle') {
+  if (joined && !arenaMode) scene.stepCorrection(delta);
+  if (joined && arenaMode && !reelGame) {
+    const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
+    const turn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
+    const pose = arenaView.move(forward, turn, delta);
+    if (pose && now - lastArenaMoveAt >= 50) {
+      network.moveArena(pose.x, pose.z, pose.facing);
+      lastArenaMoveAt = now;
+    }
+  }
+  if (joined && !arenaMode && !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
     let turn = keyboardTurn;
@@ -1313,25 +1605,33 @@ function animate(now: number): void {
     const next = stepMovement({ x: position.x, z: position.z, rotY: scene.localFacing() }, forward, turn, delta);
     scene.setLocalMotion(next.x, next.z, next.rotY);
   }
-  if (joined && now - lastMinimapRenderAt >= 66) {
+  if (joined && !arenaMode && now - lastMinimapRenderAt >= 66) {
     lastMinimapRenderAt = now;
     minimap.render(now, scene.mapPlayers());
   }
   if (joined) {
-    sendLocalMovement(false);
-    const distance = Math.hypot(scene.getPosition().x, scene.getPosition().z);
-    const fishing = scene.fishingState();
-    const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
-    photoboothPrompt.classList.toggle('hidden', !nearPhotobooth);
-    photoboothEnter.disabled = !nearPhotobooth;
-    fishPrompt.classList.toggle('hidden', isPhotoboothMode || reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
-    fishPrompt.textContent = fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
+    if (arenaMode) {
+      photoboothPrompt.classList.add('hidden');
+      fishPrompt.classList.add('hidden');
+    } else {
+      sendLocalMovement(false);
+      const distance = Math.hypot(scene.getPosition().x, scene.getPosition().z);
+      const fishing = scene.fishingState();
+      const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
+      photoboothPrompt.classList.toggle('hidden', !nearPhotobooth);
+      photoboothEnter.disabled = !nearPhotobooth;
+      fishPrompt.classList.toggle('hidden', isPhotoboothMode || reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
+      fishPrompt.textContent = fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
+      updatePortalPrompt();
+    }
   } else {
     photoboothPrompt.classList.add('hidden');
     photoboothEnter.disabled = true;
+    portalPrompt.classList.add('hidden');
   }
   catchPopup.classList.toggle('hidden', !fishArt.render(now));
-  scene.render(delta);
+  if (arenaMode) arenaView.render(Date.now() + serverClockOffset, delta);
+  else scene.render(delta);
 }
 
 // The same frame loop renders the island before joining and drives gameplay after joining.
