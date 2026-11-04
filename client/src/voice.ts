@@ -4,7 +4,6 @@ import {
   RoomEvent,
   Track,
   type LocalAudioTrack,
-  type Participant,
   type RemoteAudioTrack,
   type RemoteParticipant,
 } from 'livekit-client';
@@ -19,6 +18,10 @@ export const VOICE_SPATIAL_CONFIG = {
   subscribeHysteresis: 3,
   updateIntervalMs: 100,
   smoothingSeconds: 0.08,
+  speechThreshold: 0.035,
+  speechStartMs: 120,
+  speechHangoverMs: 300,
+  speechPollMs: 100,
   tokenRefreshMs: 8 * 60 * 1000,
 };
 
@@ -44,6 +47,13 @@ export class VoiceClient {
   private room: Room | null = null;
   private localTrack: LocalAudioTrack | null = null;
   private audioContext: AudioContext | null = null;
+  private localSpeechSource: MediaStreamAudioSourceNode | null = null;
+  private localSpeechAnalyser: AnalyserNode | null = null;
+  private localSpeechMute: GainNode | null = null;
+  private localSpeechSamples: Uint8Array | null = null;
+  private localSpeechTimer = 0;
+  private speechStartedAt = 0;
+  private lastVoiceActivityAt = 0;
   private readonly spatialTracks = new Map<string, SpatialTrack>();
   private readonly subscriptions = new Map<string, boolean>();
   private readonly mutedPlayers = new Set<string>();
@@ -102,6 +112,7 @@ export class VoiceClient {
       }
       this.microphoneEnabled = !this.pushToTalk || this.pushToTalkHeld;
       await this.applyMicrophoneState();
+      this.startLocalSpeechDetection();
       await this.connectRoom();
       this.startTokenRefresh();
       this.callbacks.microphone(this.microphoneEnabled);
@@ -112,8 +123,10 @@ export class VoiceClient {
       this.room = null;
       if (room) await room.disconnect().catch(() => undefined);
       this.disposeRoomAudio();
+      this.stopLocalSpeechDetection();
       this.localTrack?.stop();
       this.localTrack = null;
+      this.updateSpeaking(this.playerId, false);
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = 0;
       this.setStatus('failed', this.isPermissionError(error)
@@ -151,6 +164,11 @@ export class VoiceClient {
   async setMicrophoneEnabled(enabled: boolean): Promise<void> {
     if (!this.active || !this.localTrack || this.microphoneEnabled === enabled) return;
     this.microphoneEnabled = enabled;
+    if (!enabled) {
+      this.speechStartedAt = 0;
+      this.lastVoiceActivityAt = 0;
+      this.updateSpeaking(this.playerId, false);
+    }
     await this.applyMicrophoneState();
     this.callbacks.microphone(this.microphoneEnabled);
   }
@@ -161,6 +179,75 @@ export class VoiceClient {
     else await this.localTrack.mute();
   }
 
+  private startLocalSpeechDetection(): void {
+    this.stopLocalSpeechDetection();
+    if (!this.audioContext || !this.localTrack) return;
+    try {
+      const context = this.audioContext;
+      const source = context.createMediaStreamSource(new MediaStream([this.localTrack.mediaStreamTrack]));
+      const analyser = context.createAnalyser();
+      const silentGain = context.createGain();
+      analyser.fftSize = 512;
+      silentGain.gain.value = 0;
+      source.connect(analyser);
+      analyser.connect(silentGain).connect(context.destination);
+      this.localSpeechSource = source;
+      this.localSpeechAnalyser = analyser;
+      this.localSpeechMute = silentGain;
+      this.localSpeechSamples = new Uint8Array(analyser.fftSize);
+      this.localSpeechTimer = window.setInterval(() => this.sampleLocalSpeech(), VOICE_SPATIAL_CONFIG.speechPollMs);
+    } catch (error) {
+      console.warn('[voice] Local speech detection unavailable:', error);
+      this.updateSpeaking(this.playerId, false);
+    }
+  }
+
+  private sampleLocalSpeech(): void {
+    const analyser = this.localSpeechAnalyser;
+    const samples = this.localSpeechSamples;
+    const track = this.localTrack?.mediaStreamTrack;
+    if (!analyser || !samples || !this.audioContext || this.audioContext.state !== 'running' ||
+        !this.active || !this.microphoneEnabled || !track?.enabled || track.muted) {
+      this.speechStartedAt = 0;
+      this.lastVoiceActivityAt = 0;
+      this.updateSpeaking(this.playerId, false);
+      return;
+    }
+
+    analyser.getByteTimeDomainData(samples);
+    let sumSquares = 0;
+    for (const sample of samples) {
+      const normalized = (sample - 128) / 128;
+      sumSquares += normalized * normalized;
+    }
+    const rms = Math.sqrt(sumSquares / samples.length);
+    const now = performance.now();
+    if (rms >= VOICE_SPATIAL_CONFIG.speechThreshold) {
+      if (!this.speechStartedAt) this.speechStartedAt = now;
+      this.lastVoiceActivityAt = now;
+      if (now - this.speechStartedAt >= VOICE_SPATIAL_CONFIG.speechStartMs) this.updateSpeaking(this.playerId, true);
+    } else {
+      this.speechStartedAt = 0;
+      if (this.speakingPlayers.has(this.playerId) && now - this.lastVoiceActivityAt >= VOICE_SPATIAL_CONFIG.speechHangoverMs) {
+        this.updateSpeaking(this.playerId, false);
+      }
+    }
+  }
+
+  private stopLocalSpeechDetection(): void {
+    window.clearInterval(this.localSpeechTimer);
+    this.localSpeechTimer = 0;
+    try { this.localSpeechSource?.disconnect(); } catch { /* already disconnected */ }
+    try { this.localSpeechAnalyser?.disconnect(); } catch { /* already disconnected */ }
+    try { this.localSpeechMute?.disconnect(); } catch { /* already disconnected */ }
+    this.localSpeechSource = null;
+    this.localSpeechAnalyser = null;
+    this.localSpeechMute = null;
+    this.localSpeechSamples = null;
+    this.speechStartedAt = 0;
+    this.lastVoiceActivityAt = 0;
+  }
+
   private async resumeAudioContext(): Promise<void> {
     if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContext();
     const context = this.audioContext;
@@ -168,10 +255,19 @@ export class VoiceClient {
     try {
       await context.resume();
     } catch (error) {
-      if (context.state !== 'closed') throw error;
-      const replacement = new AudioContext();
-      this.audioContext = replacement;
-      if (replacement.state !== 'running') await replacement.resume();
+      const message = error instanceof Error ? error.message : String(error);
+      if (context.state === 'closed' || /closed before resume completed/i.test(message)) {
+        try {
+          const replacement = new AudioContext();
+          this.audioContext = replacement;
+          if (replacement.state !== 'running') await replacement.resume();
+          return;
+        } catch (retryError) {
+          console.warn('[voice] Spatial audio context could not be resumed; continuing without spatial playback.', retryError);
+          return;
+        }
+      }
+      console.warn('[voice] Spatial audio context could not be resumed; continuing without spatial playback.', error);
     }
   }
 
@@ -308,11 +404,6 @@ export class VoiceClient {
         this.setStatus('connected');
       } else if (state === 'connecting' || state === 'reconnecting') this.setStatus('connecting');
     });
-    room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
-      this.speakingPlayers.clear();
-      for (const participant of speakers) if (participant.isSpeaking) this.speakingPlayers.add(participant.identity);
-      this.refreshSpeakingFromPositions();
-    });
     room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
       if (track.kind === Track.Kind.Audio) this.connectSpatialTrack(participant.identity, track as RemoteAudioTrack);
     });
@@ -384,16 +475,6 @@ export class VoiceClient {
     for (const id of this.speakingPlayers) this.updateSpeaking(id, false);
   }
 
-  private refreshSpeakingFromPositions(): void {
-    const local = this.lastPositions.get(this.playerId);
-    for (const participant of this.room?.remoteParticipants.values() ?? []) {
-      const player = this.lastPositions.get(participant.identity);
-      const distance = player && local ? Math.hypot(player.x - local.x, player.z - local.z) : Number.POSITIVE_INFINITY;
-      this.updateSpeaking(participant.identity, participant.isSpeaking && distance <= VOICE_SPATIAL_CONFIG.hearingRange);
-    }
-    this.updateSpeaking(this.playerId, Boolean(this.room?.localParticipant.isSpeaking));
-  }
-
   private async fetchToken(): Promise<TokenResponse> {
     const query = new URLSearchParams({ room: this.gameRoomId, playerId: this.playerId });
     const response = await fetch(`/voice-token?${query}`, { headers: { Authorization: `Bearer ${this.resumeToken}` }, cache: 'no-store' });
@@ -437,8 +518,10 @@ export class VoiceClient {
     window.clearInterval(this.tokenRefreshTimer);
     this.reconnectTimer = 0;
     this.tokenRefreshTimer = 0;
+    this.stopLocalSpeechDetection();
     this.localTrack?.stop();
     this.localTrack = null;
+    this.updateSpeaking(this.playerId, false);
     this.disposeRoomAudio();
     this.callbacks.microphone(false);
     this.setStatus('failed', 'Voice connection lost. Tap the mic to try again.');
@@ -448,6 +531,8 @@ export class VoiceClient {
     this.active = false;
     this.microphoneEnabled = false;
     this.pushToTalkHeld = false;
+    this.stopLocalSpeechDetection();
+    this.updateSpeaking(this.playerId, false);
     window.clearInterval(this.tokenRefreshTimer);
     window.clearTimeout(this.reconnectTimer);
     this.tokenRefreshTimer = 0;

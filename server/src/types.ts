@@ -100,6 +100,7 @@ export interface Player {
   carryingStoneId: string | null;
   chickenScore: number;
   inPhotobooth: boolean;
+  speaking: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
   lastSpecies: FishSpeciesId | null;
@@ -135,6 +136,7 @@ export interface PlayerSnapshot {
   holdingFish?: CatchRecord | null;
   inPhotobooth: boolean;
   chickenScore: number;
+  speaking?: boolean;
 }
 
 export type { ChickenSnapshot };

@@ -75,6 +75,7 @@ export class Rooms {
       carryingStoneId: null,
       chickenScore: 0,
       inPhotobooth: false,
+      speaking: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
       lastSpecies: profile.lastSpecies,
@@ -120,11 +121,12 @@ export class Rooms {
       .sort((a, b) => a.room.localeCompare(b.room, undefined, { numeric: true, sensitivity: 'base' }));
   }
 
-  snapshot(room: Room, includeHoldingFish = true): PlayerSnapshot[] {
-    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore }) => ({
+  snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
+    return [...room.players.values()].map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore, speaking }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
       chickenScore,
+      ...(includeSpeaking ? { speaking } : {}),
       ...(includeHoldingFish ? { holdingFish } : {}),
       moving,
     }));

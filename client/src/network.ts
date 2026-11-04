@@ -114,6 +114,7 @@ export interface PlayerSnapshot {
   holdingFish?: HeldFish | null;
   moving: boolean;
   inPhotobooth: boolean;
+  speaking?: boolean;
   chickenScore: number;
 }
 
@@ -122,6 +123,7 @@ type Handlers = {
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
+  speaking: (playerId: string, speaking: boolean) => void;
   correction: (message: { x: number; z: number; seq: number }) => void;
   clockOffset: (offsetMs: number) => void;
   error: (message: string) => void;
@@ -230,6 +232,7 @@ export class Network {
           break;
         case 'player_joined': this.handlers.playerJoined(message.player as PlayerSnapshot, Number(message.serverTime) || Date.now()); break;
         case 'player_left': this.handlers.playerLeft(String(message.playerId)); break;
+        case 'speaking': this.handlers.speaking(String(message.playerId), Boolean(message.speaking)); break;
         case 'correction': this.handlers.correction(message as unknown as Parameters<Handlers['correction']>[0]); break;
         case 'error': this.handlers.error(String(message.message)); break;
         case 'notice': this.handlers.notice(String(message.message)); break;
@@ -327,6 +330,7 @@ export class Network {
   sendMove(seq: number, x: number, z: number, rotY: number, moving: boolean, t: number, inPhotobooth = false): void {
     this.send({ type: 'move', seq, x, z, rotY, moving, t, rttMs: this.rttMs ?? 0, inPhotobooth });
   }
+  sendSpeaking(speaking: boolean): void { this.send({ type: 'speaking', speaking }); }
   castFish(targetX: number, targetZ: number): void { this.send({ type: 'fish_cast', targetX, targetZ }); }
   startReel(): void { this.send({ type: 'reel_start', rttMs: this.rttMs ?? 0 }); }
   endReel(success: boolean): void { this.send({ type: 'reel_end', success }); }

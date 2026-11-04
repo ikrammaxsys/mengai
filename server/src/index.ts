@@ -379,6 +379,14 @@ wss.on('connection', (socket) => {
       return;
     }
 
+    if (message.type === 'speaking') {
+      const speaking = message.speaking === true;
+      if (player.speaking === speaking) return;
+      player.speaking = speaking;
+      broadcast(room, { type: 'speaking', playerId: player.id, speaking }, socket);
+      return;
+    }
+
     if (player.inPhotobooth) return;
 
     if (message.type === 'fish_cast') {
@@ -640,6 +648,10 @@ wss.on('connection', (socket) => {
     }
     if (departing) {
       departing.inPhotobooth = false;
+      if (departing.speaking && existingRoom) {
+        departing.speaking = false;
+        broadcast(existingRoom, { type: 'speaking', playerId: departing.id, speaking: false }, socket);
+      }
       if (departing.holdingFish) {
         departing.resumeHoldingCatchId = departing.holdingFish.catchId;
         departing.holdingFish = null;
@@ -757,7 +769,7 @@ setInterval(() => {
         broadcast(room, { type: 'stone_respawn', stoneId: stone.id, position: { x: stone.x, z: stone.z } });
       }
     }
-    if ((changed || room.players.size) && room.players.size) broadcast(room, { type: 'state', players: rooms.snapshot(room, false), serverTime: now });
+    if ((changed || room.players.size) && room.players.size) broadcast(room, { type: 'state', players: rooms.snapshot(room, false, false), serverTime: now });
   }
 }, 50);
 

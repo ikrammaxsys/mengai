@@ -114,7 +114,10 @@ voice = new VoiceClient({
     updateVoiceButton();
   },
   microphone: () => updateVoiceButton(),
-  speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
+  speaking: (playerId, speaking) => {
+    scene.setVoiceSpeaking(playerId, speaking);
+    if (playerId === selfId && joined && typeof network !== 'undefined') network.sendSpeaking(speaking);
+  },
   mutedPlayersChanged: renderVoicePlayers,
 });
 voiceVolume.value = String(voice.volume);
@@ -1011,6 +1014,7 @@ function join(room: string, name: string): void {
       if (me) updateChickenScore(me.chickenScore);
       updateCount();
     },
+    speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
     playerJoined: (player, serverTime) => { observeServerTime(serverTime); scene.upsert(player, serverTime); updateCount(); renderVoicePlayers(); showToast(`${player.name} joined the pond`); },
     playerLeft: (id) => { voice.removeGamePlayer(id); scene.remove(id); updateCount(); renderVoicePlayers(); },
     correction: (message) => { if (message.seq >= movementSequence) scene.applyCorrection(message.x, message.z); },
