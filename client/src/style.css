@@ -248,7 +248,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .whats-new-eyebrow { color: #47725c; font-size: 11px; font-weight: 800; letter-spacing: .13em; }
 .whats-new-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .whats-new-header h2 { margin: 4px 0 0; color: #14342b; font: 700 30px/1.1 'Trebuchet MS', 'Segoe UI', sans-serif; letter-spacing: -.025em; }
-.whats-new-version { margin-top: 5px; padding: 5px 9px; border: 1px solid #d9e8db; border-radius: 99px; background: #f1f7f0; color: #355846; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.whats-new-date { margin-top: 5px; padding: 5px 9px; border: 1px solid #d9e8db; border-radius: 99px; background: #f1f7f0; color: #355846; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .whats-new-intro { margin: 8px 0 0; color: #405a4e; font-size: 15px; line-height: 1.4; }
 .whats-new-header .chat-close { flex: 0 0 44px; width: 44px; height: 44px; text-align: center; }
 .whats-new-scroll { position: relative; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 4px 8px 14px 0; scrollbar-color: #9bb8a2 #edf3ed; scrollbar-width: thin; }

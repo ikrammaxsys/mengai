@@ -33,7 +33,7 @@ const whatsNewDialog = document.querySelector<HTMLElement>('.whats-new-card')!;
 const whatsNewScroll = document.querySelector<HTMLElement>('#whats-new-scroll')!;
 const whatsNewHighlights = document.querySelector<HTMLElement>('#whats-new-highlights')!;
 const whatsNewAlso = document.querySelector<HTMLElement>('#whats-new-also')!;
-const whatsNewVersionBadge = document.querySelector<HTMLElement>('#whats-new-version')!;
+const whatsNewDateBadge = document.querySelector<HTMLElement>('#whats-new-date')!;
 const whatsNewClose = document.querySelector<HTMLButtonElement>('#whats-new-close')!;
 const whatsNewDismiss = document.querySelector<HTMLButtonElement>('#whats-new-dismiss')!;
 const whatsNewDontShow = document.querySelector<HTMLInputElement>('#whats-new-dont-show')!;
@@ -399,7 +399,7 @@ function trapWhatsNewFocus(event: KeyboardEvent): void {
 }
 
 function renderWhatsNew(): void {
-  whatsNewVersionBadge.textContent = whatsNewReleaseDate;
+  whatsNewDateBadge.textContent = whatsNewReleaseDate;
   whatsNewHighlights.replaceChildren();
   whatsNewAlso.replaceChildren();
   let highlightIndex = 0;
