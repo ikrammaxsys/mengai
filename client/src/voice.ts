@@ -50,7 +50,7 @@ export class VoiceClient {
   private localSpeechSource: MediaStreamAudioSourceNode | null = null;
   private localSpeechAnalyser: AnalyserNode | null = null;
   private localSpeechMute: GainNode | null = null;
-  private localSpeechSamples: Uint8Array | null = null;
+  private localSpeechSamples: Uint8Array<ArrayBuffer> | null = null;
   private localSpeechTimer = 0;
   private speechStartedAt = 0;
   private lastVoiceActivityAt = 0;
