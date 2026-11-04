@@ -10,6 +10,7 @@ import { ReelGame } from './reelGame';
 import { MOVEMENT_RULES, stepMovement } from '../../shared/movement';
 import { isWeatherType, WEATHER_CONFIG, type WeatherSnapshot, type WeatherType } from '../../shared/weatherConfig';
 import { VoiceClient, type VoiceConnectionStatus } from './voice';
+import { MusicManager, type MusicTrackId } from './music';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const form = document.querySelector<HTMLFormElement>('#join-form')!;
@@ -100,10 +101,22 @@ const voicePtt = document.querySelector<HTMLInputElement>('#voice-ptt')!;
 const voiceVolume = document.querySelector<HTMLInputElement>('#voice-volume')!;
 const voiceVolumeValue = document.querySelector<HTMLElement>('#voice-volume-value')!;
 const voicePlayers = document.querySelector<HTMLElement>('#voice-players')!;
+const musicControl = document.querySelector<HTMLElement>('#music-control')!;
+const musicToggle = document.querySelector<HTMLButtonElement>('#music-toggle')!;
+const musicPanel = document.querySelector<HTMLElement>('#music-panel')!;
+const musicVolume = document.querySelector<HTMLInputElement>('#music-volume')!;
+const musicVolumeValue = document.querySelector<HTMLElement>('#music-volume-value')!;
+const musicMute = document.querySelector<HTMLButtonElement>('#music-mute')!;
 const netDebugEnabled = import.meta.env.DEV && new URLSearchParams(location.search).has('netdebug');
 if (netDebugEnabled) netDebug.classList.remove('hidden');
 
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
+const music = new MusicManager();
+const speakingPlayers = new Set<string>();
+musicVolume.value = String(music.currentVolume);
+musicVolumeValue.textContent = `${Math.round(music.currentVolume * 100)}%`;
+musicMute.textContent = music.isMuted ? 'Unmute music' : 'Mute music';
+musicMute.setAttribute('aria-pressed', String(music.isMuted));
 let voice: VoiceClient;
 voice = new VoiceClient({
   status: (status, message) => {
@@ -116,6 +129,9 @@ voice = new VoiceClient({
   microphone: () => updateVoiceButton(),
   speaking: (playerId, speaking) => {
     scene.setVoiceSpeaking(playerId, speaking);
+    if (speaking) speakingPlayers.add(playerId);
+    else speakingPlayers.delete(playerId);
+    music.duck(speakingPlayers.size > 0);
     if (playerId === selfId && joined && typeof network !== 'undefined') network.sendSpeaking(speaking);
   },
   mutedPlayersChanged: renderVoicePlayers,
@@ -275,8 +291,13 @@ function weatherIconSvg(type: WeatherType): string {
 function applyWeather(weather: WeatherSnapshot, announce: boolean): void {
   currentWeather = weather;
   scene.setWeather(weather);
+  if (joined) void music.crossfadeTo(musicTrackForWeather(weather.type), 2500);
   updateWeatherBadge();
   if (announce) showToast(WEATHER_CONFIG.states[weather.type].toast);
+}
+
+function musicTrackForWeather(type: WeatherType): MusicTrackId {
+  return type === 'rain' || type === 'storm' ? 'rain' : 'day';
 }
 
 function setMengaiWeather(weather: unknown): boolean {
@@ -530,6 +551,19 @@ function setVoicePanel(open: boolean): void {
   voiceSettingsToggle.classList.toggle('active', open);
   voiceSettingsToggle.setAttribute('aria-expanded', String(open));
   if (open) renderVoicePlayers();
+}
+
+function setMusicPanel(open: boolean): void {
+  musicPanel.classList.toggle('hidden', !open);
+  musicToggle.classList.toggle('active', open);
+  musicToggle.setAttribute('aria-expanded', String(open));
+}
+
+function updateMusicControls(): void {
+  musicVolume.value = String(music.currentVolume);
+  musicVolumeValue.textContent = `${Math.round(music.currentVolume * 100)}%`;
+  musicMute.textContent = music.isMuted ? 'Unmute music' : 'Mute music';
+  musicMute.setAttribute('aria-pressed', String(music.isMuted));
 }
 
 function setViewMode(firstPerson: boolean): void {
@@ -992,6 +1026,7 @@ function join(room: string, name: string): void {
       updateCount();
       renderVoicePlayers();
       joined = true;
+      void music.play(currentWeather ? musicTrackForWeather(currentWeather.type) : 'day');
       const debugWeather = pendingDebugWeather ?? forcedWeather;
       pendingDebugWeather = null;
       if (debugWeather) network.setDebugWeather(debugWeather);
@@ -1016,7 +1051,12 @@ function join(room: string, name: string): void {
     },
     speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
     playerJoined: (player, serverTime) => { observeServerTime(serverTime); scene.upsert(player, serverTime); updateCount(); renderVoicePlayers(); showToast(`${player.name} joined the pond`); },
-    playerLeft: (id) => { voice.removeGamePlayer(id); scene.remove(id); updateCount(); renderVoicePlayers(); },
+    playerLeft: (id) => {
+      voice.removeGamePlayer(id);
+      speakingPlayers.delete(id);
+      music.duck(speakingPlayers.size > 0);
+      scene.remove(id); updateCount(); renderVoicePlayers();
+    },
     correction: (message) => { if (message.seq >= movementSequence) scene.applyCorrection(message.x, message.z); },
     clockOffset: (offsetMs) => {
       serverClockOffset = offsetMs; hasServerClockSample = true; scene.setServerClockOffset(offsetMs);
@@ -1093,6 +1133,9 @@ function join(room: string, name: string): void {
     chickenState: (chickens, serverTime) => scene.setChickens(chickens, serverTime),
     disconnected: () => {
       joined = false;
+      speakingPlayers.clear();
+      music.duck(false);
+      music.fadeOut(2000);
       voiceResumeToken = '';
       void voice.disconnect();
       if (isPhotoboothMode) exitPhotobooth();
@@ -1137,6 +1180,7 @@ form.addEventListener('submit', (event) => {
   if (!room) { formError.textContent = 'Please enter a room number.'; roomInput.focus(); return; }
   if (name.length < 1 || name.length > 16) { formError.textContent = 'Name must be 1–16 characters.'; nameInput.focus(); return; }
   currentRoom = room;
+  music.unlock();
   join(room, name);
 });
 
@@ -1162,10 +1206,13 @@ weatherBadge.addEventListener('click', () => {
   if (!open) weatherBadge.blur();
 });
 document.addEventListener('click', (event) => {
-  if (weatherControl.contains(event.target as Node)) return;
-  weatherControl.classList.remove('is-open');
-  weatherBadge.setAttribute('aria-expanded', 'false');
-  if (document.activeElement instanceof HTMLElement && weatherControl.contains(document.activeElement)) document.activeElement.blur();
+  const target = event.target as Node;
+  if (!weatherControl.contains(target)) {
+    weatherControl.classList.remove('is-open');
+    weatherBadge.setAttribute('aria-expanded', 'false');
+    if (document.activeElement instanceof HTMLElement && weatherControl.contains(document.activeElement)) document.activeElement.blur();
+  }
+  if (!musicControl.contains(target)) setMusicPanel(false);
 });
 
 chatToggle.addEventListener('click', () => setChatOpen(chatPanel.classList.contains('hidden')));
@@ -1196,6 +1243,15 @@ voiceToggle.addEventListener('click', () => {
 });
 voiceSettingsToggle.addEventListener('click', () => setVoicePanel(voicePanel.classList.contains('hidden')));
 voiceSettingsClose.addEventListener('click', () => setVoicePanel(false));
+musicToggle.addEventListener('click', () => setMusicPanel(musicPanel.classList.contains('hidden')));
+musicVolume.addEventListener('input', () => {
+  music.setVolume(Number(musicVolume.value));
+  updateMusicControls();
+});
+musicMute.addEventListener('click', () => {
+  music.mute(!music.isMuted);
+  updateMusicControls();
+});
 voicePtt.addEventListener('change', () => { void voice.setPushToTalk(voicePtt.checked); updateVoiceButton(); });
 voiceVolume.addEventListener('input', () => {
   const value = Number(voiceVolume.value);
@@ -1449,4 +1505,4 @@ function animate(now: number): void {
 // The same frame loop renders the island before joining and drives gameplay after joining.
 whatsNewClose.focus({ preventScroll: true });
 requestAnimationFrame(animate);
-window.addEventListener('pagehide', () => { void voice.disconnect(); });
+window.addEventListener('pagehide', () => { music.fadeOut(250); void voice.disconnect(); });

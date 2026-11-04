@@ -345,6 +345,14 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .voice-toggle[data-status="connected"]::after { background: #4db890; }
 .voice-toggle[data-status="failed"]::after { background: #d66d62; }
 .voice-panel { pointer-events: auto; position: absolute; z-index: 22; left: calc(var(--hud-margin) + 58px); top: 50%; width: min(300px, calc(100vw - 88px)); max-height: min(70vh, 460px); overflow: hidden; padding: 13px; border: 1px solid rgba(255,255,255,.9); border-radius: 16px; background: rgba(255,255,255,.97); box-shadow: 0 14px 45px rgba(34,76,68,.22); backdrop-filter: blur(12px); transform: translateY(-50%); }
+.music-control { position: relative; pointer-events: auto; }
+.music-panel { position: absolute; z-index: 24; left: calc(100% + 12px); top: 50%; width: min(230px, calc(100vw - 84px)); padding: 13px; border: 1px solid rgba(255,255,255,.9); border-radius: 15px; background: rgba(255,255,255,.97); box-shadow: 0 12px 34px rgba(34,76,68,.2); backdrop-filter: blur(12px); transform: translateY(-50%); }
+.music-panel-header { padding-bottom: 8px; border-bottom: 1px solid #edf2f0; color: #294c43; font-size: 12px; }
+.music-volume-label { display: flex; justify-content: space-between; margin: 10px 0 2px; color: #526d61; font-size: 10px; }
+.music-volume { display: block; width: 100%; height: 20px; margin: 0 0 8px; padding: 0; accent-color: #328c78; }
+.music-mute { width: 100%; height: 32px; padding: 0 10px; border: 1px solid #dce9e3; border-radius: 9px; background: #f8fbf6; color: #4c6a5b; box-shadow: none; font-size: 10px; text-align: center; }
+.music-mute:hover, .music-mute[aria-pressed="true"] { background: #eef6ed; color: #328c78; transform: none; }
+.music-credit { margin: 9px 0 0; color: #91a29a; font-size: 9px; text-align: center; }
 .voice-panel-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 9px; border-bottom: 1px solid #edf2f0; }
 .voice-panel-header strong, .voice-panel-header span { display: block; }
 .voice-panel-header strong { color: #294c43; font-size: 13px; }
