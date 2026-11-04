@@ -362,6 +362,24 @@
           "weightKg": 3.59,
           "rarity": "epic",
           "timestamp": 1793720291753
+        },
+        {
+          "id": "1884d014-f1e8-449c-bf75-ef1614561923",
+          "playerId": "4d2b66c4-fd9c-48ce-9b2f-5ef6d786cfb4",
+          "playerName": "1",
+          "species": "bluegill",
+          "weightKg": 0.15,
+          "rarity": "common",
+          "timestamp": 1793726209040
+        },
+        {
+          "id": "43933da4-ed71-4992-a9a5-256f886af9c2",
+          "playerId": "4d2b66c4-fd9c-48ce-9b2f-5ef6d786cfb4",
+          "playerName": "1",
+          "species": "largemouth-bass",
+          "weightKg": 0.76,
+          "rarity": "rare",
+          "timestamp": 1793726258560
         }
       ],
       "players": {
@@ -422,6 +440,20 @@
               "rarity": "epic",
               "weightKg": 3.59,
               "caughtAt": 1793720291753
+            },
+            {
+              "catchId": "1884d014-f1e8-449c-bf75-ef1614561923",
+              "species": "bluegill",
+              "rarity": "common",
+              "weightKg": 0.15,
+              "caughtAt": 1793726209040
+            },
+            {
+              "catchId": "43933da4-ed71-4992-a9a5-256f886af9c2",
+              "species": "largemouth-bass",
+              "rarity": "rare",
+              "weightKg": 0.76,
+              "caughtAt": 1793726258560
             }
           ]
         },

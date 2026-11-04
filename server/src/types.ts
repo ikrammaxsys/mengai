@@ -102,6 +102,7 @@ export interface Player {
   crocodilesSlain: number;
   arenaInstanceId: string | null;
   inPhotobooth: boolean;
+  speaking: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
   lastSpecies: FishSpeciesId | null;
@@ -139,6 +140,7 @@ export interface PlayerSnapshot {
   inPhotobooth: boolean;
   chickenScore: number;
   crocodilesSlain: number;
+  speaking?: boolean;
 }
 
 export type { ChickenSnapshot };

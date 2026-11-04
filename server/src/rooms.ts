@@ -84,6 +84,7 @@ export class Rooms {
       crocodilesSlain: 0,
       arenaInstanceId: null,
       inPhotobooth: false,
+      speaking: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
       lastSpecies: profile.lastSpecies,
@@ -111,6 +112,12 @@ export class Rooms {
     return this.rooms.get(roomId)?.players.get(playerId);
   }
 
+  findPlayerByResumeToken(roomId: string, resumeToken: string): Player | undefined {
+    const room = this.rooms.get(roomId);
+    if (!room) return undefined;
+    return [...room.players.values()].find((player) => player.resumeToken === resumeToken && player.disconnectedAt === null);
+  }
+
   getRoom(roomId: string): Room | undefined { return this.rooms.get(roomId); }
 
   all(): IterableIterator<Room> {
@@ -123,12 +130,13 @@ export class Rooms {
       .sort((a, b) => a.room.localeCompare(b.room, undefined, { numeric: true, sensitivity: 'base' }));
   }
 
-  snapshot(room: Room, includeHoldingFish = true): PlayerSnapshot[] {
-    return [...room.players.values()].filter((player) => player.arenaInstanceId === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore, crocodilesSlain }) => ({
+  snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore, crocodilesSlain, speaking }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
       chickenScore,
       crocodilesSlain,
+      ...(includeSpeaking ? { speaking } : {}),
       ...(includeHoldingFish ? { holdingFish } : {}),
       moving,
     }));

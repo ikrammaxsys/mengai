@@ -26,7 +26,7 @@
           <div id="room-list" class="room-list" aria-live="polite"><p class="rooms-empty">Loading rooms…</p></div>
           <button id="create-room" class="create-room-button" type="button">＋ Create a new room</button>
         </section>
-        <p class="footnote">No account needed. Just bring your best fishing luck.</p>
+        <p class="footnote">No account needed. Just bring your best fishing luck. <button id="whats-new-reopen-join" class="whats-new-inline-link" type="button">What’s new</button></p>
       </section>
 
       <section id="hud" class="hud hidden" aria-live="polite">
@@ -48,8 +48,31 @@
           <button id="leaderboard-toggle" class="dock-button" type="button" aria-label="Leaderboard (L)" title="Leaderboard · L" aria-expanded="false" aria-controls="leaderboard-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v4a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 0v5m-4 3h8m-7-3h6v3H9z"/></svg><span class="dock-tooltip">Leaderboard <kbd>L</kbd></span></button>
           <button id="backpack-toggle" class="dock-button" type="button" aria-label="Backpack (I)" title="Backpack · I" aria-expanded="false" aria-controls="backpack-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6V5a4 4 0 0 1 8 0v1m-9 0h10a3 3 0 0 1 3 3v10H4V9a3 3 0 0 1 3-3Zm-3 6h5v3h6v-3h5M9 10h6"/></svg><span id="backpack-count" class="backpack-count">0</span><span class="dock-tooltip">Backpack <kbd>I</kbd></span></button>
           <button id="view-toggle" class="dock-button" type="button" aria-label="Switch to first-person view (V)" title="Switch view · V" aria-pressed="false"><svg id="view-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-8Zm5 9v-6h8v6M9 9h.01M15 9h.01"/></svg><span class="dock-tooltip">Switch view <kbd>V</kbd></span></button>
+          <button id="voice-toggle" class="dock-button voice-toggle" type="button" aria-label="Enable voice chat" aria-pressed="false" title="Enable voice chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm6-3a6 6 0 0 1-12 0m6 6v4m-4 0h8"/></svg><span class="dock-tooltip">Voice <kbd>mic</kbd></span></button>
+          <button id="voice-settings-toggle" class="dock-button" type="button" aria-label="Voice settings" aria-expanded="false" aria-controls="voice-panel" title="Voice settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.2 4.1v-1.2l-2-.6a6.5 6.5 0 0 0-.6-1.4l1-1.8-.9-.9-1.8 1a6.5 6.5 0 0 0-1.4-.6l-.6-2h-1.2l-.6 2a6.5 6.5 0 0 0-1.4.6l-1.8-1-.9.9 1 1.8a6.5 6.5 0 0 0-.6 1.4l-2 .6v1.2l2 .6a6.5 6.5 0 0 0 .6 1.4l-1 1.8.9.9 1.8-1a6.5 6.5 0 0 0 1.4.6l.6 2h1.2l.6-2a6.5 6.5 0 0 0 1.4-.6l1.8 1 .9-.9-1-1.8a6.5 6.5 0 0 0 .6-1.4l2-.6Z"/></svg><span class="dock-tooltip">Voice settings</span></button>
+          <div id="music-control" class="music-control">
+            <button id="music-toggle" class="dock-button" type="button" aria-label="Music settings" aria-expanded="false" aria-controls="music-panel" title="Background music"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4Z"/><path d="M16 9a5 5 0 0 1 0 6m2-9a9 9 0 0 1 0 12"/></svg><span class="dock-tooltip">Music</span></button>
+            <section id="music-panel" class="music-panel hidden" aria-label="Music settings">
+              <header class="music-panel-header"><strong>Background music</strong></header>
+              <label class="music-volume-label" for="music-volume">Volume <span id="music-volume-value">25%</span></label>
+              <input id="music-volume" class="music-volume" type="range" min="0" max="1" step="0.01" value="0.25" />
+              <button id="music-mute" class="music-mute" type="button" aria-pressed="false">Mute music</button>
+              <p class="music-credit">Original ambient loops</p>
+            </section>
+          </div>
+          <button id="whats-new-reopen" class="dock-button" type="button" aria-label="What's new" title="What's new"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.75h12v16.5l-3-2-3 2-3-2-3 2V3.75Z"/><path d="M9 8h6m-6 4h6m-6 4h3"/></svg><span class="dock-tooltip">What's new</span></button>
           <button id="photobooth-enter" class="dock-button" type="button" aria-label="Photobooth (P)" title="Photobooth · P" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span class="dock-tooltip">Photobooth <kbd>P</kbd></span></button>
         </nav>
+        <section id="voice-panel" class="voice-panel hidden" aria-label="Voice settings">
+          <header class="voice-panel-header"><div><strong>Proximity voice</strong><span id="voice-status">Off</span></div><button id="voice-settings-close" class="chat-close" type="button" aria-label="Close voice settings">×</button></header>
+          <p id="voice-message" class="voice-message" aria-live="polite">Enable your mic to talk with nearby players.</p>
+          <button id="voice-audio-unlock" class="voice-audio-unlock hidden" type="button">Click to enable voice audio</button>
+          <label class="voice-ptt-option"><input id="voice-ptt" type="checkbox" /> Push to talk <kbd>V</kbd></label>
+          <label class="voice-volume-label" for="voice-volume">Master volume <span id="voice-volume-value">80%</span></label>
+          <input id="voice-volume" class="voice-volume" type="range" min="0" max="1" step="0.01" value="0.8" />
+          <div class="voice-players-heading">Players in this room</div>
+          <div id="voice-players" class="voice-players"><span class="voice-empty">Join the pond to see players.</span></div>
+        </section>
         <div id="toast" class="toast" aria-live="assertive"></div>
         <div id="portal-prompt" class="portal-prompt hidden" role="dialog" aria-label="Arena portal">
           <strong>Form an arena party?</strong>
@@ -164,15 +187,21 @@
           <p>North is up · <kbd>M</kbd> to close</p>
         </div>
       </section>
-      <div id="whats-new" class="whats-new">
-        <div class="whats-new-backdrop"></div>
+      <div id="whats-new" class="whats-new hidden" aria-hidden="true">
+        <button class="whats-new-backdrop" type="button" aria-label="Close What's new"></button>
         <section class="whats-new-card" role="dialog" aria-modal="true" aria-labelledby="whats-new-title" aria-describedby="whats-new-intro">
           <header class="whats-new-header">
-            <div class="whats-new-heading"><span class="whats-new-eyebrow">PONDSIDE UPDATE</span><h2 id="whats-new-title">What’s new</h2><p id="whats-new-intro" class="whats-new-intro">A few new things to discover around the pond.</p></div>
+            <div class="whats-new-heading"><span class="whats-new-eyebrow">PONDSIDE UPDATE</span><div class="whats-new-title-line"><h2 id="whats-new-title">What’s new</h2><span id="whats-new-date" class="whats-new-date"></span></div><p id="whats-new-intro" class="whats-new-intro">Fresh little upgrades for your next day by the water.</p></div>
             <button id="whats-new-close" class="chat-close" type="button" aria-label="Close patch notes">×</button>
           </header>
-          <div id="whats-new-grid" class="whats-new-grid" aria-label="What's new updates"></div>
-          <footer class="whats-new-footer"><span>Happy fishing 🌿</span><button id="whats-new-dismiss" type="button">Got it, let’s fish <span aria-hidden="true">→</span></button></footer>
+          <div id="whats-new-scroll" class="whats-new-scroll">
+            <section class="whats-new-section" aria-labelledby="whats-new-highlights-title"><h3 id="whats-new-highlights-title" class="whats-new-section-title">Highlights</h3><div id="whats-new-highlights" class="whats-new-highlights" role="list"></div></section>
+            <section class="whats-new-section whats-new-also-section" aria-labelledby="whats-new-also-title"><h3 id="whats-new-also-title" class="whats-new-section-title">Also new</h3><div id="whats-new-also" class="whats-new-also" role="list"></div></section>
+          </div>
+          <footer class="whats-new-footer">
+            <div class="whats-new-controls" aria-label="Keyboard controls"><strong>Controls</strong><span><kbd>F</kbd> Hold catch</span><span><kbd>C</kbd> Cook</span><span><kbd>V</kbd> View</span><span><kbd>M</kbd> Map</span><span><kbd>Esc</kbd> Close chat</span></div>
+            <div class="whats-new-footer-actions"><label class="whats-new-dont-show"><input id="whats-new-dont-show" type="checkbox" checked /> Don’t show again until next update</label><button id="whats-new-dismiss" type="button">Let's fish</button></div>
+          </footer>
         </section>
       </div>
       <div id="fish-viewer" class="fish-viewer hidden">

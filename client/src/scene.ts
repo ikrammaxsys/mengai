@@ -12,8 +12,8 @@ import { PHOTOBOOTH_CONFIG } from './photobooth';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group };
-type ChatBubble = { element: HTMLDivElement; expiresAt: number };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; speaking: boolean };
+type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
 
@@ -22,7 +22,7 @@ export class GameScene {
   readonly camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 150);
   readonly renderer: THREE.WebGLRenderer;
   private readonly avatars = new Map<string, Avatar>();
-  private readonly chatBubbles = new Map<string, ChatBubble>();
+  private readonly chatBubbles = new Map<string, ChatBubble[]>();
   private readonly eatBubbles = new Map<string, ChatBubble>();
   private readonly stones = new Map<string, StoneVisual>();
   private readonly bonks = new Map<string, BonkFx>();
@@ -286,7 +286,7 @@ export class GameScene {
       if (catchId) this.heldFishClickHandler?.(player.id, catchId);
     });
     this.labels.appendChild(label);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown, speaking: false };
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
@@ -388,6 +388,13 @@ export class GameScene {
 
   heldFish(playerId: string): HeldFish | null { return this.avatars.get(playerId)?.holdingFish ?? null; }
   playerName(playerId: string): string { return this.avatars.get(playerId)?.label.dataset.name ?? 'Pond friend'; }
+  setVoiceSpeaking(playerId: string, speaking: boolean): void {
+    const avatar = this.avatars.get(playerId);
+    if (avatar) {
+      avatar.speaking = speaking;
+      avatar.label.dataset.speaking = String(speaking);
+    }
+  }
 
   setServerClockOffset(offsetMs: number): void { this.serverClockOffset = offsetMs; }
 
@@ -661,7 +668,7 @@ export class GameScene {
       this.scene.remove(avatar.group, avatar.line, avatar.bobber, ...avatar.splash);
       avatar.label.remove(); this.avatars.delete(id);
     }
-    this.chatBubbles.get(id)?.element.remove();
+    for (const bubble of this.chatBubbles.get(id) ?? []) bubble.element.remove();
     this.chatBubbles.delete(id);
     this.eatBubbles.get(id)?.element.remove();
     this.eatBubbles.delete(id);
@@ -763,8 +770,9 @@ export class GameScene {
 
   fishingState(): FishingState { return this.avatars.get(this.localId)?.fishing ?? 'idle'; }
   playerCount(): number { return this.avatars.size; }
-  mapPlayers(): { x: number; z: number; facing: number; color: string; name: string; fishing: boolean; local: boolean }[] {
-    return [...this.avatars.values()].map((avatar) => ({
+  mapPlayers(): { id: string; x: number; z: number; facing: number; color: string; name: string; fishing: boolean; local: boolean }[] {
+    return [...this.avatars.entries()].map(([id, avatar]) => ({
+      id,
       x: avatar.group.position.x,
       z: avatar.group.position.z,
       facing: avatar.local ? avatar.targetFacing : avatar.group.rotation.y,
@@ -777,16 +785,18 @@ export class GameScene {
 
   showChatBubble(id: string, text: string): void {
     if (!this.avatars.has(id)) return;
-    let bubble = this.chatBubbles.get(id);
-    if (!bubble) {
-      const element = document.createElement('div');
-      element.className = 'speech-bubble';
-      this.labels.appendChild(element);
-      bubble = { element, expiresAt: 0 };
-      this.chatBubbles.set(id, bubble);
-    }
-    bubble.element.textContent = text.length > 100 ? `${text.slice(0, 97)}…` : text;
-    bubble.expiresAt = performance.now() + 4500;
+    const now = performance.now();
+    const bubbles = this.chatBubbles.get(id) ?? [];
+    for (const bubble of bubbles) bubble.expiresAt = Math.min(bubble.expiresAt, now + 1800);
+
+    const element = document.createElement('div');
+    element.className = `speech-bubble${id === this.localId ? ' mine' : ''}`;
+    element.textContent = text;
+    this.labels.appendChild(element);
+    const duration = 4000 + Math.min(text.length, 240) / 240 * 2000;
+    bubbles.push({ element, expiresAt: now + duration, fadeMs: 650 });
+    while (bubbles.length > 3) bubbles.shift()!.element.remove();
+    this.chatBubbles.set(id, bubbles);
   }
 
   showEatBubble(id: string, speciesName: string): void {
@@ -843,6 +853,13 @@ export class GameScene {
         avatar.heldModel.rotation.x = wiggle > 0.94 ? (wiggle - 0.94) * 0.35 : 0;
       }
       if (!avatar.local) this.interpolateRemote(avatar, remoteRenderTime);
+      this.renderCast(avatar, serverNow);
+      this.ray.set(avatar.group.position.x, 2.2, avatar.group.position.z).project(this.camera);
+      const labelLeft = Math.round((this.ray.x * 0.5 + 0.5) * innerWidth);
+      const labelTop = Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight);
+      avatar.label.style.translate = `${labelLeft}px ${labelTop}px`;
+      avatar.label.style.zIndex = String(Math.round((1 - this.ray.z) * 1000));
+      avatar.label.style.display = avatar.local && this.firstPersonView || this.ray.z > 1 ? 'none' : 'block';
       const bonk = this.bonks.get(id);
       if (bonk) {
         const elapsed = performance.now() - bonk.startedAt;
@@ -850,17 +867,12 @@ export class GameScene {
         else {
           const progress = elapsed / 900;
           avatar.group.rotation.z = Math.sin(elapsed * 0.045) * (1 - progress) * 0.18;
-          bonk.element.style.left = avatar.label.style.left;
-          bonk.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 22 - progress * 24}px`;
+          bonk.element.style.left = `${labelLeft}px`;
+          bonk.element.style.top = `${labelTop - 22 - progress * 24}px`;
           bonk.element.style.opacity = String(1 - progress);
           bonk.element.style.display = avatar.label.style.display;
         }
       } else avatar.group.rotation.z = 0;
-      this.renderCast(avatar, serverNow);
-      this.ray.set(avatar.group.position.x, 2.2, avatar.group.position.z).project(this.camera);
-      avatar.label.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
-      avatar.label.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
-      avatar.label.style.display = avatar.local && this.firstPersonView || this.ray.z > 1 ? 'none' : 'block';
       // Rebuild label contents only when the player's visible state changes, not on every animation frame.
       const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
       const leaderTitle = isLeader ? '<span class="leader-title"><span aria-hidden="true">👑</span><strong>Kapla Mengai</strong></span>' : '';
@@ -870,21 +882,35 @@ export class GameScene {
         ? `<button class="held-fish-chip" data-catch-id="${this.escape(fish.catchId)}" style="--rarity-color:${fishSpecies.rarityColor}" type="button">🐟 ${this.escape(fishSpecies.name)} · ${fish.weightKg.toFixed(1)} kg</button>`
         : '';
       const photoMark = avatar.inPhotobooth ? '<span class="photo-camera-mark" aria-label="In photobooth">📸</span>' : '';
-      const labelMarkup = `${leaderTitle}<span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span>${fishChip}`;
+      const voiceMark = '<span class="voice-speaking-mark" title="Speaking" aria-label="Speaking">🎙</span>';
+      const labelMarkup = `${leaderTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
       if (avatar.renderedLabelMarkup !== labelMarkup) {
         avatar.label.innerHTML = labelMarkup;
         avatar.renderedLabelMarkup = labelMarkup;
       }
-      const bubble = this.chatBubbles.get(id);
-      if (bubble) {
-        if (bubble.expiresAt <= performance.now()) {
-          bubble.element.remove();
-          this.chatBubbles.delete(id);
-        } else {
-          bubble.element.style.left = avatar.label.style.left;
-          bubble.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 10}px`;
-          bubble.element.style.display = avatar.label.style.display;
+      const bubbles = this.chatBubbles.get(id);
+      if (bubbles) {
+        const now = performance.now();
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+          if (bubbles[i].expiresAt <= now) {
+            bubbles[i].element.remove();
+            bubbles.splice(i, 1);
+          }
         }
+        // Reserve room for the downward tail so its tip stays about 8px above the nameplate.
+        const labelAnchor = labelTop - avatar.label.offsetHeight - 16;
+        let bubbleAnchor = labelAnchor;
+        const depthZ = Math.round((1 - this.ray.z) * 1000);
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+          const bubble = bubbles[i];
+          bubble.element.style.left = `${labelLeft}px`;
+          bubble.element.style.top = `${bubbleAnchor}px`;
+          bubble.element.style.display = avatar.label.style.display;
+          bubble.element.style.zIndex = String(depthZ + i + 1);
+          bubble.element.style.opacity = String(Math.min(1, Math.max(0, (bubble.expiresAt - now) / (bubble.fadeMs ?? 650))));
+          bubbleAnchor -= bubble.element.offsetHeight + 6;
+        }
+        if (!bubbles.length) this.chatBubbles.delete(id);
       }
       const eatBubble = this.eatBubbles.get(id);
       if (eatBubble) {
@@ -897,8 +923,8 @@ export class GameScene {
           eatBubble.element.style.zIndex = '900';
           eatBubble.element.style.display = 'block';
         } else {
-          eatBubble.element.style.left = avatar.label.style.left;
-          eatBubble.element.style.top = `${Number.parseFloat(avatar.label.style.top) - 32}px`;
+          eatBubble.element.style.left = `${labelLeft}px`;
+          eatBubble.element.style.top = `${labelTop - 32}px`;
           eatBubble.element.style.display = avatar.label.style.display;
         }
       }
