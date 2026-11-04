@@ -29,6 +29,7 @@ const connectionDot = document.querySelector<HTMLElement>('#connection-dot')!;
 const connectionLabel = document.querySelector<HTMLElement>('#connection-label')!;
 const viewToggle = document.querySelector<HTMLButtonElement>('#view-toggle')!;
 const whatsNew = document.querySelector<HTMLElement>('#whats-new')!;
+const whatsNewDialog = document.querySelector<HTMLElement>('.whats-new-card')!;
 const whatsNewScroll = document.querySelector<HTMLElement>('#whats-new-scroll')!;
 const whatsNewHighlights = document.querySelector<HTMLElement>('#whats-new-highlights')!;
 const whatsNewAlso = document.querySelector<HTMLElement>('#whats-new-also')!;
@@ -241,7 +242,7 @@ let whatsNewReturnFocus: HTMLElement | null = null;
 const whatsNewItems: WhatsNewItem[] = [
   { tier: 'highlight', tone: 'backpack', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
   { tier: 'highlight', tone: 'catch', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
-  { tier: 'highlight', tone: 'progress', icon: '💾', title: 'Progress that saves', description: 'Catch records and room crowns now persist.' },
+  { tier: 'highlight', tone: 'progress', icon: '💾', title: 'Progress that saves', description: 'Catch records save; crowns mark the room leader.' },
   { tier: 'also', icon: '🍲', title: 'Campfire cooking', description: 'Share a warm meal by the fire.' },
   { tier: 'also', icon: '🌦️', title: 'Living weather', description: 'Rain and storms change fishing.' },
   { tier: 'also', icon: '🗺️', title: 'Island map', description: 'Find fishers, stones, and campfire.' },
@@ -334,7 +335,7 @@ function closeWhatsNew(): void {
   whatsNew.setAttribute('aria-hidden', 'true');
   const returnFocus = whatsNewReturnFocus;
   whatsNewReturnFocus = null;
-  const target = returnFocus?.isConnected && !whatsNew.contains(returnFocus)
+  const target = returnFocus?.isConnected && returnFocus !== document.body && returnFocus !== document.documentElement && !whatsNew.contains(returnFocus)
     ? returnFocus
     : !joinScreen.classList.contains('hidden') ? joinButton : gameCanvas;
   target.focus({ preventScroll: true });
@@ -386,19 +387,19 @@ function updateWhatsNewScrollState(): void {
 }
 
 function trapWhatsNewFocus(event: KeyboardEvent): void {
-  const focusable = [...whatsNew.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')]
+  const focusable = [...whatsNewDialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')]
     .filter((element) => element.getClientRects().length > 0);
   if (!focusable.length) { event.preventDefault(); return; }
   const first = focusable[0], last = focusable[focusable.length - 1];
-  if (event.shiftKey && (document.activeElement === first || !whatsNew.contains(document.activeElement))) {
+  if (event.shiftKey && (document.activeElement === first || !whatsNewDialog.contains(document.activeElement))) {
     event.preventDefault(); last.focus();
-  } else if (!event.shiftKey && (document.activeElement === last || !whatsNew.contains(document.activeElement))) {
+  } else if (!event.shiftKey && (document.activeElement === last || !whatsNewDialog.contains(document.activeElement))) {
     event.preventDefault(); first.focus();
   }
 }
 
 function renderWhatsNew(): void {
-  whatsNewVersionBadge.textContent = `v${whatsNewVersion} · ${whatsNewReleaseDate}`;
+  whatsNewVersionBadge.textContent = whatsNewReleaseDate;
   whatsNewHighlights.replaceChildren();
   whatsNewAlso.replaceChildren();
   let highlightIndex = 0;

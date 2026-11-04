@@ -274,12 +274,12 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .whats-new-compact-title { color: #1d4034; font-size: 14px; font-weight: 700; }
 .whats-new-compact-description { margin: 0; color: #40594d; font-size: 14px; line-height: 1.35; }
 .whats-new-footer { display: grid; gap: 12px; padding-top: 12px; background: #fff; }
-.whats-new-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; color: #365244; font-size: 13px; }
+.whats-new-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; color: #365244; font-size: 14px; }
 .whats-new-controls > strong { color: #183b30; font-size: 14px; }
 .whats-new-controls > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .whats-new-controls kbd { display: inline-flex; min-width: 27px; min-height: 25px; align-items: center; justify-content: center; padding: 2px 7px; border: 1px solid #c9d7cc; border-radius: 6px; background: #f8faf7; box-shadow: 0 2px 0 #cbd8cd; color: #294438; font: 600 12px/1.1 ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace; }
 .whats-new-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.whats-new-dont-show { display: flex; min-height: 44px; align-items: center; gap: 8px; margin: 0; color: #40594d; font-size: 13px; font-weight: 600; }
+.whats-new-dont-show { display: flex; min-height: 44px; align-items: center; gap: 8px; margin: 0; color: #40594d; font-size: 14px; font-weight: 600; }
 .whats-new-dont-show input { flex: 0 0 17px; width: 17px; height: 17px; margin: 0; padding: 0; accent-color: #328c78; }
 .whats-new-footer-actions > button { min-width: 150px; min-height: 48px; padding: 0 20px; border-radius: 12px; background: #287d67; box-shadow: 0 4px 10px rgba(40,125,103,.2); color: #fff; font-size: 15px; font-weight: 700; text-align: center; }
 .whats-new-footer-actions > button:hover { background: #206a58; transform: translateY(-1px); }
