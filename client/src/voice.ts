@@ -96,8 +96,7 @@ export class VoiceClient {
     this.setSession(roomId, playerId, resumeToken);
     this.setStatus('connecting');
     try {
-      this.audioContext ??= new AudioContext();
-      if (this.audioContext.state !== 'running') await this.audioContext.resume();
+      await this.resumeAudioContext();
       if (!this.localTrack) {
         this.localTrack = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true, autoGainControl: true });
       }
@@ -160,6 +159,20 @@ export class VoiceClient {
     if (!this.localTrack) return;
     if (this.microphoneEnabled) await this.localTrack.unmute();
     else await this.localTrack.mute();
+  }
+
+  private async resumeAudioContext(): Promise<void> {
+    if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContext();
+    const context = this.audioContext;
+    if (context.state === 'running') return;
+    try {
+      await context.resume();
+    } catch (error) {
+      if (context.state !== 'closed') throw error;
+      const replacement = new AudioContext();
+      this.audioContext = replacement;
+      if (replacement.state !== 'running') await replacement.resume();
+    }
   }
 
   setMasterVolume(volume: number): void {
