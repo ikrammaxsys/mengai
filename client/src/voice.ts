@@ -112,7 +112,10 @@ export class VoiceClient {
       }
       this.microphoneEnabled = !this.pushToTalk || this.pushToTalkHeld;
       await this.applyMicrophoneState();
-      this.startLocalSpeechDetection();
+      // Keep Chromium's capture path owned by LiveKit; its participant speaking
+      // state is sampled in updateSpatialAudio without a second mic source.
+      if (this.usesChromiumSpeakerDetection()) this.stopLocalSpeechDetection();
+      else this.startLocalSpeechDetection();
       await this.connectRoom();
       this.startTokenRefresh();
       this.callbacks.microphone(this.microphoneEnabled);
@@ -129,9 +132,12 @@ export class VoiceClient {
       this.updateSpeaking(this.playerId, false);
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = 0;
+      const microphoneTrackError = error instanceof Error && error.message === 'The microphone track is not live or is still muted after publishing.';
       this.setStatus('failed', this.isPermissionError(error)
         ? 'Microphone access was blocked. Allow microphone access in your browser settings, then try again.'
-        : 'Voice could not connect. Check your connection and try again.');
+        : microphoneTrackError
+          ? 'Your microphone did not start. Check this site’s microphone permission and selected input, then retry.'
+          : 'Voice could not connect. Check your connection and try again.');
       this.callbacks.microphone(false);
     }
   }
@@ -200,6 +206,10 @@ export class VoiceClient {
       console.warn('[voice] Local speech detection unavailable:', error);
       this.updateSpeaking(this.playerId, false);
     }
+  }
+
+  private usesChromiumSpeakerDetection(): boolean {
+    return /(?:Chrome|Chromium|Edg|OPR)\//.test(navigator.userAgent);
   }
 
   private sampleLocalSpeech(): void {
@@ -425,7 +435,14 @@ export class VoiceClient {
 
     await room.connect(credentials.url, credentials.token, { autoSubscribe: false });
     if (!this.active || this.room !== room) { await room.disconnect(); return; }
-    await room.localParticipant.publishTrack(this.localTrack, { source: Track.Source.Microphone });
+    const publication = await room.localParticipant.publishTrack(this.localTrack, { source: Track.Source.Microphone });
+    // Reapply mute state after the sender exists. This keeps Chromium's capture
+    // track and the LiveKit publication in sync when unmuting happened pre-connect.
+    await this.applyMicrophoneState();
+    const mediaTrack = this.localTrack.mediaStreamTrack;
+    if (mediaTrack.readyState !== 'live' || (this.microphoneEnabled && (!mediaTrack.enabled || publication.isMuted))) {
+      throw new Error('The microphone track is not live or is still muted after publishing.');
+    }
     this.setStatus('connected');
     for (const participant of room.remoteParticipants.values()) {
       this.subscriptions.set(participant.identity, false);
