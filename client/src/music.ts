@@ -32,6 +32,7 @@ export class MusicManager {
   private volume = clampVolume(Number(localStorage.getItem(VOLUME_KEY) ?? 0.25));
   private muted = localStorage.getItem(MUTED_KEY) === 'true';
   private desiredTrack: MusicTrackId | null = null;
+  private trackBeforeBoss: MusicTrackId | null = null;
   private switchId = 0;
   private hasStarted = false;
   private ducked = false;
@@ -92,6 +93,17 @@ export class MusicManager {
 
     this.desiredTrack = trackId;
     for (const [id, playback] of this.playing) this.fadeTrack(id, playback, id === trackId ? 1 : 0, ms);
+  }
+
+  enterBossArena(): Promise<void> {
+    if (this.desiredTrack !== 'boss') this.trackBeforeBoss = this.desiredTrack ?? 'day';
+    return this.crossfadeTo('boss', 2500);
+  }
+
+  leaveBossArena(): Promise<void> {
+    const track = this.trackBeforeBoss ?? 'day';
+    this.trackBeforeBoss = null;
+    return this.crossfadeTo(track, 2500);
   }
 
   setVolume(value: number): void {
