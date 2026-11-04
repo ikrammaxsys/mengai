@@ -200,15 +200,8 @@ export class VoiceClient {
 
     const listener = context.listener;
     const time = context.currentTime;
-    this.setAudioParam(listener.positionX, localX, time);
-    this.setAudioParam(listener.positionY, 1.6, time);
-    this.setAudioParam(listener.positionZ, localZ, time);
-    this.setAudioParam(listener.forwardX, Math.sin(local.facing), time);
-    this.setAudioParam(listener.forwardY, 0, time);
-    this.setAudioParam(listener.forwardZ, Math.cos(local.facing), time);
-    this.setAudioParam(listener.upX, 0, time);
-    this.setAudioParam(listener.upY, 1, time);
-    this.setAudioParam(listener.upZ, 0, time);
+    this.setAudioPosition(listener, localX, 1.6, localZ, time);
+    this.setAudioOrientation(listener, Math.sin(local.facing), 0, Math.cos(local.facing), time);
 
     for (const participant of this.room?.remoteParticipants.values() ?? []) {
       const player = byId.get(participant.identity);
@@ -221,9 +214,7 @@ export class VoiceClient {
 
       const audio = this.spatialTracks.get(participant.identity);
       if (audio && player) {
-        this.setAudioParam(audio.panner.positionX, player.x, time);
-        this.setAudioParam(audio.panner.positionY, 1.4, time);
-        this.setAudioParam(audio.panner.positionZ, player.z, time);
+        this.setAudioPosition(audio.panner, player.x, 1.4, player.z, time);
         const beyondHearing = distance > VOICE_SPATIAL_CONFIG.maxDistance;
         this.setAudioParam(audio.gain.gain, beyondHearing || this.mutedPlayers.has(participant.identity) ? 0 : this.masterVolume, time);
       }
@@ -234,9 +225,30 @@ export class VoiceClient {
     this.updateGains();
   }
 
-  private setAudioParam(param: AudioParam, value: number, time: number): void {
+  private setAudioPosition(node: AudioListener | PannerNode, x: number, y: number, z: number, time: number): void {
+    if (node.positionX && node.positionY && node.positionZ) {
+      this.setAudioParam(node.positionX, x, time);
+      this.setAudioParam(node.positionY, y, time);
+      this.setAudioParam(node.positionZ, z, time);
+    } else node.setPosition(x, y, z);
+  }
+
+  private setAudioOrientation(listener: AudioListener, forwardX: number, forwardY: number, forwardZ: number, time: number): void {
+    if (listener.forwardX && listener.forwardY && listener.forwardZ && listener.upX && listener.upY && listener.upZ) {
+      this.setAudioParam(listener.forwardX, forwardX, time);
+      this.setAudioParam(listener.forwardY, forwardY, time);
+      this.setAudioParam(listener.forwardZ, forwardZ, time);
+      this.setAudioParam(listener.upX, 0, time);
+      this.setAudioParam(listener.upY, 1, time);
+      this.setAudioParam(listener.upZ, 0, time);
+    } else listener.setOrientation(forwardX, forwardY, forwardZ, 0, 1, 0);
+  }
+
+  private setAudioParam(param: AudioParam | null | undefined, value: number, time: number): void {
+    if (!param || typeof param.cancelScheduledValues !== 'function') return;
     param.cancelScheduledValues(time);
-    param.setTargetAtTime(value, time, VOICE_SPATIAL_CONFIG.smoothingSeconds);
+    if (typeof param.setTargetAtTime === 'function') param.setTargetAtTime(value, time, VOICE_SPATIAL_CONFIG.smoothingSeconds);
+    else param.setValueAtTime(value, time);
   }
 
   private updateGains(): void {
