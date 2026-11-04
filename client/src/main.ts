@@ -97,6 +97,7 @@ const voicePanel = document.querySelector<HTMLElement>('#voice-panel')!;
 const voiceSettingsClose = document.querySelector<HTMLButtonElement>('#voice-settings-close')!;
 const voiceStatus = document.querySelector<HTMLElement>('#voice-status')!;
 const voiceMessage = document.querySelector<HTMLElement>('#voice-message')!;
+const voiceAudioUnlock = document.querySelector<HTMLButtonElement>('#voice-audio-unlock')!;
 const voicePtt = document.querySelector<HTMLInputElement>('#voice-ptt')!;
 const voiceVolume = document.querySelector<HTMLInputElement>('#voice-volume')!;
 const voiceVolumeValue = document.querySelector<HTMLElement>('#voice-volume-value')!;
@@ -127,6 +128,15 @@ voice = new VoiceClient({
     updateVoiceButton();
   },
   microphone: () => updateVoiceButton(),
+  playbackBlocked: (blocked) => {
+    voiceAudioUnlock.classList.toggle('hidden', !blocked);
+    if (blocked) {
+      voiceMessage.textContent = 'Your browser blocked voice playback. Click below to enable it.';
+      setVoicePanel(true);
+    } else if (voiceMessage.textContent === 'Your browser blocked voice playback. Click below to enable it.') {
+      voiceMessage.textContent = 'Voice playback is enabled.';
+    }
+  },
   speaking: (playerId, speaking) => {
     scene.setVoiceSpeaking(playerId, speaking);
     if (speaking) speakingPlayers.add(playerId);
@@ -1243,6 +1253,7 @@ voiceToggle.addEventListener('click', () => {
 });
 voiceSettingsToggle.addEventListener('click', () => setVoicePanel(voicePanel.classList.contains('hidden')));
 voiceSettingsClose.addEventListener('click', () => setVoicePanel(false));
+voiceAudioUnlock.addEventListener('click', () => { void voice.resumeAudioPlayback(); });
 musicToggle.addEventListener('click', () => setMusicPanel(musicPanel.classList.contains('hidden')));
 musicVolume.addEventListener('input', () => {
   music.setVolume(Number(musicVolume.value));

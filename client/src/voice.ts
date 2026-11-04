@@ -32,6 +32,7 @@ type SpatialTrack = {
   source: MediaStreamAudioSourceNode;
   panner: PannerNode;
   gain: GainNode;
+  element: HTMLAudioElement;
 };
 
 type VoiceCallbacks = {
@@ -39,6 +40,7 @@ type VoiceCallbacks = {
   microphone: (enabled: boolean) => void;
   speaking: (playerId: string, speaking: boolean) => void;
   mutedPlayersChanged: () => void;
+  playbackBlocked: (blocked: boolean) => void;
 };
 
 type TokenResponse = { token: string; url: string; expiresInSeconds?: number };
@@ -130,6 +132,7 @@ export class VoiceClient {
       this.localTrack?.stop();
       this.localTrack = null;
       this.updateSpeaking(this.playerId, false);
+      this.callbacks.playbackBlocked(false);
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = 0;
       const microphoneTrackError = error instanceof Error && error.message === 'The microphone track is not live or is still muted after publishing.';
@@ -146,6 +149,18 @@ export class VoiceClient {
     if (!this.active) return;
     if (this.pushToTalk) return;
     await this.setMicrophoneEnabled(!this.microphoneEnabled);
+  }
+
+  async resumeAudioPlayback(): Promise<void> {
+    if (this.audioContext) await this.resumeAudioContext();
+    const room = this.room;
+    if (!room) return;
+    try {
+      await room.startAudio();
+      this.callbacks.playbackBlocked(!room.canPlaybackAudio);
+    } catch {
+      this.callbacks.playbackBlocked(true);
+    }
   }
 
   async setPushToTalk(enabled: boolean): Promise<void> {
@@ -414,6 +429,9 @@ export class VoiceClient {
         this.setStatus('connected');
       } else if (state === 'connecting' || state === 'reconnecting') this.setStatus('connecting');
     });
+    room.on(RoomEvent.AudioPlaybackStatusChanged, (canPlaybackAudio) => {
+      if (this.room === room) this.callbacks.playbackBlocked(!canPlaybackAudio);
+    });
     room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
       if (track.kind === Track.Kind.Audio) this.connectSpatialTrack(participant.identity, track as RemoteAudioTrack);
     });
@@ -429,6 +447,7 @@ export class VoiceClient {
     room.on(RoomEvent.Disconnected, () => {
       if (this.room !== room || !this.active) return;
       this.room = null;
+      this.callbacks.playbackBlocked(false);
       this.disposeRoomAudio();
       this.scheduleReconnect();
     });
@@ -448,6 +467,7 @@ export class VoiceClient {
       this.subscriptions.set(participant.identity, false);
       this.setParticipantSubscribed(participant, this.shouldSubscribe(participant.identity));
     }
+    void this.resumeAudioPlayback();
   }
 
   private shouldSubscribe(identity: string): boolean {
@@ -461,18 +481,32 @@ export class VoiceClient {
   }
 
   private connectSpatialTrack(identity: string, track: RemoteAudioTrack): void {
-    if (!this.audioContext || this.spatialTracks.has(identity)) return;
-    const source = this.audioContext.createMediaStreamSource(new MediaStream([track.mediaStreamTrack]));
-    const panner = this.audioContext.createPanner();
+    const context = this.audioContext;
+    if (!context || this.spatialTracks.has(identity)) return;
+    const stream = new MediaStream([track.mediaStreamTrack]);
+    const element = document.createElement('audio');
+    element.srcObject = stream;
+    element.autoplay = true;
+    element.muted = true;
+    element.volume = 0;
+    element.className = 'voice-audio-anchor';
+    element.setAttribute('playsinline', '');
+    element.setAttribute('aria-hidden', 'true');
+    element.tabIndex = -1;
+    document.body.append(element);
+    void element.play().catch(() => this.callbacks.playbackBlocked(true));
+
+    const source = context.createMediaStreamSource(stream);
+    const panner = context.createPanner();
     panner.panningModel = 'HRTF';
     panner.distanceModel = VOICE_SPATIAL_CONFIG.distanceModel;
     panner.refDistance = VOICE_SPATIAL_CONFIG.refDistance;
     panner.maxDistance = VOICE_SPATIAL_CONFIG.maxDistance;
     panner.rolloffFactor = VOICE_SPATIAL_CONFIG.rolloffFactor;
-    const gain = this.audioContext.createGain();
+    const gain = context.createGain();
     gain.gain.value = 0;
-    source.connect(panner).connect(gain).connect(this.audioContext.destination);
-    this.spatialTracks.set(identity, { source, panner, gain });
+    source.connect(panner).connect(gain).connect(context.destination);
+    this.spatialTracks.set(identity, { source, panner, gain, element });
     this.updateGains();
   }
 
@@ -482,6 +516,9 @@ export class VoiceClient {
     audio.source.disconnect();
     audio.panner.disconnect();
     audio.gain.disconnect();
+    audio.element.pause();
+    audio.element.srcObject = null;
+    audio.element.remove();
     this.spatialTracks.delete(identity);
     this.updateSpeaking(identity, false);
   }
@@ -541,6 +578,7 @@ export class VoiceClient {
     this.updateSpeaking(this.playerId, false);
     this.disposeRoomAudio();
     this.callbacks.microphone(false);
+    this.callbacks.playbackBlocked(false);
     this.setStatus('failed', 'Voice connection lost. Tap the mic to try again.');
   }
 
@@ -564,6 +602,7 @@ export class VoiceClient {
     this.cachedCredentialsExpireAt = 0;
     this.callbacks.microphone(false);
     this.setStatus('off');
+    this.callbacks.playbackBlocked(false);
   }
 
   private isPermissionError(error: unknown): boolean {
