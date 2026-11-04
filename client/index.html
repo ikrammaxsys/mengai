@@ -26,7 +26,7 @@
           <div id="room-list" class="room-list" aria-live="polite"><p class="rooms-empty">Loading rooms…</p></div>
           <button id="create-room" class="create-room-button" type="button">＋ Create a new room</button>
         </section>
-        <p class="footnote">No account needed. Just bring your best fishing luck.</p>
+        <p class="footnote">No account needed. Just bring your best fishing luck. <button id="whats-new-reopen-join" class="whats-new-inline-link" type="button">What’s new</button></p>
       </section>
 
       <section id="hud" class="hud hidden" aria-live="polite">
@@ -60,6 +60,7 @@
               <p class="music-credit">Original ambient loops</p>
             </section>
           </div>
+          <button id="whats-new-reopen" class="dock-button" type="button" aria-label="What's new" title="What's new"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.75h12v16.5l-3-2-3 2-3-2-3 2V3.75Z"/><path d="M9 8h6m-6 4h6m-6 4h3"/></svg><span class="dock-tooltip">What's new</span></button>
           <button id="photobooth-enter" class="dock-button" type="button" aria-label="Photobooth (P)" title="Photobooth · P" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span class="dock-tooltip">Photobooth <kbd>P</kbd></span></button>
         </nav>
         <section id="voice-panel" class="voice-panel hidden" aria-label="Voice settings">
@@ -154,15 +155,21 @@
           <p>North is up · <kbd>M</kbd> to close</p>
         </div>
       </section>
-      <div id="whats-new" class="whats-new">
-        <div class="whats-new-backdrop"></div>
+      <div id="whats-new" class="whats-new hidden" aria-hidden="true">
+        <button class="whats-new-backdrop" type="button" aria-label="Close What's new"></button>
         <section class="whats-new-card" role="dialog" aria-modal="true" aria-labelledby="whats-new-title" aria-describedby="whats-new-intro">
           <header class="whats-new-header">
-            <div class="whats-new-heading"><span class="whats-new-eyebrow">PONDSIDE UPDATE</span><h2 id="whats-new-title">What’s new</h2><p id="whats-new-intro" class="whats-new-intro">A few new things to discover around the pond.</p></div>
+            <div class="whats-new-heading"><span class="whats-new-eyebrow">PONDSIDE UPDATE</span><div class="whats-new-title-line"><h2 id="whats-new-title">What’s new</h2><span id="whats-new-version" class="whats-new-version"></span></div><p id="whats-new-intro" class="whats-new-intro">Fresh little upgrades for your next day by the water.</p></div>
             <button id="whats-new-close" class="chat-close" type="button" aria-label="Close patch notes">×</button>
           </header>
-          <div id="whats-new-grid" class="whats-new-grid" aria-label="What's new updates"></div>
-          <footer class="whats-new-footer"><span>Happy fishing 🌿</span><button id="whats-new-dismiss" type="button">Got it, let’s fish <span aria-hidden="true">→</span></button></footer>
+          <div id="whats-new-scroll" class="whats-new-scroll">
+            <section class="whats-new-section" aria-labelledby="whats-new-highlights-title"><h3 id="whats-new-highlights-title" class="whats-new-section-title">Highlights</h3><div id="whats-new-highlights" class="whats-new-highlights" role="list"></div></section>
+            <section class="whats-new-section whats-new-also-section" aria-labelledby="whats-new-also-title"><h3 id="whats-new-also-title" class="whats-new-section-title">Also new</h3><div id="whats-new-also" class="whats-new-also" role="list"></div></section>
+          </div>
+          <footer class="whats-new-footer">
+            <div class="whats-new-controls" aria-label="Keyboard controls"><strong>Controls</strong><span><kbd>F</kbd> Hold catch</span><span><kbd>C</kbd> Cook</span><span><kbd>V</kbd> View</span><span><kbd>M</kbd> Map</span><span><kbd>Esc</kbd> Close chat</span></div>
+            <div class="whats-new-footer-actions"><label class="whats-new-dont-show"><input id="whats-new-dont-show" type="checkbox" checked /> Don’t show again until next update</label><button id="whats-new-dismiss" type="button">Let’s fish</button></div>
+          </footer>
         </section>
       </div>
       <div id="fish-viewer" class="fish-viewer hidden">

@@ -29,9 +29,15 @@ const connectionDot = document.querySelector<HTMLElement>('#connection-dot')!;
 const connectionLabel = document.querySelector<HTMLElement>('#connection-label')!;
 const viewToggle = document.querySelector<HTMLButtonElement>('#view-toggle')!;
 const whatsNew = document.querySelector<HTMLElement>('#whats-new')!;
-const whatsNewGrid = document.querySelector<HTMLElement>('#whats-new-grid')!;
+const whatsNewScroll = document.querySelector<HTMLElement>('#whats-new-scroll')!;
+const whatsNewHighlights = document.querySelector<HTMLElement>('#whats-new-highlights')!;
+const whatsNewAlso = document.querySelector<HTMLElement>('#whats-new-also')!;
+const whatsNewVersionBadge = document.querySelector<HTMLElement>('#whats-new-version')!;
 const whatsNewClose = document.querySelector<HTMLButtonElement>('#whats-new-close')!;
 const whatsNewDismiss = document.querySelector<HTMLButtonElement>('#whats-new-dismiss')!;
+const whatsNewDontShow = document.querySelector<HTMLInputElement>('#whats-new-dont-show')!;
+const whatsNewReopen = document.querySelector<HTMLButtonElement>('#whats-new-reopen')!;
+const whatsNewReopenJoin = document.querySelector<HTMLButtonElement>('#whats-new-reopen-join')!;
 const toast = document.querySelector<HTMLElement>('#toast')!;
 const hitFlash = document.querySelector<HTMLElement>('#hit-flash')!;
 const photoboothEnter = document.querySelector<HTMLButtonElement>('#photobooth-enter')!;
@@ -227,18 +233,19 @@ const forcedWeather = (() => {
   return isWeatherType(value) ? value : null;
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
-const whatsNewItems = [
-  { icon: '🎒', title: 'Your Backpack', description: 'Catch records, species collection, filters, sorting, and fish release.' },
-  { icon: '🐟', title: 'Hold your catch', description: 'Press F to show a fish in your hands. Bigger catches look bigger, and everyone can see it.' },
-  { icon: '💾', title: 'Catches that stay', description: 'Your catch history, personal bests, Backpack fish, and room leaderboards are now saved for your next visit.' },
-  { icon: '👑', title: 'Leaderboard crown', description: 'The room’s top fisher wears a crown.' },
-  { icon: '🍲', title: 'Cook and share at the campfire', description: 'Choose Cook in your Backpack or press C near the campfire.' },
-  { icon: '👁️', title: 'First-person view', description: 'Switch views with V or the view button.' },
-  { icon: '🌦️', title: 'Weather', description: 'The pond has moods now. Rain, fog and storms change what’s biting.' },
-  { icon: '🗺️', title: 'Island minimap', description: 'Find the pond, campfire, stones, and other fishers at a glance. Press M to expand the map.' },
-  { icon: '🪨', title: 'Friendly splash', description: 'Want to keep your friend off the top spot? Toss a stone while they’re fishing!' },
-  { icon: '🐔', title: 'Chicken hits', description: 'Toss a stone at a wandering chicken to earn a hit. Hit chickens pop out and respawn somewhere new.' },
-  { icon: '⌨️', title: 'Quick controls', description: 'Press Escape to close the chatbox.' },
+type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'backpack' | 'catch' | 'progress' };
+const whatsNewVersion = '1.0.0'; // Bump when shipping a new What's New update.
+const whatsNewReleaseDate = 'Nov 2026';
+const whatsNewSeenKey = 'mengai:whats-new:last-seen-version';
+let whatsNewReturnFocus: HTMLElement | null = null;
+const whatsNewItems: WhatsNewItem[] = [
+  { tier: 'highlight', tone: 'backpack', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
+  { tier: 'highlight', tone: 'catch', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
+  { tier: 'highlight', tone: 'progress', icon: '💾', title: 'Progress that saves', description: 'Catch records and room crowns now persist.' },
+  { tier: 'also', icon: '🍲', title: 'Campfire cooking', description: 'Share a warm meal by the fire.' },
+  { tier: 'also', icon: '🌦️', title: 'Living weather', description: 'Rain and storms change fishing.' },
+  { tier: 'also', icon: '🗺️', title: 'Island map', description: 'Find fishers, stones, and campfire.' },
+  { tier: 'also', icon: '🪨', title: 'Stones & chickens', description: 'Toss stones at fishers or roaming chickens.' },
 ];
 
 function showToast(message: string): void {
@@ -320,40 +327,91 @@ function setMengaiWeather(weather: unknown): boolean {
 if (import.meta.env.DEV) Object.assign(window, { setMengaiWeather });
 
 function closeWhatsNew(): void {
+  if (whatsNew.classList.contains('hidden')) return;
+  if (whatsNewDontShow.checked) localStorage.setItem(whatsNewSeenKey, whatsNewVersion);
+  else localStorage.removeItem(whatsNewSeenKey);
   whatsNew.classList.add('hidden');
-  gameCanvas.focus({ preventScroll: true });
+  whatsNew.setAttribute('aria-hidden', 'true');
+  const returnFocus = whatsNewReturnFocus;
+  whatsNewReturnFocus = null;
+  const target = returnFocus?.isConnected && !whatsNew.contains(returnFocus)
+    ? returnFocus
+    : !joinScreen.classList.contains('hidden') ? joinButton : gameCanvas;
+  target.focus({ preventScroll: true });
 }
 
-function renderWhatsNew(): void {
-  whatsNewGrid.replaceChildren();
-  whatsNewGrid.classList.toggle('five-columns', whatsNewItems.length >= 10);
-  for (const item of whatsNewItems) {
-    const card = document.createElement('article');
-    card.className = 'whats-new-item';
-    const iconTile = document.createElement('span');
-    iconTile.className = 'whats-new-icon';
-    iconTile.setAttribute('aria-hidden', 'true');
-    iconTile.textContent = item.icon;
-    const title = document.createElement('h3');
-    title.textContent = item.title;
-    const description = document.createElement('p');
-    description.className = 'whats-new-description';
-    for (const part of item.description.split(/(Escape|\bF\b|\bC\b|\bV\b|\bM\b)/g)) {
-      if (!part) continue;
-      if (['Escape', 'F', 'C', 'V', 'M'].includes(part)) {
-        const key = document.createElement('kbd');
-        key.className = 'whats-new-key';
-        key.textContent = part === 'Escape' ? 'Esc' : part;
-        if (part === 'Escape') key.setAttribute('aria-label', 'Escape');
-        description.append(key);
-      } else description.append(document.createTextNode(part));
-    }
-    card.append(iconTile, title, description);
-    whatsNewGrid.append(card);
+function openWhatsNew(): void {
+  if (!whatsNew.classList.contains('hidden')) return;
+  whatsNewReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  whatsNewDontShow.checked = true;
+  whatsNew.classList.remove('hidden');
+  whatsNew.setAttribute('aria-hidden', 'false');
+  updateWhatsNewScrollState();
+  requestAnimationFrame(() => whatsNewDismiss.focus({ preventScroll: true }));
+}
+
+function createWhatsNewCard(item: WhatsNewItem, index: number): HTMLElement {
+  const card = document.createElement('article');
+  card.setAttribute('role', 'listitem');
+  card.className = item.tier === 'highlight'
+    ? `whats-new-highlight ${item.tone ?? ''}`
+    : 'whats-new-compact';
+  if (item.tier === 'highlight') card.style.setProperty('--stagger-delay', `${index * 55}ms`);
+
+  const icon = document.createElement('span');
+  icon.className = item.tier === 'highlight' ? 'whats-new-highlight-icon' : 'whats-new-compact-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = item.icon;
+  const title = document.createElement(item.tier === 'highlight' ? 'h4' : 'strong');
+  title.className = item.tier === 'highlight' ? 'whats-new-highlight-title' : 'whats-new-compact-title';
+  title.textContent = item.title;
+  const description = document.createElement('p');
+  description.className = item.tier === 'highlight' ? 'whats-new-highlight-description' : 'whats-new-compact-description';
+  description.textContent = item.description;
+
+  if (item.tier === 'highlight') card.append(icon, title, description);
+  else {
+    const copy = document.createElement('span');
+    copy.className = 'whats-new-compact-copy';
+    copy.append(title, description);
+    card.append(icon, copy);
+  }
+  return card;
+}
+
+function updateWhatsNewScrollState(): void {
+  const canScrollDown = whatsNewScroll.scrollHeight > whatsNewScroll.clientHeight + 2 &&
+    whatsNewScroll.scrollTop + whatsNewScroll.clientHeight < whatsNewScroll.scrollHeight - 2;
+  whatsNewScroll.classList.toggle('has-more-below', canScrollDown);
+}
+
+function trapWhatsNewFocus(event: KeyboardEvent): void {
+  const focusable = [...whatsNew.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => element.getClientRects().length > 0);
+  if (!focusable.length) { event.preventDefault(); return; }
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !whatsNew.contains(document.activeElement))) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !whatsNew.contains(document.activeElement))) {
+    event.preventDefault(); first.focus();
   }
 }
 
+function renderWhatsNew(): void {
+  whatsNewVersionBadge.textContent = `v${whatsNewVersion} · ${whatsNewReleaseDate}`;
+  whatsNewHighlights.replaceChildren();
+  whatsNewAlso.replaceChildren();
+  let highlightIndex = 0;
+  for (const item of whatsNewItems) {
+    if (item.tier === 'highlight') whatsNewHighlights.append(createWhatsNewCard(item, highlightIndex++));
+    else whatsNewAlso.append(createWhatsNewCard(item, 0));
+  }
+  whatsNewScroll.scrollTop = 0;
+  requestAnimationFrame(updateWhatsNewScrollState);
+}
+
 renderWhatsNew();
+if (localStorage.getItem(whatsNewSeenKey) !== whatsNewVersion) openWhatsNew();
 
 function drawReel(snapshot = reelGame?.current): void {
   if (!snapshot) return;
@@ -1230,18 +1288,10 @@ chatClose.addEventListener('click', () => setChatOpen(false));
 whatsNewClose.addEventListener('click', closeWhatsNew);
 whatsNewDismiss.addEventListener('click', closeWhatsNew);
 whatsNew.querySelector<HTMLElement>('.whats-new-backdrop')!.addEventListener('click', closeWhatsNew);
-whatsNew.addEventListener('keydown', (event) => {
-  if (event.key !== 'Tab') return;
-  const focusable = [...whatsNew.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), [tabindex]:not([tabindex="-1"])')]
-    .filter((element) => element.getClientRects().length > 0);
-  if (focusable.length === 0) { event.preventDefault(); return; }
-  const first = focusable[0], last = focusable[focusable.length - 1];
-  if (event.shiftKey && (document.activeElement === first || !whatsNew.contains(document.activeElement))) {
-    event.preventDefault(); last.focus();
-  } else if (!event.shiftKey && (document.activeElement === last || !whatsNew.contains(document.activeElement))) {
-    event.preventDefault(); first.focus();
-  }
-});
+whatsNewReopen.addEventListener('click', openWhatsNew);
+whatsNewReopenJoin.addEventListener('click', openWhatsNew);
+whatsNewScroll.addEventListener('scroll', updateWhatsNewScrollState, { passive: true });
+window.addEventListener('resize', updateWhatsNewScrollState);
 leaderboardToggle.addEventListener('click', () => {
   setOpenSidePanel(openSidePanel === 'leaderboard' ? null : 'leaderboard');
 });
@@ -1313,13 +1363,15 @@ document.addEventListener('pointerlockerror', () => showToast('Mouse look could 
 
 const keyNames: Record<string, string> = { ArrowUp: 'w', ArrowDown: 's', ArrowLeft: 'a', ArrowRight: 'd', ' ': 'space' };
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !whatsNew.classList.contains('hidden')) {
-    event.preventDefault();
-    closeWhatsNew();
-    return;
-  }
   if (!whatsNew.classList.contains('hidden')) {
-    if (!whatsNew.contains(event.target as Node)) event.preventDefault();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeWhatsNew();
+    } else if (event.key === 'Tab') trapWhatsNewFocus(event);
+    else if (!whatsNew.contains(event.target as Node)) {
+      event.preventDefault();
+      whatsNewDismiss.focus({ preventScroll: true });
+    }
     return;
   }
   if (isPhotoboothMode) {
@@ -1514,6 +1566,5 @@ function animate(now: number): void {
 }
 
 // The same frame loop renders the island before joining and drives gameplay after joining.
-whatsNewClose.focus({ preventScroll: true });
 requestAnimationFrame(animate);
 window.addEventListener('pagehide', () => { music.fadeOut(250); void voice.disconnect(); });
