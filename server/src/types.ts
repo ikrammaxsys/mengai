@@ -123,6 +123,25 @@ export interface Room {
   weather: WeatherSnapshot;
   chickens: Map<string, ChickenAgent>;
   crocodileScores: Map<string, { playerId: string; playerName: string; count: number }>;
+  jukebox: JukeboxRoomState;
+}
+
+export interface JukeboxTrack {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  durationSeconds: number;
+  requesterId: string;
+  requestedBy: string;
+  status: 'downloading' | 'ready' | 'playing' | 'failed';
+}
+
+export interface JukeboxRoomState {
+  current: (JukeboxTrack & { startedAt: number | null }) | null;
+  queue: JukeboxTrack[];
+  skipVotes: Set<string>;
+  emptySince: number | null;
 }
 
 export interface PlayerSnapshot {

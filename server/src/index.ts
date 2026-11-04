@@ -2,13 +2,18 @@ import 'dotenv/config';
 import { createServer } from 'node:http';
 import type { Socket as NetSocket } from 'node:net';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { join, resolve } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AccessToken } from 'livekit-server-sdk';
 import { BROADCAST_SCOPE, calculateReelParameters, FISH_CONFIG } from '../../shared/fishConfig.js';
 import { isSafeMovementPosition, movementViolation, MOVEMENT_RULES, normalizeRotation } from '../../shared/movement.js';
 import { RESUME_GRACE_MS, Rooms } from './rooms.js';
 import { rollSpecies, rollWeight } from './fishing.js';
-import type { CatchEntry, Player, Room } from './types.js';
+import type { CatchEntry, JukeboxTrack, Player, Room } from './types.js';
 import { InMemoryInventoryStore, type CatchRecord, type InventoryStore } from './inventory.js';
 import { awardChickenScore, chickenSnapshots, hitChickenAt, updateChickenFlock } from './chickens.js';
 import { CHICKEN_CONFIG } from '../../shared/chickenConfig.js';
@@ -19,12 +24,39 @@ import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
 
 const PORT = Number(process.env.PORT ?? 3002);
+const execFileAsync = promisify(execFile);
+const JUKEBOX_CACHE_DIR = resolve(process.cwd(), 'cache');
+const JUKEBOX_MUSIC_DIR = join(JUKEBOX_CACHE_DIR, 'music');
+const JUKEBOX_THUMB_DIR = join(JUKEBOX_CACHE_DIR, 'thumb');
+const configuredCacheLimit = Number(process.env.JUKEBOX_CACHE_MAX_BYTES);
+const JUKEBOX_CACHE_MAX_BYTES = Number.isFinite(configuredCacheLimit) && configuredCacheLimit > 0
+  ? Math.floor(configuredCacheLimit)
+  : 1024 * 1024 * 1024;
+const JUKEBOX_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const YT_DLP = process.env.YT_DLP_PATH || 'yt-dlp';
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+let audioToolsAvailable = false;
+const jukeboxDownloads = new Map<string, Promise<void>>();
 const server = createServer((request, response) => {
   const requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   const pathname = requestUrl.pathname;
   if (request.method === 'GET' && pathname === '/api/rooms') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     response.end(JSON.stringify({ rooms: rooms.list() }));
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/jukebox/search') {
+    void searchYouTube(request, response, requestUrl);
+    return;
+  }
+  const streamMatch = /^\/api\/jukebox\/stream\/([A-Za-z0-9_-]{11})\.mp3$/.exec(pathname);
+  if (request.method === 'GET' && streamMatch) {
+    void streamJukeboxAudio(request, response, streamMatch[1]);
+    return;
+  }
+  const thumbMatch = /^\/api\/jukebox\/thumb\/([A-Za-z0-9_-]{11})$/.exec(pathname);
+  if (request.method === 'GET' && thumbMatch) {
+    void serveJukeboxThumbnail(response, thumbMatch[1]);
     return;
   }
   if (request.method === 'GET' && pathname === '/voice-token') {
@@ -51,6 +83,351 @@ const persistentData: PersistentGameDataStore = new JsonGameDataStore();
 const memberships = new Map<WebSocket, { roomId: string; playerId: string }>();
 const aliveSockets = new WeakSet<WebSocket>();
 const isDev = process.env.NODE_ENV !== 'production' && process.env.FISH_ROLL_LOG !== '0';
+const YOUTUBE_CACHE_MS = 2 * 60_000;
+const YOUTUBE_RATE_WINDOW_MS = 60_000;
+const YOUTUBE_RATE_LIMIT = 20;
+const JUKEBOX_MAX_DURATION_SECONDS = 6 * 60;
+const JUKEBOX_MAX_QUEUE_LENGTH = 10;
+const youtubeSearchCache = new Map<string, { expiresAt: number; results: YouTubeSearchResult[] }>();
+const youtubeVideoCache = new Map<string, { expiresAt: number; result: YouTubeSearchResult }>();
+const youtubeRequests = new Map<string, number[]>();
+
+interface YouTubeSearchResult {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  durationSeconds: number;
+}
+
+function jukeboxFile(videoId: string): string {
+  return join(JUKEBOX_MUSIC_DIR, `${videoId}.mp3`);
+}
+
+async function streamJukeboxAudio(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, videoId: string): Promise<void> {
+  try {
+    const filePath = jukeboxFile(videoId);
+    const file = await stat(filePath);
+    const range = request.headers.range;
+    const commonHeaders = {
+      'Content-Type': 'audio/mpeg',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=86400',
+    };
+    if (!range) {
+      response.writeHead(200, { ...commonHeaders, 'Content-Length': file.size });
+      createReadStream(filePath).pipe(response);
+      return;
+    }
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match || (!match[1] && !match[2])) {
+      response.writeHead(416, { ...commonHeaders, 'Content-Range': `bytes */${file.size}` });
+      response.end();
+      return;
+    }
+    let start = match[1] ? Number(match[1]) : Math.max(0, file.size - Number(match[2]));
+    let end = match[2] && match[1] ? Number(match[2]) : file.size - 1;
+    if (!match[1]) end = file.size - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= file.size || end < start) {
+      response.writeHead(416, { ...commonHeaders, 'Content-Range': `bytes */${file.size}` });
+      response.end();
+      return;
+    }
+    end = Math.min(end, file.size - 1);
+    response.writeHead(206, {
+      ...commonHeaders,
+      'Content-Length': end - start + 1,
+      'Content-Range': `bytes ${start}-${end}/${file.size}`,
+    });
+    createReadStream(filePath, { start, end }).pipe(response);
+  } catch {
+    if (!response.headersSent) {
+      response.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      response.end(JSON.stringify({ error: 'Audio is not ready.' }));
+    } else response.destroy();
+  }
+}
+
+async function serveJukeboxThumbnail(response: import('node:http').ServerResponse, videoId: string): Promise<void> {
+  const extensions = ['jpg', 'png', 'webp'] as const;
+  try {
+    await mkdir(JUKEBOX_THUMB_DIR, { recursive: true });
+    let cachedPath = '';
+    for (const extension of extensions) {
+      const candidate = join(JUKEBOX_THUMB_DIR, `${videoId}.${extension}`);
+      try { await stat(candidate); cachedPath = candidate; break; } catch { /* try the next cached representation */ }
+    }
+    if (!cachedPath) {
+      const upstream = await fetch(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!upstream.ok) throw new Error(`thumbnail status ${upstream.status}`);
+      const mimeType = (upstream.headers.get('content-type') ?? '').split(';')[0].toLowerCase();
+      const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : mimeType === 'image/jpeg' ? 'jpg' : '';
+      if (!extension) throw new Error('unsupported thumbnail content type');
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('thumbnail size is invalid');
+      cachedPath = join(JUKEBOX_THUMB_DIR, `${videoId}.${extension}`);
+      const temporaryPath = `${cachedPath}.${randomUUID()}.tmp`;
+      await writeFile(temporaryPath, bytes, { flag: 'wx' });
+      await rename(temporaryPath, cachedPath);
+    }
+    const file = await stat(cachedPath);
+    const mimeType = cachedPath.endsWith('.png') ? 'image/png' : cachedPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+    response.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': file.size, 'Cache-Control': 'public, max-age=86400' });
+    createReadStream(cachedPath).pipe(response);
+  } catch (error) {
+    console.warn(`[jukebox] thumbnail unavailable for ${videoId}:`, error instanceof Error ? error.message : error);
+    if (!response.headersSent) {
+      response.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      response.end('Thumbnail unavailable');
+    } else response.destroy();
+  }
+}
+
+async function ensureJukeboxAudio(videoId: string): Promise<void> {
+  const outputPath = jukeboxFile(videoId);
+  await mkdir(JUKEBOX_MUSIC_DIR, { recursive: true });
+  try {
+    const existing = await stat(outputPath);
+    if (existing.isFile() && existing.size > 0) return;
+  } catch { /* download missing cache entry */ }
+  if (!audioToolsAvailable) throw new Error('Server audio tools are unavailable.');
+  await rm(outputPath, { force: true });
+  const temporaryPrefix = join(JUKEBOX_MUSIC_DIR, `${videoId}.${randomUUID()}`);
+  const outputTemplate = `${temporaryPrefix}.%(ext)s`;
+  const args = [
+    '--no-playlist', '--no-progress', '--no-mtime', '--quiet', '-x', '--audio-format', 'mp3',
+    ...(process.env.FFMPEG_PATH ? ['--ffmpeg-location', FFMPEG] : []),
+    '-o', outputTemplate, `https://www.youtube.com/watch?v=${videoId}`,
+  ];
+  try {
+    await execFileAsync(YT_DLP, args, { timeout: 10 * 60 * 1000, maxBuffer: 2 * 1024 * 1024, windowsHide: true });
+    const temporaryMp3 = `${temporaryPrefix}.mp3`;
+    const downloaded = await stat(temporaryMp3);
+    if (!downloaded.isFile() || downloaded.size === 0) throw new Error('yt-dlp did not produce an MP3 file.');
+    await rename(temporaryMp3, outputPath);
+  } catch (error) {
+    const temporaryStem = `${videoId}.`;
+    const partials = await readdir(JUKEBOX_MUSIC_DIR, { withFileTypes: true });
+    await Promise.all(partials
+      .filter((entry) => entry.isFile() && entry.name.startsWith(temporaryStem) && entry.name !== `${videoId}.mp3`)
+      .map((entry) => rm(join(JUKEBOX_MUSIC_DIR, entry.name), { force: true })));
+    await rm(outputPath, { force: true });
+    throw error;
+  }
+}
+
+function notifyJukeboxRequester(room: Room, track: JukeboxTrack, message: string): void {
+  const requester = room.players.get(track.requesterId);
+  if (requester) send(requester.socket, { type: 'jukebox:error', message });
+}
+
+function beginJukeboxDownload(track: JukeboxTrack): void {
+  if (jukeboxDownloads.has(track.videoId)) return;
+  const job = ensureJukeboxAudio(track.videoId)
+    .then(() => {
+      for (const room of rooms.all()) {
+        let changed = false;
+        if (room.jukebox.current?.videoId === track.videoId && room.jukebox.current.status === 'downloading') {
+          room.jukebox.current.status = 'ready';
+          broadcast(room, jukeboxState(room));
+          room.jukebox.current.status = 'playing';
+          room.jukebox.current.startedAt = Date.now();
+          changed = true;
+        }
+        for (const queued of room.jukebox.queue) {
+          if (queued.videoId !== track.videoId || queued.status !== 'downloading') continue;
+          queued.status = 'ready';
+          changed = true;
+        }
+        if (changed) broadcast(room, jukeboxState(room));
+      }
+    })
+    .catch((error: unknown) => {
+      console.error(`[jukebox] audio preparation failed for ${track.videoId}:`, error);
+      for (const room of rooms.all()) {
+        const failedTracks: JukeboxTrack[] = [];
+        if (room.jukebox.current?.videoId === track.videoId && room.jukebox.current.status === 'downloading') {
+          room.jukebox.current.status = 'failed';
+          failedTracks.push(room.jukebox.current);
+        }
+        for (const queued of room.jukebox.queue) {
+          if (queued.videoId !== track.videoId || queued.status !== 'downloading') continue;
+          queued.status = 'failed';
+          failedTracks.push(queued);
+        }
+        if (!failedTracks.length) continue;
+        for (const failedTrack of failedTracks) {
+          notifyJukeboxRequester(room, failedTrack, `“${failedTrack.title}” is unavailable or could not be prepared. Skipping it.`);
+        }
+        broadcast(room, jukeboxState(room));
+        setTimeout(() => {
+          if (room.jukebox.current?.videoId === track.videoId && room.jukebox.current.status === 'failed') advanceJukebox(room);
+          room.jukebox.queue = room.jukebox.queue.filter((entry) => !(entry.videoId === track.videoId && entry.status === 'failed'));
+          broadcast(room, jukeboxState(room));
+        }, 1200);
+      }
+    })
+    .finally(() => jukeboxDownloads.delete(track.videoId));
+  jukeboxDownloads.set(track.videoId, job);
+}
+
+async function cleanupJukeboxCache(): Promise<void> {
+  await Promise.all([mkdir(JUKEBOX_MUSIC_DIR, { recursive: true }), mkdir(JUKEBOX_THUMB_DIR, { recursive: true })]);
+  const protectedIds = new Set(jukeboxDownloads.keys());
+  for (const room of rooms.all()) {
+    if (room.jukebox.current) protectedIds.add(room.jukebox.current.videoId);
+    for (const track of room.jukebox.queue) protectedIds.add(track.videoId);
+  }
+  const entries: { path: string; size: number; modifiedAt: number; videoId: string }[] = [];
+  for (const directory of [JUKEBOX_MUSIC_DIR, JUKEBOX_THUMB_DIR]) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const filePath = join(directory, entry.name);
+      const file = await stat(filePath);
+      const videoId = /^[A-Za-z0-9_-]{11}/.exec(entry.name)?.[0] ?? '';
+      entries.push({ path: filePath, size: file.size, modifiedAt: file.mtimeMs, videoId });
+    }
+  }
+  const now = Date.now();
+  for (const entry of entries) {
+    if (now - entry.modifiedAt <= JUKEBOX_CACHE_MAX_AGE_MS || protectedIds.has(entry.videoId)) continue;
+    await rm(entry.path, { force: true });
+    entry.size = 0;
+  }
+  let totalBytes = entries.reduce((total, entry) => total + entry.size, 0);
+  for (const entry of entries.filter((candidate) => candidate.size > 0).sort((a, b) => a.modifiedAt - b.modifiedAt)) {
+    if (totalBytes <= JUKEBOX_CACHE_MAX_BYTES) break;
+    if (protectedIds.has(entry.videoId)) continue;
+    await rm(entry.path, { force: true });
+    totalBytes -= entry.size;
+  }
+}
+
+function safeText(value: unknown, maxLength: number): string {
+  return typeof value === 'string'
+    ? value.replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, maxLength)
+    : '';
+}
+
+function durationSeconds(isoDuration: unknown): number {
+  if (typeof isoDuration !== 'string') return 0;
+  const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(isoDuration);
+  if (!match) return 0;
+  return Number(match[1] ?? 0) * 86400 + Number(match[2] ?? 0) * 3600 + Number(match[3] ?? 0) * 60 + Number(match[4] ?? 0);
+}
+
+async function youtubeApi(path: string, params: URLSearchParams): Promise<Record<string, unknown>> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) throw new Error('YouTube search is not configured. Set YOUTUBE_API_KEY on the server.');
+  params.set('key', apiKey);
+  const response = await fetch(`https://www.googleapis.com/youtube/v3/${path}?${params.toString()}`, { signal: AbortSignal.timeout(8000) });
+  if (!response.ok) {
+    if (response.status === 403 || response.status === 429) throw new Error('YouTube search is temporarily unavailable. Please try again later.');
+    throw new Error('YouTube search could not be completed. Please try again.');
+  }
+  return await response.json() as Record<string, unknown>;
+}
+
+async function searchYouTube(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, url: URL): Promise<void> {
+  const rawQuery = url.searchParams.get('q') ?? '';
+  const query = safeText(rawQuery, 80);
+  const fail = (status: number, message: string) => {
+    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ error: message }));
+  };
+  if (!query || query.length < 2 || rawQuery.length > 80 || /[\u0000-\u001f\u007f]/.test(rawQuery)) {
+    fail(400, 'Enter 2–80 valid characters to search.');
+    return;
+  }
+  const now = Date.now();
+  for (const [key, entry] of youtubeSearchCache) if (entry.expiresAt <= now) youtubeSearchCache.delete(key);
+  for (const [videoId, entry] of youtubeVideoCache) if (entry.expiresAt <= now) youtubeVideoCache.delete(videoId);
+  for (const [ip, timestamps] of youtubeRequests) {
+    const active = timestamps.filter((timestamp) => now - timestamp < YOUTUBE_RATE_WINDOW_MS);
+    if (active.length) youtubeRequests.set(ip, active);
+    else youtubeRequests.delete(ip);
+  }
+  const ip = request.socket.remoteAddress ?? 'unknown';
+  const timestamps = youtubeRequests.get(ip) ?? [];
+  if (timestamps.length >= YOUTUBE_RATE_LIMIT) {
+    fail(429, 'Too many searches. Please wait a moment and try again.');
+    return;
+  }
+  timestamps.push(now);
+  youtubeRequests.set(ip, timestamps);
+  const cacheKey = query.toLocaleLowerCase();
+  const cached = youtubeSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ results: cached.results }));
+    return;
+  }
+
+  try {
+    const searchParams = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', videoEmbeddable: 'true', q: query });
+    const searchPayload = await youtubeApi('search', searchParams);
+    const searchItems = Array.isArray(searchPayload.items) ? searchPayload.items as Record<string, unknown>[] : [];
+    const ids = searchItems.flatMap((item) => {
+      const id = item.id as Record<string, unknown> | undefined;
+      return typeof id?.videoId === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id.videoId) ? [id.videoId] : [];
+    });
+    if (!ids.length) {
+      youtubeSearchCache.set(cacheKey, { expiresAt: now + YOUTUBE_CACHE_MS, results: [] });
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      response.end(JSON.stringify({ results: [] }));
+      return;
+    }
+    const detailsPayload = await youtubeApi('videos', new URLSearchParams({ part: 'contentDetails,status', id: ids.join(',') }));
+    const detailItems = Array.isArray(detailsPayload.items) ? detailsPayload.items as Record<string, unknown>[] : [];
+    const details = new Map(detailItems.map((item) => [String(item.id ?? ''), item]));
+    const results: YouTubeSearchResult[] = [];
+    for (const item of searchItems) {
+      const id = item.id as Record<string, unknown> | undefined;
+      const videoId = typeof id?.videoId === 'string' ? id.videoId : '';
+      const detail = details.get(videoId);
+      if (!detail) continue;
+      const status = detail.status as Record<string, unknown> | undefined;
+      const contentDetails = detail.contentDetails as Record<string, unknown> | undefined;
+      if (status?.embeddable !== true) continue;
+      const seconds = durationSeconds(contentDetails?.duration);
+      if (!seconds) continue;
+      const snippet = item.snippet as Record<string, unknown> | undefined;
+        const result: YouTubeSearchResult = {
+        videoId,
+        title: safeText(snippet?.title, 160),
+        channel: safeText(snippet?.channelTitle, 100),
+        thumbnail: `/api/jukebox/thumb/${videoId}`,
+        durationSeconds: seconds,
+      };
+      results.push(result);
+      youtubeVideoCache.set(videoId, { expiresAt: now + YOUTUBE_CACHE_MS, result });
+    }
+    youtubeSearchCache.set(cacheKey, { expiresAt: now + YOUTUBE_CACHE_MS, results });
+    response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ results }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'YouTube search could not be completed. Please try again.';
+    const status = message.includes('not configured') ? 503 : 502;
+    if (status === 502) console.error('[jukebox] YouTube search failed:', error);
+    fail(status, message);
+  }
+}
+
+function jukeboxState(room: Room): object {
+  return { type: 'jukebox:state', current: room.jukebox.current, queue: room.jukebox.queue, skipVotes: room.jukebox.skipVotes.size };
+}
+
+function advanceJukebox(room: Room, now = Date.now()): void {
+  let next = room.jukebox.queue.shift();
+  while (next?.status === 'failed') next = room.jukebox.queue.shift();
+  room.jukebox.skipVotes.clear();
+  if (next?.status === 'ready') room.jukebox.current = { ...next, status: 'playing', startedAt: now };
+  else room.jukebox.current = next ? { ...next, status: 'downloading', startedAt: null } : null;
+  broadcast(room, jukeboxState(room));
+}
 
 function safeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
@@ -431,6 +808,7 @@ wss.on('connection', (socket) => {
         return;
       }
       const { room, player } = result;
+      room.jukebox.emptySince = null;
       memberships.set(socket, { roomId, playerId: player.id });
       persistentData.hydrateRoom(room);
       inventoryStore.restore(player.id, persistentData.playerFish(roomId, player.name));
@@ -441,6 +819,7 @@ wss.on('connection', (socket) => {
         player.resumeHoldingCatchId = null;
       }
       send(socket, roomSnapshot(room, player));
+      send(socket, jukeboxState(room));
       send(socket, { type: 'inventory_sync', items: inventory, totalCaught: inventoryStore.totalCaught(player.id), personalBest: inventoryStore.personalBest(player.id), collection: inventoryStore.collection(player.id) });
       if (player.holdingFish) broadcast(room, { type: 'player_holding', playerId: player.id, fish: player.holdingFish }, socket);
       broadcast(room, { type: 'player_joined', player: rooms.snapshot(room).find((entry) => entry.id === player.id), serverTime: Date.now() }, socket);
@@ -592,6 +971,62 @@ wss.on('connection', (socket) => {
     }
 
     if (player.arenaInstanceId && message.type !== 'chat') return;
+
+    if (message.type === 'jukebox:enqueue') {
+      const videoId = typeof message.videoId === 'string' ? message.videoId : '';
+      if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+        send(socket, { type: 'jukebox:error', message: 'That song could not be added. Search for it again and try once more.' });
+        return;
+      }
+      if (Math.hypot(player.x - WORLD_CONFIG.jukebox.x, player.z - WORLD_CONFIG.jukebox.z) > WORLD_CONFIG.jukebox.interactionRadius + 1) {
+        send(socket, { type: 'jukebox:error', message: 'Walk closer to the jukebox to add a song.' });
+        return;
+      }
+      const searchResult = youtubeVideoCache.get(videoId);
+      if (!searchResult || searchResult.expiresAt <= Date.now()) {
+        send(socket, { type: 'jukebox:error', message: 'That search result has expired. Please search again.' });
+        return;
+      }
+      if (searchResult.result.durationSeconds > JUKEBOX_MAX_DURATION_SECONDS) {
+        send(socket, { type: 'jukebox:error', message: 'Songs must be 6 minutes or shorter.' });
+        return;
+      }
+      if (room.jukebox.queue.length >= JUKEBOX_MAX_QUEUE_LENGTH) {
+        send(socket, { type: 'jukebox:error', message: 'The queue is full. Try again after a song finishes.' });
+        return;
+      }
+      const track: JukeboxTrack = { ...searchResult.result, requesterId: player.id, requestedBy: player.name, status: 'downloading' };
+      room.jukebox.queue.push(track);
+      if (!room.jukebox.current) advanceJukebox(room);
+      else broadcast(room, jukeboxState(room));
+      beginJukeboxDownload(track);
+      return;
+    }
+
+    if (message.type === 'jukebox:skip') {
+      if (!room.jukebox.current) return;
+      if (room.jukebox.current.requesterId === player.id) {
+        advanceJukebox(room);
+        return;
+      }
+      room.jukebox.skipVotes.add(player.id);
+      if (room.jukebox.skipVotes.size >= 2) advanceJukebox(room);
+      else broadcast(room, jukeboxState(room));
+      return;
+    }
+
+    if (message.type === 'jukebox:ended' || message.type === 'jukebox:failed') {
+      const videoId = typeof message.videoId === 'string' ? message.videoId : '';
+      const current = room.jukebox.current;
+      if (!current || current.videoId !== videoId) return;
+      if (message.type === 'jukebox:ended' && (current.startedAt === null || Date.now() < current.startedAt + current.durationSeconds * 1000 - 3000)) return;
+      if (message.type === 'jukebox:failed') {
+        send(socket, { type: 'jukebox:error', message: `“${current.title}” could not be played. Skipping to the next song.` });
+        broadcast(room, { type: 'jukebox:error', message: `“${current.title}” could not be played. Skipping to the next song.` }, socket);
+      }
+      advanceJukebox(room);
+      return;
+    }
 
     if (message.type === 'weather:debug') {
       if (process.env.NODE_ENV === 'production') return;
@@ -1107,6 +1542,16 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.all()) {
+    if (!room.players.size) continue;
+    const current = room.jukebox.current;
+    if (current?.status === 'playing' && current.startedAt !== null && now >= current.startedAt + current.durationSeconds * 1000) advanceJukebox(room, now);
+  }
+  rooms.cleanupEmptyRooms(now);
+}, 1000);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.all()) {
     for (const player of room.players.values()) {
       if (player.disconnectedAt === null || now - player.disconnectedAt < RESUME_GRACE_MS) continue;
       const remainingRoom = rooms.removePlayer(room.id, player.id);
@@ -1117,4 +1562,21 @@ setInterval(() => {
 }, 1000);
 
 await persistentData.load();
+await mkdir(JUKEBOX_CACHE_DIR, { recursive: true });
+const toolChecks = await Promise.allSettled([
+  execFileAsync(YT_DLP, ['--version'], { timeout: 5000, windowsHide: true }),
+  execFileAsync(FFMPEG, ['-version'], { timeout: 5000, windowsHide: true }),
+]);
+audioToolsAvailable = toolChecks.every((result) => result.status === 'fulfilled');
+if (audioToolsAvailable) {
+  const ytDlpVersion = toolChecks[0].status === 'fulfilled' ? toolChecks[0].value.stdout.trim().split(/\r?\n/)[0] : '';
+  const ffmpegVersion = toolChecks[1].status === 'fulfilled' ? toolChecks[1].value.stdout.trim().split(/\r?\n/)[0] : '';
+  console.log(`[jukebox] yt-dlp ${ytDlpVersion}; ${ffmpegVersion}`);
+} else {
+  if (toolChecks[0].status === 'rejected') console.warn(`[jukebox] yt-dlp check failed (${YT_DLP}):`, toolChecks[0].reason);
+  if (toolChecks[1].status === 'rejected') console.warn(`[jukebox] ffmpeg check failed (${FFMPEG}):`, toolChecks[1].reason);
+  console.warn('[jukebox] audio preparation is disabled until both media tools are available.');
+}
+await cleanupJukeboxCache();
+setInterval(() => { void cleanupJukeboxCache().catch((error) => console.error('[jukebox] cache cleanup failed:', error)); }, 60 * 60 * 1000);
 server.listen(PORT, () => console.log(`Mengai server listening on http://localhost:${PORT}`));

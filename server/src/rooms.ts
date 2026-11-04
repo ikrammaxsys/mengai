@@ -19,9 +19,13 @@ export class Rooms {
          state: 'ground' as const, carriedBy: null, flight: null, chickenHitId: null, respawnAt: null,
        }]));
        const createdAt = Date.now();
-       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map() };
+       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map(), jukebox: { current: null, queue: [], skipVotes: new Set(), emptySince: null } };
        this.rooms.set(roomId, room);
     } else if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', Date.now());
+    if (room.players.size === 0 && room.jukebox.emptySince !== null) {
+      if (room.jukebox.current && room.jukebox.current.startedAt !== null) room.jukebox.current.startedAt += Date.now() - room.jukebox.emptySince;
+      room.jukebox.emptySince = null;
+    }
     const normalized = name.toLocaleLowerCase();
     const existing = [...room.players.values()].find((player) => player.name.toLocaleLowerCase() === normalized);
     if (existing) {
@@ -100,12 +104,26 @@ export class Rooms {
     const room = this.rooms.get(roomId);
     if (!room) return undefined;
     room.players.delete(playerId);
-    if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', Date.now());
-    if (room.players.size === 0 && room.leaderboard.length === 0) {
+    if (room.players.size === 0) {
+      room.weather = createWeatherSnapshot('clear', Date.now());
+      if (room.jukebox.current || room.jukebox.queue.length) room.jukebox.emptySince = Date.now();
+    }
+    if (room.players.size === 0 && room.leaderboard.length === 0 && !room.jukebox.current && !room.jukebox.queue.length) {
       this.rooms.delete(roomId);
       return undefined;
     }
     return room.players.size > 0 ? room : undefined;
+  }
+
+  cleanupEmptyRooms(now: number): void {
+    for (const [roomId, room] of this.rooms) {
+      if (room.players.size || room.jukebox.emptySince === null || now - room.jukebox.emptySince < 60_000) continue;
+      room.jukebox.current = null;
+      room.jukebox.queue = [];
+      room.jukebox.skipVotes.clear();
+      room.jukebox.emptySince = null;
+      if (!room.leaderboard.length) this.rooms.delete(roomId);
+    }
   }
 
   getPlayer(roomId: string, playerId: string): Player | undefined {

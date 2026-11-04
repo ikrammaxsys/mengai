@@ -144,6 +144,21 @@ export interface PlayerSnapshot {
   crocodilesSlain: number;
 }
 
+export interface JukeboxTrack {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  durationSeconds: number;
+  requesterId: string;
+  requestedBy: string;
+  status: 'downloading' | 'ready' | 'playing' | 'failed';
+}
+
+export interface JukeboxCurrent extends JukeboxTrack {
+  startedAt: number | null;
+}
+
 type Handlers = {
   joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[] }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
@@ -190,6 +205,8 @@ type Handlers = {
   campfireCooking: (cooking: CampfireCooking | null) => void;
   campfireCooked: (event: CampfireCookedEvent) => void;
   weatherChanged: (weather: WeatherSnapshot) => void;
+  jukeboxState: (current: JukeboxCurrent | null, queue: JukeboxTrack[], skipVotes: number) => void;
+  jukeboxError: (message: string) => void;
   disconnected: () => void;
 };
 
@@ -269,6 +286,8 @@ export class Network {
           break;
         case 'player_joined': this.handlers.playerJoined(message.player as PlayerSnapshot, Number(message.serverTime) || Date.now()); break;
         case 'player_left': this.handlers.playerLeft(String(message.playerId)); break;
+        case 'jukebox:state': this.handlers.jukeboxState((message.current as JukeboxCurrent | null) ?? null, Array.isArray(message.queue) ? message.queue as JukeboxTrack[] : [], Number(message.skipVotes) || 0); break;
+        case 'jukebox:error': this.handlers.jukeboxError(String(message.message ?? 'The jukebox could not complete that action.')); break;
         case 'speaking': this.handlers.speaking(String(message.playerId), Boolean(message.speaking)); break;
         case 'correction': this.handlers.correction(message as unknown as Parameters<Handlers['correction']>[0]); break;
         case 'error': this.handlers.error(String(message.message)); break;
@@ -384,6 +403,14 @@ export class Network {
   endReel(success: boolean): void { this.send({ type: 'reel_end', success }); }
   cancelFishing(): void { this.send({ type: 'fish_cancel' }); }
   sendChat(text: string): void { this.send({ type: 'chat', text }); }
+  enqueueJukebox(videoId: string): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.send({ type: 'jukebox:enqueue', videoId });
+    return true;
+  }
+  skipJukebox(): void { this.send({ type: 'jukebox:skip' }); }
+  jukeboxEnded(videoId: string): void { this.send({ type: 'jukebox:ended', videoId }); }
+  jukeboxFailed(videoId: string): void { this.send({ type: 'jukebox:failed', videoId }); }
   pickStone(stoneId: string): void { this.send({ type: 'stone_pickup', stoneId }); }
   throwStone(): void { this.send({ type: 'stone_throw' }); }
   setDebugWeather(weatherType: WeatherType): void { this.send({ type: 'weather:debug', weatherType }); }

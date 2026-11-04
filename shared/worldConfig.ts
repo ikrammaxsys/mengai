@@ -4,6 +4,7 @@ export const WORLD_CONFIG = {
   groundRadius: 35,
   grassRadius: 33,
   crocodilePortal: { x: 18, z: -20, useRadius: 2.8 },
+  jukebox: { x: 21, z: -2, interactionRadius: 4.5, hearingRadius: 22, fullVolumeRadius: 4 },
   campfire: { x: 0, z: 20, useRadius: 4.8, shareRadius: 8, cookDurationMs: 9000 },
   trees: [
     [-12, -8], [-13, 7], [12, -10], [13, 7], [-7, 14], [8, 13], [16, -1], [-16, 0],

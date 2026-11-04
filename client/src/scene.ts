@@ -30,6 +30,7 @@ export class GameScene {
   private readonly labels: HTMLElement;
   private readonly stoneHint: HTMLDivElement;
   private readonly photoboothLabel: HTMLDivElement;
+  private readonly jukeboxLabel: HTMLDivElement;
   private readonly ray = new THREE.Vector3();
   private readonly cameraOffset = new THREE.Vector3(0, 8.5, -11);
   private readonly crocodilePortal = new THREE.Group();
@@ -74,6 +75,10 @@ export class GameScene {
     this.photoboothLabel.className = 'photobooth-world-label';
     this.photoboothLabel.textContent = 'Photobooth 📸';
     labels.appendChild(this.photoboothLabel);
+    this.jukeboxLabel = document.createElement('div');
+    this.jukeboxLabel.className = 'jukebox-world-label';
+    this.jukeboxLabel.textContent = 'Jukebox';
+    labels.appendChild(this.jukeboxLabel);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.setSize(innerWidth, innerHeight);
@@ -166,6 +171,38 @@ export class GameScene {
       this.stones.set(pebble.id, { group, state: 'ground', x: pebble.x, z: pebble.z, color: pebble.color, carriedBy: null, flight: null, respawnAt: null, splashStartedAt: null, splash });
     }
     this.buildPhotobooth();
+    this.buildJukebox();
+  }
+
+  private buildJukebox(): void {
+    const jukebox = new THREE.Group();
+    jukebox.position.set(WORLD_CONFIG.jukebox.x, 0, WORLD_CONFIG.jukebox.z);
+    this.scene.add(jukebox);
+    const dark = this.material('#3d5148');
+    const body = this.material('#9b5b3e');
+    const brass = this.material('#e3bb68');
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.28, 0.9), dark);
+    base.position.y = 0.14; base.castShadow = true; base.receiveShadow = true; jukebox.add(base);
+    const cabinet = new THREE.Mesh(new THREE.BoxGeometry(1.12, 1.65, 0.72), body);
+    cabinet.position.y = 1.08; cabinet.castShadow = true; cabinet.receiveShadow = true; jukebox.add(cabinet);
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.72, 0.42, 8), body);
+    crown.position.y = 2.08; crown.scale.z = 0.65; crown.castShadow = true; jukebox.add(crown);
+    const speaker = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.5, 0.06), dark);
+    speaker.position.set(0, 1.5, 0.39); jukebox.add(speaker);
+    const speakerGrill = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.06, 8), brass);
+    speakerGrill.rotation.x = Math.PI / 2; speakerGrill.position.set(0, 1.5, 0.44); jukebox.add(speakerGrill);
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.19, 0.06), brass);
+    screen.position.set(0, 0.94, 0.39); jukebox.add(screen);
+    const dial = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), brass);
+    dial.position.set(0, 0.63, 0.41); jukebox.add(dial);
+    for (const x of [-0.38, 0.38]) {
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.055, 5, 4), brass);
+      knob.position.set(x, 0.63, 0.41); jukebox.add(knob);
+    }
+  }
+
+  setJukeboxPlaying(playing: boolean): void {
+    this.jukeboxLabel.textContent = playing ? '♫ Jukebox · now playing' : 'Jukebox';
   }
 
   private buildPhotobooth(): void {
@@ -895,6 +932,10 @@ export class GameScene {
     this.photoboothLabel.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
     this.photoboothLabel.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
     this.photoboothLabel.style.display = this.ray.z <= 1 && Math.abs(this.ray.x) <= 1.2 && Math.abs(this.ray.y) <= 1.2 ? 'block' : 'none';
+    this.ray.set(WORLD_CONFIG.jukebox.x, 2.95, WORLD_CONFIG.jukebox.z).project(this.camera);
+    this.jukeboxLabel.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
+    this.jukeboxLabel.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
+    this.jukeboxLabel.style.display = this.ray.z <= 1 && Math.abs(this.ray.x) <= 1.2 && Math.abs(this.ray.y) <= 1.2 ? 'block' : 'none';
     for (const [id, avatar] of this.avatars) {
       avatar.rod.rotation.z = -0.42 + (avatar.reelActive ? 0.12 + Math.sin(Date.now() * 0.006) * 0.035 : 0);
       if (avatar.heldModel) {

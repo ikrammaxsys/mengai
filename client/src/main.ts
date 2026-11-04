@@ -14,6 +14,7 @@ import { WORLD_CONFIG } from '../../shared/worldConfig';
 import { isWeatherType, WEATHER_CONFIG, type WeatherSnapshot, type WeatherType } from '../../shared/weatherConfig';
 import { VoiceClient, type VoiceConnectionStatus } from './voice';
 import { MusicManager, type MusicTrackId } from './music';
+import { Jukebox } from './jukebox';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const appRoot = document.querySelector<HTMLElement>('#app')!;
@@ -64,6 +65,7 @@ const weatherIcon = document.querySelector<HTMLElement>('#weather-icon')!;
 const weatherName = document.querySelector<HTMLElement>('#weather-name')!;
 const weatherHint = document.querySelector<HTMLElement>('#weather-hint')!;
 const fishPrompt = document.querySelector<HTMLElement>('#fish-prompt')!;
+const jukeboxPrompt = document.querySelector<HTMLElement>('#jukebox-prompt')!;
 const chatUi = document.querySelector<HTMLElement>('#chat-ui')!;
 const chatToggle = document.querySelector<HTMLButtonElement>('#chat-toggle')!;
 const chatPanel = document.querySelector<HTMLElement>('#chat-panel')!;
@@ -137,6 +139,27 @@ if (netDebugEnabled) netDebug.classList.remove('hidden');
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
 const music = new MusicManager();
 const speakingPlayers = new Set<string>();
+let keys = new Set<string>();
+let network: Network;
+const jukebox = new Jukebox(document.querySelector<HTMLElement>('#jukebox-root')!, {
+  pauseMovement: () => {
+    keys.clear();
+    cancelMouseTurn();
+    sendLocalMovement(true);
+  },
+  enqueue: (videoId) => network.enqueueJukebox(videoId),
+  skip: () => network.skipJukebox(),
+  ended: (videoId) => network.jukeboxEnded(videoId),
+  failed: (videoId) => network.jukeboxFailed(videoId),
+  toast: showToast,
+});
+let lastMusicDuck = false;
+function syncMusicDuck(): void {
+  const shouldDuck = speakingPlayers.size > 0 || jukebox.isAudible;
+  if (lastMusicDuck === shouldDuck) return;
+  lastMusicDuck = shouldDuck;
+  music.duck(shouldDuck);
+}
 musicVolume.value = String(music.currentVolume);
 musicVolumeValue.textContent = `${Math.round(music.currentVolume * 100)}%`;
 musicMute.textContent = music.isMuted ? 'Unmute music' : 'Mute music';
@@ -164,7 +187,7 @@ voice = new VoiceClient({
     scene.setVoiceSpeaking(playerId, speaking);
     if (speaking) speakingPlayers.add(playerId);
     else speakingPlayers.delete(playerId);
-    music.duck(speakingPlayers.size > 0);
+    syncMusicDuck();
     if (playerId === selfId && joined && typeof network !== 'undefined') network.sendSpeaking(speaking);
   },
   mutedPlayersChanged: renderVoicePlayers,
@@ -207,7 +230,6 @@ const bigCatchQueue: BigCatchEvent[] = [];
 let activeBigCatch: BigCatchEvent | null = null;
 let bigCatchTimer = 0;
 const fishViewer = new FishViewer(fishViewerRoot, () => currentLeaderboard);
-let network: Network;
 let joined = false;
 let arenaMode = false;
 let portalPromptDismissedUntilExit = false;
@@ -227,7 +249,6 @@ let isPhotoboothMode = false;
 let previousPhotoboothFacing = 0;
 let availableRooms: { room: string; playerCount: number }[] = [];
 let roomPollTimer = 0;
-let keys = new Set<string>();
 let mouseTurnRemaining = 0;
 let lastFrame = performance.now();
 let lastMinimapRenderAt = 0;
@@ -283,6 +304,16 @@ function showToast(message: string): void {
   toast.classList.add('show');
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function isNearJukebox(): boolean {
+  const position = scene.getPosition();
+  return Math.hypot(position.x - WORLD_CONFIG.jukebox.x, position.z - WORLD_CONFIG.jukebox.z) <= WORLD_CONFIG.jukebox.interactionRadius;
+}
+
+function openJukebox(): void {
+  if (!joined || !isNearJukebox()) return;
+  jukebox.open();
 }
 
 function showHitFlash(): void {
@@ -677,7 +708,7 @@ function sendLocalMovement(force = false): void {
   if (!joined || typeof network === 'undefined') return;
   const position = scene.getPosition();
   const rotY = scene.localFacing();
-  const moving = !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle' && hasForwardInput();
+  const moving = !isPhotoboothMode && !jukebox.isOpen && !reelGame && scene.fishingState() === 'idle' && hasForwardInput();
   const previous = lastSentMotion;
   const changed = !previous || Math.hypot(position.x - previous.x, position.z - previous.z) > 0.002 ||
     Math.abs(Math.atan2(Math.sin(rotY - previous.rotY), Math.cos(rotY - previous.rotY))) > 0.002 || moving !== previous.moving ||
@@ -1283,6 +1314,7 @@ function join(room: string, name: string): void {
       applyWeather(message.weather, false);
       selfId = message.selfId;
       voiceResumeToken = message.resumeToken;
+      jukebox.setClockOffset(serverClockOffset);
       movementSequence = 0; lastSentMotion = null; lastMovementSentAt = 0; lastMovementHeartbeatAt = 0;
       currentRoom = message.room;
       voice.setSession(message.room, selfId, message.resumeToken);
@@ -1347,13 +1379,13 @@ function join(room: string, name: string): void {
     playerLeft: (id) => {
       voice.removeGamePlayer(id);
       speakingPlayers.delete(id);
-      music.duck(speakingPlayers.size > 0);
+      syncMusicDuck();
       roomPlayers.delete(id);
       scene.remove(id); updateCount(); renderArenaParty(); renderVoicePlayers();
     },
     correction: (message) => { if (message.seq >= movementSequence) scene.applyCorrection(message.x, message.z); },
     clockOffset: (offsetMs) => {
-      serverClockOffset = offsetMs; hasServerClockSample = true; scene.setServerClockOffset(offsetMs);
+      serverClockOffset = offsetMs; hasServerClockSample = true; scene.setServerClockOffset(offsetMs); jukebox.setClockOffset(offsetMs);
     },
     error: (message) => {
       joinButton.disabled = false;
@@ -1410,6 +1442,12 @@ function join(room: string, name: string): void {
       for (const playerId of event.recipientIds) scene.showEatBubble(playerId, species.name);
     },
     weatherChanged: (weather) => applyWeather(weather, true),
+    jukeboxState: (current, queue, skipVotes) => {
+      jukebox.setState(current, queue, skipVotes);
+      scene.setJukeboxPlaying(current !== null);
+      syncMusicDuck();
+    },
+    jukeboxError: (message) => jukebox.showError(message),
     announcement: showToast,
     chat: (message) => {
       scene.showChatBubble(message.playerId, message.text);
@@ -1446,8 +1484,11 @@ function join(room: string, name: string): void {
       incomingArenaInvites.clear();
       renderArenaParty();
       renderArenaInvites();
+      jukebox.close();
       speakingPlayers.clear();
-      music.duck(false);
+      jukebox.setState(null, []);
+      scene.setJukeboxPlaying(false);
+      syncMusicDuck();
       music.fadeOut(2000);
       voiceResumeToken = '';
       void voice.disconnect();
@@ -1630,6 +1671,14 @@ window.addEventListener('keydown', (event) => {
     photoboothUi.handleKey(event);
     return;
   }
+  if (jukebox.isOpen) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      jukebox.close();
+      sendLocalMovement(true);
+    }
+    return;
+  }
   if (event.key === 'Escape' && !fishViewerRoot.classList.contains('hidden')) {
     fishViewer.close();
     return;
@@ -1663,6 +1712,11 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (key === 'j' && joined && !event.repeat && isNearJukebox()) {
+    event.preventDefault();
+    openJukebox();
+    return;
+  }
   if (key === 'v' && joined && voice.isPushToTalk) {
     event.preventDefault();
     if (!event.repeat) void voice.setPushToTalkHeld(true);
@@ -1778,6 +1832,7 @@ window.addEventListener('keydown', (event) => {
   keys.add(key);
 });
 window.addEventListener('keyup', (event) => {
+  if (jukebox.isOpen) return;
   if (event.key.toLowerCase() === 'v' && voice.isPushToTalk) void voice.setPushToTalkHeld(false);
   if (isPhotoboothMode) return;
   if (event.code === 'Space') reelGame?.setHeld(false);
@@ -1826,7 +1881,7 @@ function animate(now: number): void {
       lastArenaMoveAt = now;
     }
   }
-  if (joined && !arenaMode && !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle') {
+  if (joined && !arenaMode && !isPhotoboothMode && !jukebox.isOpen && !reelGame && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
     let turn = keyboardTurn;
@@ -1848,6 +1903,7 @@ function animate(now: number): void {
     voice.updateSpatialAudio(scene.mapPlayers(), selfId, now);
     if (arenaMode) {
       photoboothPrompt.classList.add('hidden');
+      jukeboxPrompt.classList.add('hidden');
       fishPrompt.classList.add('hidden');
     } else {
       sendLocalMovement(false);
@@ -1856,12 +1912,18 @@ function animate(now: number): void {
       const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
       photoboothPrompt.classList.toggle('hidden', !nearPhotobooth);
       photoboothEnter.disabled = !nearPhotobooth;
+      const nearJukebox = !isPhotoboothMode && !jukebox.isOpen && isNearJukebox();
+      jukeboxPrompt.classList.toggle('hidden', !nearJukebox);
+      const position = scene.getPosition();
+      jukebox.setDistance(Math.hypot(position.x - WORLD_CONFIG.jukebox.x, position.z - WORLD_CONFIG.jukebox.z));
+      syncMusicDuck();
       fishPrompt.classList.toggle('hidden', isPhotoboothMode || reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
       fishPrompt.textContent = fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
       updatePortalPrompt();
     }
   } else {
     photoboothPrompt.classList.add('hidden');
+    jukeboxPrompt.classList.add('hidden');
     photoboothEnter.disabled = true;
     portalPrompt.classList.add('hidden');
   }

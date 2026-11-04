@@ -90,6 +90,7 @@
         <section id="arena-party-invites" class="arena-party-invites hidden" aria-label="Arena invitations">
           <strong>You’re invited to an arena party</strong><div id="arena-party-invites-list"></div>
         </section>
+        <div id="jukebox-prompt" class="photobooth-prompt jukebox-prompt hidden"><kbd>J</kbd><span>Press J to open Jukebox</span></div>
         <div id="photobooth-prompt" class="photobooth-prompt hidden"><kbd>P</kbd><span>Press P to use the photobooth</span></div>
         <div id="fish-prompt" class="fish-prompt hidden">Space to cast</div>
         <section id="reel-game" class="reel-game hidden" aria-live="polite">
@@ -120,6 +121,35 @@
           <div><button id="arena-leave-button" type="button">Leave</button><button id="arena-retry-button" type="button">Fight again</button></div>
         </div>
       </section>
+      <div id="jukebox-root">
+        <div id="jukebox-hud-line" class="jukebox-hud-line hidden"><span>♫</span><span id="jukebox-hud-title"></span><button id="jukebox-open" type="button">Open jukebox</button></div>
+        <section id="jukebox-modal" class="jukebox-modal hidden" role="dialog" aria-modal="true" aria-labelledby="jukebox-title">
+          <div class="jukebox-backdrop"></div>
+          <div class="jukebox-card">
+            <header class="jukebox-header"><div><h2 id="jukebox-title"><span aria-hidden="true">♫</span> Jukebox</h2><p>Pick a song for everyone in the room</p></div><button id="jukebox-close" class="chat-close" type="button" aria-label="Close jukebox">×</button></header>
+            <div class="jukebox-columns">
+              <section class="jukebox-search-column" aria-label="Search songs">
+                <form id="jukebox-search-form" class="jukebox-search-form"><label class="jukebox-search-box"><span aria-hidden="true">⌕</span><input id="jukebox-search" type="search" maxlength="80" autocomplete="off" placeholder="Search YouTube for a song or artist…" aria-label="Search YouTube" /><button id="jukebox-clear" class="jukebox-clear hidden" type="button" aria-label="Clear search">×</button></label><button id="jukebox-search-button" type="submit"><span>Search</span><i class="jukebox-spinner hidden" aria-hidden="true"></i></button></form>
+                <div id="jukebox-status" class="jukebox-status hidden" aria-live="polite"></div>
+                <div id="jukebox-results-hint" class="jukebox-results-hint"><span aria-hidden="true">♫</span><span>Search for a song to add it to the queue</span></div>
+                <div id="jukebox-results" class="jukebox-results" aria-live="polite"></div>
+              </section>
+              <section class="jukebox-now-column" aria-label="Room playback">
+                  <article class="jukebox-now-card">
+                    <header class="jukebox-section-heading"><h3>Now playing</h3></header>
+                    <div id="jukebox-player-slot" class="jukebox-player-slot"><img id="jukebox-now-thumbnail" class="jukebox-now-thumbnail" alt="" /><div id="jukebox-player-empty" class="jukebox-empty-player"><span aria-hidden="true">♫</span><strong>Nothing playing yet</strong><span>Add a song to get the party started.</span></div></div>
+                  <button id="jukebox-enable-playback" class="jukebox-enable-playback hidden" type="button">Enable playback</button>
+                    <div id="jukebox-now-playing" class="jukebox-now-playing hidden"><strong id="jukebox-now-title"></strong><span id="jukebox-now-channel"></span><span id="jukebox-now-requester"></span><span id="jukebox-track-status" class="jukebox-track-status hidden"></span><div class="jukebox-progress-track" role="progressbar" aria-label="Track progress" aria-valuemin="0" aria-valuemax="100"><div id="jukebox-progress"></div></div><div class="jukebox-time-row"><span id="jukebox-current-time">0:00</span><span id="jukebox-total-time">0:00</span></div><button id="jukebox-skip" class="jukebox-secondary jukebox-skip" type="button">Skip</button></div>
+                  </article>
+                  <div class="jukebox-volume-row"><button id="jukebox-volume-mute" class="jukebox-volume-mute" type="button" aria-label="Mute jukebox" aria-pressed="false">🔊</button><input id="jukebox-volume" class="jukebox-volume" type="range" min="0" max="1" step="0.01" value="0.35" aria-label="Jukebox volume" /><span id="jukebox-volume-label" class="jukebox-volume-label"></span></div>
+                  <section class="jukebox-queue-section"><header class="jukebox-section-heading"><h3>Up next</h3><span id="jukebox-queue-count" class="jukebox-queue-count">0</span></header><ol id="jukebox-queue" class="jukebox-queue"></ol></section>
+              </section>
+            </div>
+              <div id="jukebox-toast" class="jukebox-toast hidden" role="status" aria-live="polite"></div>
+              <p class="jukebox-disclaimer">Music is streamed from this server and synced for everyone in the room.</p>
+          </div>
+        </section>
+      </div>
       <section id="photobooth-overlay" class="photobooth-overlay hidden" aria-label="Photobooth controls" tabindex="-1">
         <div class="photo-frame-guide" aria-hidden="true"><span>4:5 PHOTO</span></div>
         <div id="photobooth-countdown" class="photobooth-countdown hidden" aria-live="assertive"></div>

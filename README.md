@@ -50,6 +50,16 @@ Keep `LIVEKIT_API_SECRET` on the server; it is only used to mint short-lived, ro
 
 Put these values in the repository-root `.env` file (copy `.env.example` to start); `.env` is gitignored and loaded by the game server. Environment variables set by the deployment environment take precedence.
 
+### Shared jukebox
+
+The room jukebox uses YouTube Data API v3 for search, then downloads audio on the game server with `yt-dlp` and `ffmpeg` (`-x --audio-format mp3`). Install both tools on the server and make them available on `PATH`, or set `YT_DLP_PATH` and `FFMPEG_PATH`. The server checks both tools at startup; if either is missing, jukebox tracks will fail preparation while the rest of the game remains available. Set `YOUTUBE_API_KEY` in the repository-root `.env`; the key is read only by the game server and is never sent to the browser. Search is cached for two minutes and limited to 20 requests per IP per minute.
+
+MP3s are cached under `cache/music/` and thumbnails under `cache/thumb/`. The server removes cache files older than 24 hours and enforces a 1 GiB default cache cap (override with `JUKEBOX_CACHE_MAX_BYTES`). The browser loads audio and thumbnails only from this server; audio is played through the Web Audio API for local proximity-volume control. Browser autoplay rules can require **Enable playback** on the jukebox.
+
+Walk to the jukebox near the island's eastern edge and press **J**. Search results include duration metadata; tracks longer than six minutes cannot be queued. Each room allows ten upcoming tracks (duplicate songs are allowed). The server downloads each requested track before starting playback and broadcasts download/ready/playing state. Unavailable tracks are reported to the requester and skipped. The requester can skip their track, or two distinct players can vote to skip it. The server owns queue order and start times, and clients seek to the room's synchronized offset and periodically correct playback drift. The player has a local volume control and fades to silence outside the hearing radius; background music ducks while the jukebox is audible.
+
+World/audio tuning is in `shared/worldConfig.ts` (`jukebox` position, interaction, full-volume, and hearing radii) and `client/src/jukebox.ts` (`JUKEBOX_AUDIO`: maximum local volume, smoothing time, and drift correction threshold). To test synchronization, start `npm run dev`, join the same room in two browser tabs with different names, walk to the jukebox in each, search and add a short song in one tab, then press **Enable playback** in each tab if prompted. Move away in one tab to confirm its jukebox volume fades independently.
+
 ## Play
 
 - Hold **W/S** (or Up/Down) to move forward/backward relative to your character. Hold **A/D** (or Left/Right) to continuously turn; the third-person camera follows behind your facing direction.
