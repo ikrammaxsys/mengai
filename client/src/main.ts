@@ -261,15 +261,17 @@ const forcedWeather = (() => {
   return isWeatherType(value) ? value : null;
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
-type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'backpack' | 'catch' | 'progress' };
-const whatsNewVersion = '1.0.0'; // Bump when shipping a new What's New update.
+type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'catch' | 'progress' };
+const whatsNewVersion = '1.1.0'; // Bump when shipping a new What's New update.
 const whatsNewReleaseDate = 'Nov 2026';
 const whatsNewSeenKey = 'mengai:whats-new:last-seen-version';
 let whatsNewReturnFocus: HTMLElement | null = null;
 const whatsNewItems: WhatsNewItem[] = [
+  { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Crocodile arena', description: 'Team up with friends to battle the crocodile.' },
+  { tier: 'highlight', tone: 'voice', icon: '🎙️', title: 'Proximity voice', description: 'Talk with nearby fishers as you explore.' },
   { tier: 'highlight', tone: 'backpack', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
-  { tier: 'highlight', tone: 'catch', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
-  { tier: 'highlight', tone: 'progress', icon: '💾', title: 'Progress that saves', description: 'Catch records save; crowns mark the room leader.' },
+  { tier: 'also', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
+  { tier: 'also', icon: '💾', title: 'Progress that saves', description: 'Catch records save; crowns mark the room leader.' },
   { tier: 'also', icon: '🍲', title: 'Campfire cooking', description: 'Share a warm meal by the fire.' },
   { tier: 'also', icon: '🌦️', title: 'Living weather', description: 'Rain and storms change fishing.' },
   { tier: 'also', icon: '🗺️', title: 'Island map', description: 'Find fishers, stones, and campfire.' },
@@ -1202,6 +1204,7 @@ function updateLeaderboard(entries: CatchEntry[]): void {
 
 function updateCrocodileScores(scores: CrocodileScore[]): void {
   const normalized = [...scores].filter((score) => score.count > 0).sort((a, b) => b.count - a.count || a.playerName.localeCompare(b.playerName));
+  for (const score of normalized) scene.setCrocodileSlainCount(score.playerId, score.count);
   if (JSON.stringify(normalized) === JSON.stringify(currentCrocodileScores)) return;
   currentCrocodileScores = normalized;
   crocodileScoreList.replaceChildren();

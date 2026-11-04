@@ -141,6 +141,7 @@ export interface PlayerSnapshot {
   inPhotobooth: boolean;
   speaking?: boolean;
   chickenScore: number;
+  crocodilesSlain: number;
 }
 
 type Handlers = {

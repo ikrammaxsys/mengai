@@ -76,7 +76,7 @@ export function createFishModel(speciesId: FishSpeciesId, weightKg: number): THR
       const barbel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.15, 5), mat('#765634'));
       barbel.position.set(0.72, y, 0.2); barbel.rotation.z = -0.75; fish.add(barbel);
     }
-  } else {
+  } else if (speciesId === 'golden-koi') {
     addSphere(fish, '#f1ead7', [0, 0, 0], [0.84, 0.34, 0.2], 10, '#8a6917');
     addSphere(fish, '#e87b36', [-0.38, 0.12, 0.17], [0.25, 0.18, 0.045], 7);
     addSphere(fish, '#d9a734', [0.2, -0.05, 0.17], [0.27, 0.19, 0.045], 7);
@@ -85,6 +85,51 @@ export function createFishModel(speciesId: FishSpeciesId, weightKg: number): THR
     addFin(fish, '#e8a744', [-0.08, 0.32, 0], [1.35, 0.44, 0.75]);
     addFin(fish, '#e8a744', [0.12, -0.28, 0], [1.15, 0.38, 0.75], Math.PI);
     addSphere(fish, '#bb6e39', [0.05, 0.18, 0.19], [0.7, 0.018, 0.012], 6, '#d0a741');
+  } else if (speciesId === 'todak') {
+    addSphere(fish, '#608697', [-0.04, 0, 0], [0.88, 0.28, 0.18], 9);
+    addSphere(fish, '#c4d0c8', [0.02, -0.16, 0.025], [0.63, 0.13, 0.15], 8);
+    const bill = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.78, 5), mat('#a8b7b5'));
+    bill.rotation.z = -Math.PI / 2; bill.position.set(1.02, 0.08, 0); bill.castShadow = true; fish.add(bill);
+    addFin(fish, '#527483', [-0.78, 0, 0], [0.75, 0.7, 0.62], Math.PI / 2);
+    addFin(fish, '#527483', [-0.12, 0.25, 0], [1.2, 0.4, 0.55]);
+    addFin(fish, '#829b9d', [0.08, -0.21, 0], [0.75, 0.38, 0.55], Math.PI);
+    addSphere(fish, '#d8c278', [-0.04, 0.03, 0.184], [0.63, 0.025, 0.012], 6);
+  } else if (speciesId === 'buntal') {
+    addSphere(fish, '#d79a4f', [0, 0, 0], [0.48, 0.46, 0.35], 9);
+    addSphere(fish, '#f0d9a1', [0.02, -0.2, 0.14], [0.34, 0.23, 0.22], 8);
+    addFin(fish, '#d58c48', [-0.4, -0.03, 0], [0.48, 0.55, 0.5], Math.PI / 2);
+    addFin(fish, '#e0a453', [-0.05, 0.42, 0], [0.7, 0.35, 0.55]);
+    addFin(fish, '#e0a453', [0.04, -0.4, 0], [0.65, 0.3, 0.5], Math.PI);
+    for (let index = 0; index < 9; index++) {
+      const angle = index / 9 * Math.PI * 2;
+      addSphere(fish, '#765b45', [Math.cos(angle) * 0.25, Math.sin(angle) * 0.27 + 0.02, 0.31], [0.035, 0.035, 0.018], 5);
+    }
+    addSphere(fish, '#3a4235', [0.34, 0.11, 0.31], [0.09, 0.09, 0.045], 6);
+  } else {
+    const wingShape = new THREE.Shape();
+    wingShape.moveTo(0.68, 0);
+    wingShape.lineTo(0.12, 0.2);
+    wingShape.lineTo(-0.52, 0.55);
+    wingShape.lineTo(-0.38, 0.08);
+    wingShape.lineTo(-0.72, 0);
+    wingShape.lineTo(-0.38, -0.08);
+    wingShape.lineTo(-0.52, -0.55);
+    wingShape.lineTo(0.12, -0.2);
+    wingShape.closePath();
+    const discGeometry = new THREE.ExtrudeGeometry(wingShape, { depth: 0.12, bevelEnabled: false, curveSegments: 1 });
+    discGeometry.translate(0, 0, -0.06);
+    const disc = new THREE.Mesh(discGeometry, mat('#7e8e70'));
+    disc.castShadow = true; disc.receiveShadow = true; fish.add(disc);
+    const underside = new THREE.Mesh(new THREE.ShapeGeometry(wingShape, 1), mat('#d7cfb3'));
+    underside.position.z = -0.065; fish.add(underside);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.78, 5), mat('#64765f'));
+    tail.rotation.z = Math.PI / 2; tail.position.set(-0.88, 0, 0); tail.castShadow = true; fish.add(tail);
+    addSphere(fish, '#f6e8c9', [0.43, 0.095, 0.07], [0.07, 0.07, 0.035], 6);
+    addSphere(fish, '#26372f', [0.45, 0.095, 0.102], [0.032, 0.035, 0.018], 5);
+    addSphere(fish, '#f6e8c9', [0.43, -0.095, 0.07], [0.07, 0.07, 0.035], 6);
+    addSphere(fish, '#26372f', [0.45, -0.095, 0.102], [0.032, 0.035, 0.018], 5);
+    addSphere(fish, '#b0a98f', [-0.12, 0.12, 0.07], [0.16, 0.1, 0.025], 6);
+    addSphere(fish, '#b0a98f', [-0.12, -0.12, 0.07], [0.16, 0.1, 0.025], 6);
   }
 
   // Shared eye placement keeps the fish readable in the popup and tiny leaderboard previews.

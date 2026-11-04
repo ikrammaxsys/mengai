@@ -41,7 +41,7 @@ export const WEATHER_CONFIG = {
         cloudOpacity: 0, rainIntensity: 0, waterChop: 0, shadowRadius: 3,
       },
       fishing: {
-        speciesAffinity: { bluegill: 1.2, 'rainbow-trout': 1, 'largemouth-bass': 0.9, 'common-carp': 0.85, 'golden-koi': 0.8 },
+        speciesAffinity: { bluegill: 1.2, 'rainbow-trout': 1, 'largemouth-bass': 0.9, 'common-carp': 0.85, 'golden-koi': 0.8, todak: 0.7, buntal: 1, pari: 0.65 },
         biteWaitMultiplier: 1.08, reelGreenWidthMultiplier: 1,
       },
     },
@@ -53,7 +53,7 @@ export const WEATHER_CONFIG = {
         cloudOpacity: 0.82, rainIntensity: 0, waterChop: 0.002, shadowRadius: 5,
       },
       fishing: {
-        speciesAffinity: { bluegill: 1, 'rainbow-trout': 1.08, 'largemouth-bass': 1.08, 'common-carp': 1, 'golden-koi': 1 },
+        speciesAffinity: { bluegill: 1, 'rainbow-trout': 1.08, 'largemouth-bass': 1.08, 'common-carp': 1, 'golden-koi': 1, todak: 0.95, buntal: 1.05, pari: 0.9 },
         biteWaitMultiplier: 1, reelGreenWidthMultiplier: 1,
       },
     },
@@ -65,7 +65,7 @@ export const WEATHER_CONFIG = {
         cloudOpacity: 0.88, rainIntensity: 0.68, waterChop: 0.012, shadowRadius: 7,
       },
       fishing: {
-        speciesAffinity: { bluegill: 0.9, 'rainbow-trout': 1.1, 'largemouth-bass': 1.25, 'common-carp': 1.35, 'golden-koi': 1.3 },
+        speciesAffinity: { bluegill: 0.9, 'rainbow-trout': 1.1, 'largemouth-bass': 1.25, 'common-carp': 1.35, 'golden-koi': 1.3, todak: 1.25, buntal: 1.2, pari: 1.3 },
         biteWaitMultiplier: 0.9, reelGreenWidthMultiplier: 1,
       },
     },
@@ -77,7 +77,7 @@ export const WEATHER_CONFIG = {
         cloudOpacity: 0.25, rainIntensity: 0, waterChop: 0.001, shadowRadius: 6,
       },
       fishing: {
-        speciesAffinity: { bluegill: 0.95, 'rainbow-trout': 1.2, 'largemouth-bass': 1.12, 'common-carp': 1.05, 'golden-koi': 1 },
+        speciesAffinity: { bluegill: 0.95, 'rainbow-trout': 1.2, 'largemouth-bass': 1.12, 'common-carp': 1.05, 'golden-koi': 1, todak: 1.05, buntal: 0.95, pari: 1 },
         biteWaitMultiplier: 1.12, reelGreenWidthMultiplier: 1,
       },
     },
@@ -89,7 +89,7 @@ export const WEATHER_CONFIG = {
         cloudOpacity: 1, rainIntensity: 1, waterChop: 0.035, shadowRadius: 9,
       },
       fishing: {
-        speciesAffinity: { bluegill: 0.82, 'rainbow-trout': 1.08, 'largemouth-bass': 1.35, 'common-carp': 1.48, 'golden-koi': 1.42 },
+        speciesAffinity: { bluegill: 0.82, 'rainbow-trout': 1.08, 'largemouth-bass': 1.35, 'common-carp': 1.48, 'golden-koi': 1.42, todak: 1.5, buntal: 1.25, pari: 1.45 },
         biteWaitMultiplier: 0.86, reelGreenWidthMultiplier: 0.92,
       },
     },

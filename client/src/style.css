@@ -163,6 +163,9 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .player-name-box { display: inline-flex; align-items: center; justify-content: center; padding: 3px 8px; border: 1px solid rgba(255,255,255,.82); border-radius: 99px; background: rgba(239,242,236,.96); box-shadow: 0 2px 7px rgba(29,59,54,.16); text-align: center; }
 .player-name { text-align: center; }
 .leader-title { display: flex; align-items: center; align-self: center; justify-content: center; gap: 4px; width: max-content; margin: 0 auto 3px; padding: 3px 7px; border: 1px solid rgba(207,161,61,.42); border-radius: 99px; background: linear-gradient(110deg, #fff8df, #fffdf4); color: #9c7424; box-shadow: 0 2px 7px rgba(133,100,34,.16); font-size: 9px; text-align: center; }
+.crocodile-slayer-title { display: flex; align-items: center; align-self: center; justify-content: center; gap: 4px; width: max-content; margin: 0 auto 3px; padding: 3px 7px; border: 1px solid rgba(84,127,91,.34); border-radius: 99px; background: linear-gradient(110deg, #e8f2dc, #f6f5df); color: #42634a; box-shadow: 0 2px 7px rgba(38,75,49,.14); font-size: 9px; text-align: center; }
+.crocodile-slayer-title > span { font-size: 11px; line-height: 1; }
+.crocodile-slayer-title strong { font-size: 9px; letter-spacing: .015em; }
 .leader-title > span { font-size: 11px; line-height: 1; }
 .leader-title strong { font-size: 9px; letter-spacing: .015em; }
 .name-label.self .player-name::after { content: ' YOU'; color: #388f7c; font-size: 9px; }
@@ -333,6 +336,8 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .whats-new-section-title { margin: 0 0 10px; color: #21483a; font-size: 16px; font-weight: 700; }
 .whats-new-highlights { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .whats-new-highlight { display: flex; min-width: 0; min-height: 176px; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid #dce8dc; border-radius: 16px; animation: whats-new-highlight-in .2s ease-out both; animation-delay: var(--stagger-delay, 0ms); }
+.whats-new-highlight.arena { border-color: #e8ddc5; background: linear-gradient(145deg, #fbf6e9, #efe8d7); }
+.whats-new-highlight.voice { border-color: #d7e8df; background: linear-gradient(145deg, #eff8f2, #e1f1e8); }
 .whats-new-highlight.backpack { border-color: #d8e8d5; background: linear-gradient(145deg, #f4f8e9, #e7f2e4); }
 .whats-new-highlight.catch { border-color: #d8e9e4; background: linear-gradient(145deg, #edf8f5, #e1f1ed); }
 .whats-new-highlight.progress { border-color: #e8e0c9; background: linear-gradient(145deg, #fbf6e9, #f2edda); }

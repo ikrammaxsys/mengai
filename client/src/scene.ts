@@ -12,7 +12,7 @@ import { PHOTOBOOTH_CONFIG } from './photobooth';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; speaking: boolean };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
@@ -22,6 +22,7 @@ export class GameScene {
   readonly camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 150);
   readonly renderer: THREE.WebGLRenderer;
   private readonly avatars = new Map<string, Avatar>();
+  private readonly crocodileSlainCounts = new Map<string, number>();
   private readonly chatBubbles = new Map<string, ChatBubble[]>();
   private readonly eatBubbles = new Map<string, ChatBubble>();
   private readonly stones = new Map<string, StoneVisual>();
@@ -265,6 +266,8 @@ export class GameScene {
     hat.position.set(0, 1.86, 0.04); hat.castShadow = true; hat.visible = !local || !this.firstPersonView; group.add(hat);
     const crown = this.createCrown();
     crown.visible = false; group.add(crown);
+    const crocodileRobe = this.createCrocodileRobe();
+    crocodileRobe.visible = false; group.add(crocodileRobe);
     const face = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), this.material('#344b45'));
     face.position.set(0.11, 1.57, 0.31); face.visible = !local || !this.firstPersonView; group.add(face);
 
@@ -286,10 +289,13 @@ export class GameScene {
       if (catchId) this.heldFishClickHandler?.(player.id, catchId);
     });
     this.labels.appendChild(label);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown], hat, crown, speaking: false };
+    const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
+    this.crocodileSlainCounts.set(player.id, crocodilesSlain);
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe], hat, crown, crocodileRobe, speaking: false, crocodilesSlain };
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
+    this.updateCrocodileRobeAppearance();
     if (player.holdingFish) this.setHoldingFish(player.id, player.holdingFish);
     return avatar;
   }
@@ -303,6 +309,7 @@ export class GameScene {
       for (const part of local.bodyParts) part.visible = !enabled;
       this.updateLeaderAppearance(local);
     }
+    this.updateCrocodileRobeAppearance();
   }
 
   setPhotoboothMode(active: boolean): void {
@@ -314,12 +321,24 @@ export class GameScene {
         local.group.rotation.y = 0;
         for (const part of local.bodyParts) part.visible = true;
       }
+      this.updateCrocodileRobeAppearance();
     } else this.setFirstPersonView(this.firstPersonView);
   }
 
   setPhotoboothState(id: string, active: boolean): void {
     const avatar = this.avatars.get(id); if (!avatar) return;
     avatar.inPhotobooth = active;
+  }
+
+  setCrocodileSlainCount(id: string, count: number): void {
+    const total = Math.max(this.crocodileSlainCounts.get(id) ?? 0, Math.floor(count));
+    this.crocodileSlainCounts.set(id, total);
+    const avatar = this.avatars.get(id);
+    if (avatar && avatar.crocodilesSlain !== total) {
+      avatar.crocodilesSlain = total;
+      avatar.renderedLabelMarkup = '';
+    }
+    this.updateCrocodileRobeAppearance();
   }
 
   photoboothNamePoint(id: string): { x: number; y: number } | null {
@@ -350,6 +369,15 @@ export class GameScene {
     avatar.crown.visible = isLeader && visible;
   }
 
+  private updateCrocodileRobeAppearance(): void {
+    let highestCount = 0;
+    for (const count of this.crocodileSlainCounts.values()) highestCount = Math.max(highestCount, count);
+    for (const avatar of this.avatars.values()) {
+      const isTopSlayer = highestCount > 0 && avatar.crocodilesSlain === highestCount;
+      avatar.crocodileRobe.visible = isTopSlayer && (!avatar.local || !this.firstPersonView);
+    }
+  }
+
   private createCrown(): THREE.Group {
     const crown = new THREE.Group();
     const gold = this.material('#e5b13a', 0.72);
@@ -366,6 +394,21 @@ export class GameScene {
     const gem = new THREE.Mesh(new THREE.DodecahedronGeometry(0.055, 0), this.material('#e87962', 0.6));
     gem.position.set(0, 1.88, 0.29); crown.add(gem);
     return crown;
+  }
+
+  private createCrocodileRobe(): THREE.Group {
+    const robe = new THREE.Group();
+    const cloth = this.material('#315a48');
+    const gold = this.material('#d8b45c', 0.72);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.56, 1.3, 7, 1, true), cloth);
+    body.position.y = 0.68; body.castShadow = true; body.receiveShadow = true; robe.add(body);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.415, 0.035, 3, 7), gold);
+    collar.rotation.x = Math.PI / 2; collar.position.y = 1.28; collar.castShadow = true; robe.add(collar);
+    const hem = new THREE.Mesh(new THREE.TorusGeometry(0.54, 0.025, 3, 7), gold);
+    hem.rotation.x = Math.PI / 2; hem.position.y = 0.07; hem.castShadow = true; robe.add(hem);
+    const crest = new THREE.Mesh(new THREE.OctahedronGeometry(0.105, 0), gold);
+    crest.position.set(0, 1.03, 0.48); crest.scale.set(1, 1.2, 0.55); crest.castShadow = true; robe.add(crest);
+    return robe;
   }
 
   setHeldFishClickHandler(handler: (playerId: string, catchId: string) => void): void { this.heldFishClickHandler = handler; }
@@ -425,6 +468,13 @@ export class GameScene {
       } else if (serverTime === last.time) {
         last.x = player.x; last.z = player.z; last.facing = player.facing; last.moving = player.moving;
       }
+    }
+    const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
+    this.crocodileSlainCounts.set(player.id, crocodilesSlain);
+    if (avatar.crocodilesSlain !== crocodilesSlain) {
+      avatar.crocodilesSlain = crocodilesSlain;
+      avatar.renderedLabelMarkup = '';
+      this.updateCrocodileRobeAppearance();
     }
     avatar.fishing = player.fishing;
     this.setPhotoboothState(player.id, player.inPhotobooth ?? false);
@@ -674,8 +724,9 @@ export class GameScene {
     this.eatBubbles.delete(id);
     this.bonks.get(id)?.element.remove();
     this.bonks.delete(id);
+    this.updateCrocodileRobeAppearance();
   }
-  clearPlayers(): void { for (const id of [...this.avatars.keys()]) this.remove(id); this.localId = ''; }
+  clearPlayers(): void { for (const id of [...this.avatars.keys()]) this.remove(id); this.localId = ''; this.crocodileSlainCounts.clear(); this.updateCrocodileRobeAppearance(); }
   getPosition(): THREE.Vector3 { const avatar = this.avatars.get(this.localId); return avatar?.group.position ?? new THREE.Vector3(); }
   setPosition(x: number, z: number): void { const avatar = this.avatars.get(this.localId); if (avatar) { avatar.group.position.x = x; avatar.group.position.z = z; } }
   setLocalMotion(x: number, z: number, rotY: number): void {
@@ -876,6 +927,7 @@ export class GameScene {
       // Rebuild label contents only when the player's visible state changes, not on every animation frame.
       const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
       const leaderTitle = isLeader ? '<span class="leader-title"><span aria-hidden="true">👑</span><strong>Kapla Mengai</strong></span>' : '';
+      const crocodileSlayerTitle = avatar.crocodilesSlain > 0 ? `<span class="crocodile-slayer-title" title="Crocodile slayer"><span aria-hidden="true">🐊</span><strong>Penghantam Boya x${avatar.crocodilesSlain}</strong></span>` : '';
       const fish = avatar.holdingFish;
       const fishSpecies = fish ? FISH_CONFIG.species.find((entry) => entry.id === fish.species) : undefined;
       const fishChip = fish && fishSpecies
@@ -883,7 +935,7 @@ export class GameScene {
         : '';
       const photoMark = avatar.inPhotobooth ? '<span class="photo-camera-mark" aria-label="In photobooth">📸</span>' : '';
       const voiceMark = '<span class="voice-speaking-mark" title="Speaking" aria-label="Speaking">🎙</span>';
-      const labelMarkup = `${leaderTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
+      const labelMarkup = `${leaderTitle}${crocodileSlayerTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
       if (avatar.renderedLabelMarkup !== labelMarkup) {
         avatar.label.innerHTML = labelMarkup;
         avatar.renderedLabelMarkup = labelMarkup;
