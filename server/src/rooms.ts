@@ -6,7 +6,7 @@ import { createChickenFlock } from './chickens.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
 
 const COLORS = ['#f07853', '#5c9ee8', '#e6b84b', '#a978d1', '#4cb89b', '#e37eae', '#7eb653', '#e08a43'];
-export const RESUME_GRACE_MS = 10_000;
+export const RESUME_GRACE_MS = 20_000;
 
 export class Rooms {
   private readonly rooms = new Map<string, Room>();

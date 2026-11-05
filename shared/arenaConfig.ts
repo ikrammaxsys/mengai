@@ -17,6 +17,16 @@ export const ARENA_CONFIG = {
   monsterRadius: 1.8,
   monsterMoveSpeed: 1.45,
   monsterAttackCooldownMs: 850,
+  newSkills: {
+    tailSmash: {
+      damage: 18, radius: 3.8, warningMs: 1200, recoveryMs: 1500, cooldownMs: 12000,
+      knockback: 3.2, stoneFlightMs: 700, scatterRadiusMin: 5, scatterRadiusMax: 10,
+    },
+    burrow: {
+      damage: 20, radius: 3.2, diveMs: 800, undergroundMs: 3200, emergeWarningMs: 1000,
+      recoveryMs: 2000, cooldownMs: 15000, speed: 2.4, knockback: 3.8, bonusStoneDamage: 1.5,
+    },
+  },
   playerRespawnDelayMs: 3000,
   monsterDeathDurationMs: 1400,
   tickIntervalMs: 100,
@@ -24,13 +34,15 @@ export const ARENA_CONFIG = {
     bite: { damage: 15, range: 2, windupMs: 550, cooldownMs: 2400 },
     tailSweep: { damage: 20, range: 4.1, warningMs: 1000, cooldownMs: 5600 },
     lunge: { damage: 25, range: 12, windupMs: 1000, chargeMs: 650, speed: 11, hitRadius: 1.25, cooldownMs: 7600 },
+    tailSmash: { damage: 18, range: 0, warningMs: 1200, cooldownMs: 12000 },
+    burrow: { damage: 20, range: 0, windupMs: 800, cooldownMs: 15000 },
   },
 } as const;
 
 export type ArenaState = 'active' | 'victory' | 'defeat';
 export type MonsterState = 'idle' | 'chase' | 'attack' | 'cooldown' | 'dead';
 export type MonsterSkill = keyof typeof ARENA_CONFIG.attacks;
-export type MonsterAttackPhase = 'windup' | 'charge';
+export type MonsterAttackPhase = 'windup' | 'charge' | 'dive' | 'underground' | 'telegraph' | 'recovery';
 
 export interface ArenaParticipantSnapshot {
   playerId: string;
@@ -55,6 +67,14 @@ export interface ArenaAttackSnapshot {
   directionX: number;
   directionZ: number;
   radius: number;
+  targetX?: number;
+  targetZ?: number;
+}
+
+export interface ArenaStoneSnapshot {
+  id: string;
+  x: number;
+  z: number;
 }
 
 export interface ArenaMonsterSnapshot {
@@ -87,6 +107,7 @@ export interface ArenaSnapshot {
   players: ArenaParticipantSnapshot[];
   monster: ArenaMonsterSnapshot;
   stonePile: { x: number; z: number; count: number; maxCount: number; nextRefillAt: number };
+  scatteredStones: ArenaStoneSnapshot[];
   projectiles: ArenaProjectileSnapshot[];
   exitPortal: { x: number; z: number; useRadius: number };
   respawnAt: number | null;

@@ -200,7 +200,7 @@ type Handlers = {
   arenaPartyInvite: (invitation: { partyId: string; leaderId: string; leaderName: string }) => void;
   arenaPartyClosed: (message: { partyId: string; reason: string }) => void;
   monsterHit: (message: { damage: number; hp: number; maxHp: number }) => void;
-  playerDamaged: (message: { playerId: string; damage: number; hp: number; maxHp: number; skill: 'bite' | 'tailSweep' | 'lunge' }) => void;
+  playerDamaged: (message: { playerId: string; damage: number; hp: number; maxHp: number; skill: 'bite' | 'tailSweep' | 'lunge' | 'tailSmash' | 'burrow' }) => void;
   monsterDied: () => void;
   playerDied: (respawnAt: number) => void;
   portalExited: (respawned: boolean) => void;
@@ -227,7 +227,7 @@ type Handlers = {
   theaterSignal: (signal: TheaterSignal) => void;
   theaterError: (message: string) => void;
   seatState: (occupancy: Record<string, string>) => void;
-  disconnected: () => void;
+  disconnected: (details: { code: number; reason: string; wasClean: boolean }) => void;
 };
 
 export class Network {
@@ -271,9 +271,13 @@ export class Network {
       }, 2500);
     });
     socket.addEventListener('message', (event) => this.scheduleReceive(String(event.data)));
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
+      if (this.socket !== socket) return;
       window.clearInterval(this.pingTimer);
-      if (!this.intentionalClose) this.handlers.disconnected();
+      this.pendingPings.clear();
+      if (!this.intentionalClose) {
+        this.handlers.disconnected({ code: event.code, reason: event.reason, wasClean: event.wasClean });
+      }
     });
     socket.addEventListener('error', () => { if (socket.readyState === WebSocket.CONNECTING) socket.close(); });
   }

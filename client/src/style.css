@@ -64,6 +64,8 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .view-toggle:hover { background: #fff; transform: translateY(-1px); }
 .connection-dot { background: #54bd91; box-shadow: 0 0 0 3px rgba(84,189,145,.13); }
 .connection-dot.offline { background: #d66d62; box-shadow: 0 0 0 3px rgba(214,109,98,.13); }
+.connection-dot.reconnecting { background: #d6a64f; box-shadow: 0 0 0 3px rgba(214,166,79,.16); animation: connection-pulse 1s ease-in-out infinite; }
+@keyframes connection-pulse { 50% { opacity: .45; } }
 .controls { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 10px 15px; border-radius: 13px; background: rgba(255,255,255,.9); box-shadow: 0 5px 20px rgba(47,86,81,.08); color: #6c817b; font-size: 12px; display: flex; align-items: center; gap: 5px; }
 .key { display: inline-flex; justify-content: center; align-items: center; min-width: 20px; height: 21px; border: 1px solid #d8e4e0; border-bottom-width: 2px; border-radius: 5px; background: white; font-size: 10px; font-weight: 700; color: #55736a; }
 .key.wide { min-width: 47px; font-size: 9px; margin-left: 2px; }
@@ -646,16 +648,17 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .jukebox-header p { margin: 5px 0 0 42px; color: #61796e; font-size: 12px; }
 .jukebox-columns { display: grid; grid-template-columns: minmax(0, 58fr) minmax(300px, 42fr); gap: 20px; min-height: 0; }
 .jukebox-search-column { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; }
-.jukebox-search-form { --jukebox-search-control-height: 44px; display: flex; align-items: stretch; gap: 9px; }
+.jukebox-search-form { --jukebox-search-control-height: 38px; display: flex; align-items: stretch; gap: 9px; }
 .jukebox-search-box { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; height: var(--jukebox-search-control-height); margin: 0; padding: 0 12px; border: 1px solid #dce7e4; border-radius: 13px; background: #fbfdfc; color: #5b8574; transition: border-color .15s, box-shadow .15s; }
 .jukebox-search-box:focus-within { border-color: #58a996; box-shadow: 0 0 0 3px rgba(88,169,150,.16); }
 .jukebox-search-box > span { font-size: 23px; line-height: 1; }
-.jukebox-search-box input { flex: 1; width: 100%; min-width: 0; height: 40px; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; font-size: 12px; }
+.jukebox-search-box input { flex: 1; width: 100%; min-width: 0; height: 34px; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; font-size: 12px; }
 .jukebox-search-box input:focus { border: 0; box-shadow: none; }
 .jukebox-search-box input::placeholder { color: #83958c; }
 .jukebox-clear { flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: #edf4ef; color: #547368; box-shadow: none; font-size: 20px; line-height: 1; text-align: center; }
 .jukebox-clear:hover { background: #e1eee6; transform: none; }
 .jukebox-search-form > button { display: inline-flex; flex: 0 0 100px; align-items: center; justify-content: center; gap: 8px; height: var(--jukebox-search-control-height); min-height: var(--jukebox-search-control-height); padding: 0 14px; border-radius: 13px; font-size: 12px; text-align: center; }
+#jukebox-search-button { width: 100%; height: 20px; min-height: 20px; max-height: 40px; align-self: center; }
 .jukebox-search-form > button:disabled { cursor: progress; }
 .jukebox-spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.45); border-top-color: white; border-radius: 50%; animation: jukebox-spin .65s linear infinite; }
 .jukebox-status { display: flex; align-items: center; gap: 8px; min-height: 38px; margin: 0; padding: 8px 11px; border-radius: 10px; background: #f2f7f3; color: #4e675b; font-size: 11px; line-height: 1.45; }

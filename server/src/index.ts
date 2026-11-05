@@ -99,6 +99,7 @@ const inventoryStore: InventoryStore = new InMemoryInventoryStore();
 const persistentData: PersistentGameDataStore = new JsonGameDataStore();
 const memberships = new Map<WebSocket, { roomId: string; playerId: string }>();
 const aliveSockets = new WeakSet<WebSocket>();
+const missedHeartbeats = new WeakMap<WebSocket, number>();
 const isDev = process.env.NODE_ENV !== 'production' && process.env.FISH_ROLL_LOG !== '0';
 const YOUTUBE_CACHE_MS = 2 * 60_000;
 const YOUTUBE_RATE_WINDOW_MS = 60_000;
@@ -815,6 +816,9 @@ function publishArenaEvents(room: Room, arena: ArenaInstance, events: ArenaEvent
         const score = { playerId: owner.id, playerName: owner.name, count: owner.crocodilesSlain };
         room.crocodileScores.set(owner.id, score);
         broadcast(room, { type: 'crocodile_score', ...score });
+        void persistentData.recordCrocodileKill(room.id, owner.name).catch((error: unknown) => {
+          console.error('[game-data] Failed to save crocodile kill:', error);
+        });
       }
       for (const participant of participants) send(participant.socket, event);
     } else for (const participant of participants) send(participant.socket, event);
@@ -945,7 +949,10 @@ wss.on('connection', (socket) => {
       room.jukebox.emptySince = null;
       memberships.set(socket, { roomId, playerId: player.id });
       persistentData.hydrateRoom(room);
-      inventoryStore.restore(player.id, persistentData.playerFish(roomId, player.name));
+      const fishData = persistentData.playerFish(roomId, player.name);
+      player.crocodilesSlain = fishData.crocodilesSlain;
+      room.crocodileScores.set(player.id, { playerId: player.id, playerName: player.name, count: player.crocodilesSlain });
+      inventoryStore.restore(player.id, fishData);
       const inventory = inventoryStore.list(player.id);
       if (player.resumeHoldingCatchId) {
         const restored = inventory.find((item) => item.catchId === player.resumeHoldingCatchId);
@@ -1593,8 +1600,15 @@ wss.on('connection', (socket) => {
     }
   });
 
-  socket.on('close', () => {
+  socket.on('error', (error) => {
     const membership = memberships.get(socket);
+    console.error(`[ws] socket error${membership ? ` room=${membership.roomId} player=${membership.playerId}` : ''}:`, error);
+  });
+
+  socket.on('close', (code, reason) => {
+    const membership = memberships.get(socket);
+    const closeReason = reason.toString('utf8').trim();
+    console.log(`[ws] closed code=${code} reason=${closeReason || 'none'}${membership ? ` room=${membership.roomId} player=${membership.playerId}` : ''}`);
     if (!membership) return;
     memberships.delete(socket);
     const departing = rooms.getPlayer(membership.roomId, membership.playerId);
@@ -1643,7 +1657,19 @@ wss.on('connection', (socket) => {
 setInterval(() => {
   for (const socket of wss.clients) {
     if (socket.readyState !== WebSocket.OPEN) continue;
-    if (!aliveSockets.has(socket)) { socket.terminate(); continue; }
+    if (!aliveSockets.has(socket)) {
+      const missed = (missedHeartbeats.get(socket) ?? 0) + 1;
+      if (missed >= 2) {
+        const membership = memberships.get(socket);
+        console.warn(`[ws] terminating unresponsive socket after ${missed} missed heartbeats${membership ? ` room=${membership.roomId} player=${membership.playerId}` : ''}`);
+        socket.terminate();
+        missedHeartbeats.delete(socket);
+        continue;
+      }
+      missedHeartbeats.set(socket, missed);
+    } else {
+      missedHeartbeats.delete(socket);
+    }
     aliveSockets.delete(socket);
     socket.ping();
   }
