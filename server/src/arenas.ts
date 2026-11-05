@@ -20,6 +20,7 @@ interface Crocodile {
   cooldownUntil: number;
   skillReadyAt: Record<MonsterSkill, number>;
   chargeHitIds: Set<string>;
+  lastSkill: MonsterSkill | null;
 }
 
 interface ArenaProjectile extends ArenaProjectileSnapshot {
@@ -32,6 +33,7 @@ export interface ArenaInstance {
   monster: Crocodile;
   state: ArenaSnapshot['state'];
   stonePileCount: number;
+  scatteredStones: { id: string; x: number; z: number }[];
   nextStoneRefillAt: number;
   projectiles: ArenaProjectile[];
   respawnAt: number | null;
@@ -45,8 +47,6 @@ export type ArenaEvent =
   | { type: 'monsterDied'; hp: 0 }
   | { type: 'playerDied'; hp: 0; respawnAt: number };
 
-const SKILLS: MonsterSkill[] = ['bite', 'tailSweep', 'lunge'];
-
 export function createCrocodileArena(player: Player, now: number): ArenaInstance {
   return {
     id: randomUUID(),
@@ -56,10 +56,11 @@ export function createCrocodileArena(player: Player, now: number): ArenaInstance
       x: 7, z: 0, facing: -Math.PI / 2,
       hp: ARENA_CONFIG.monsterMaxHp, maxHp: ARENA_CONFIG.monsterMaxHp,
       state: 'chase', attack: null, cooldownUntil: 0,
-      skillReadyAt: { bite: now, tailSweep: now, lunge: now }, chargeHitIds: new Set(),
+      skillReadyAt: { bite: now, tailSweep: now, lunge: now, tailSmash: now, burrow: now }, chargeHitIds: new Set(), lastSkill: null,
     },
     state: 'active',
     stonePileCount: ARENA_CONFIG.stonePile.maxCount,
+    scatteredStones: [],
     nextStoneRefillAt: now + ARENA_CONFIG.stonePile.refillEveryMs,
     projectiles: [],
     respawnAt: null,
@@ -91,6 +92,8 @@ export function addArenaPlayer(arena: ArenaInstance, player: Player, now: number
 }
 
 export function removeArenaPlayer(arena: ArenaInstance, playerId: string): void {
+  const player = arena.players.find((entry) => entry.playerId === playerId);
+  if (player) arena.stonePileCount = Math.min(ARENA_CONFIG.stonePile.maxCount, arena.stonePileCount + player.stones);
   arena.players = arena.players.filter((entry) => entry.playerId !== playerId);
   arena.monster.chargeHitIds.delete(playerId);
 }
@@ -105,8 +108,10 @@ export function restartCrocodileArena(arena: ArenaInstance, now: number): void {
   arena.monster.cooldownUntil = 0;
   arena.monster.skillReadyAt = { bite: now, tailSweep: now, lunge: now };
   arena.monster.chargeHitIds.clear();
+  arena.monster.lastSkill = null;
   arena.state = 'active';
   arena.stonePileCount = ARENA_CONFIG.stonePile.maxCount;
+  arena.scatteredStones = [];
   arena.nextStoneRefillAt = now + ARENA_CONFIG.stonePile.refillEveryMs;
   arena.projectiles = [];
   arena.respawnAt = null;
@@ -133,6 +138,7 @@ export function arenaSnapshot(arena: ArenaInstance, serverTime: number): ArenaSn
     players: arena.players.map(({ playerId, name, color, x, z, facing, hp, maxHp, stones }) => ({ playerId, name, color, x, z, facing, hp, maxHp, stones })),
     monster: { id, kind, name, x, z, facing, hp, maxHp, state, attack: attack ? { ...attack } : null },
     stonePile: { x: ARENA_CONFIG.stonePile.x, z: ARENA_CONFIG.stonePile.z, count: arena.stonePileCount, maxCount: ARENA_CONFIG.stonePile.maxCount, nextRefillAt: arena.nextStoneRefillAt },
+    scatteredStones: arena.scatteredStones.map((stone) => ({ ...stone })),
     projectiles: arena.projectiles.map(({ id, startX, startZ, endX, endZ, startedAt, durationMs }) => ({ id, startX, startZ, endX, endZ, startedAt, durationMs })),
     exitPortal: ARENA_CONFIG.exitPortal,
     respawnAt: arena.respawnAt,
@@ -161,6 +167,13 @@ export function arenaStoneAction(arena: ArenaInstance, playerId: string, now: nu
   const player = arena.players.find((entry) => entry.playerId === playerId);
   if (!player) return 'inactive';
   const pileDistance = Math.hypot(player.x - ARENA_CONFIG.stonePile.x, player.z - ARENA_CONFIG.stonePile.z);
+  const scatteredIndex = arena.scatteredStones.findIndex((stone) => Math.hypot(player.x - stone.x, player.z - stone.z) <= ARENA_CONFIG.stonePile.useRadius);
+  if (scatteredIndex >= 0) {
+    if (player.stones >= ARENA_CONFIG.maxCarriedStones) return 'full';
+    player.stones += 1;
+    arena.scatteredStones.splice(scatteredIndex, 1);
+    return 'picked';
+  }
   if (pileDistance <= ARENA_CONFIG.stonePile.useRadius) {
     if (player.stones >= ARENA_CONFIG.maxCarriedStones) return 'full';
     if (arena.stonePileCount <= 0) return 'empty';
@@ -210,24 +223,68 @@ function finishMonsterAttack(monster: Crocodile, now: number): void {
   monster.cooldownUntil = now + ARENA_CONFIG.monsterAttackCooldownMs;
 }
 
-function beginMonsterAttack(monster: Crocodile, player: ArenaParticipant, skill: MonsterSkill, now: number): void {
+function beginMonsterAttack(arena: ArenaInstance, player: ArenaParticipant, skill: MonsterSkill, now: number): void {
+  const monster = arena.monster;
   const dx = player.x - monster.x, dz = player.z - monster.z;
   const length = Math.hypot(dx, dz) || 1;
   const directionX = dx / length, directionZ = dz / length;
   monster.facing = Math.atan2(directionX, directionZ);
   const windupMs = skill === 'bite' ? ARENA_CONFIG.attacks.bite.windupMs
     : skill === 'tailSweep' ? ARENA_CONFIG.attacks.tailSweep.warningMs
-      : ARENA_CONFIG.attacks.lunge.windupMs;
+      : skill === 'lunge' ? ARENA_CONFIG.attacks.lunge.windupMs
+        : skill === 'tailSmash' ? ARENA_CONFIG.newSkills.tailSmash.warningMs
+          : ARENA_CONFIG.newSkills.burrow.diveMs;
   const cooldownMs = ARENA_CONFIG.attacks[skill].cooldownMs;
   monster.attack = {
-    skill, phase: 'windup', startedAt: now, resolveAt: now + windupMs,
+    skill, phase: skill === 'burrow' ? 'dive' : 'windup', startedAt: now, resolveAt: now + windupMs,
     endsAt: now + windupMs + (skill === 'lunge' ? ARENA_CONFIG.attacks.lunge.chargeMs : 0),
     originX: monster.x, originZ: monster.z, directionX, directionZ,
-    radius: skill === 'bite' ? ARENA_CONFIG.attacks.bite.range : skill === 'tailSweep' ? ARENA_CONFIG.attacks.tailSweep.range : ARENA_CONFIG.attacks.lunge.hitRadius,
+    radius: skill === 'bite' ? ARENA_CONFIG.attacks.bite.range
+      : skill === 'tailSweep' ? ARENA_CONFIG.attacks.tailSweep.range
+        : skill === 'lunge' ? ARENA_CONFIG.attacks.lunge.hitRadius
+          : skill === 'tailSmash' ? ARENA_CONFIG.newSkills.tailSmash.radius : ARENA_CONFIG.newSkills.burrow.radius,
+    targetX: skill === 'tailSmash' ? ARENA_CONFIG.stonePile.x : undefined,
+    targetZ: skill === 'tailSmash' ? ARENA_CONFIG.stonePile.z : undefined,
   };
   monster.skillReadyAt[skill] = now + cooldownMs;
   monster.chargeHitIds.clear();
   monster.state = 'attack';
+  monster.lastSkill = skill;
+}
+
+function knockback(player: ArenaParticipant, originX: number, originZ: number, distance: number): void {
+  const dx = player.x - originX, dz = player.z - originZ;
+  const length = Math.hypot(dx, dz) || 1;
+  const scale = distance / length;
+  const x = player.x + dx * scale, z = player.z + dz * scale;
+  const maxRadius = ARENA_CONFIG.platformRadius - 1;
+  const radius = Math.hypot(x, z);
+  player.x = radius > maxRadius ? x * maxRadius / radius : x;
+  player.z = radius > maxRadius ? z * maxRadius / radius : z;
+}
+
+function scatterPile(arena: ArenaInstance, now: number): void {
+  const count = arena.stonePileCount;
+  arena.stonePileCount = 0;
+  for (let index = 0; index < count; index++) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = ARENA_CONFIG.newSkills.tailSmash.scatterRadiusMin +
+      Math.random() * (ARENA_CONFIG.newSkills.tailSmash.scatterRadiusMax - ARENA_CONFIG.newSkills.tailSmash.scatterRadiusMin);
+    const maxRadius = ARENA_CONFIG.platformRadius - 1.5;
+    const x = Math.cos(angle) * Math.min(distance, maxRadius);
+    const z = Math.sin(angle) * Math.min(distance, maxRadius);
+    if (Math.hypot(x - arena.monster.x, z - arena.monster.z) < 3) {
+      arena.scatteredStones.push({ id: `arena-stone-${now}-${index}`, x: Math.cos(angle) * 5, z: Math.sin(angle) * 5 });
+    } else arena.scatteredStones.push({ id: `arena-stone-${now}-${index}`, x, z });
+  }
+}
+
+function chooseSkill(arena: ArenaInstance, player: ArenaParticipant, now: number): MonsterSkill | null {
+  const distance = Math.hypot(player.x - arena.monster.x, player.z - arena.monster.z);
+  const available: MonsterSkill[] = [];
+  if (arena.stonePileCount >= 2 && arena.monster.lastSkill !== 'tailSmash' && now >= arena.monster.skillReadyAt.tailSmash) available.push('tailSmash');
+  if (arena.monster.lastSkill !== 'burrow' && now >= arena.monster.skillReadyAt.burrow && (distance > 6 || Math.random() < 0.3)) available.push('burrow');
+  return available[Math.floor(Math.random() * available.length)] ?? null;
 }
 
 export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
@@ -257,9 +314,13 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
     const eased = 1 - (1 - progress) * (1 - progress);
     const x = projectile.startX + (projectile.endX - projectile.startX) * eased;
     const z = projectile.startZ + (projectile.endZ - projectile.startZ) * eased;
-    if (monster.state !== 'dead' && Math.hypot(x - monster.x, z - monster.z) <= ARENA_CONFIG.stoneHitRadius) {
-      monster.hp = Math.max(0, monster.hp - ARENA_CONFIG.stoneDamage);
-      events.push({ type: 'monsterHit', damage: ARENA_CONFIG.stoneDamage, hp: monster.hp, maxHp: monster.maxHp });
+    const burrowed = monster.attack?.skill === 'burrow' &&
+      ['dive', 'underground', 'telegraph'].includes(monster.attack.phase);
+    if (!burrowed && monster.state !== 'dead' && Math.hypot(x - monster.x, z - monster.z) <= ARENA_CONFIG.stoneHitRadius) {
+      const damage = monster.attack?.skill === 'burrow' && monster.attack.phase === 'recovery'
+        ? ARENA_CONFIG.stoneDamage * ARENA_CONFIG.newSkills.burrow.bonusStoneDamage : ARENA_CONFIG.stoneDamage;
+      monster.hp = Math.max(0, monster.hp - damage);
+      events.push({ type: 'monsterHit', damage, hp: monster.hp, maxHp: monster.maxHp });
       arena.projectiles.splice(index, 1);
       if (monster.hp === 0) {
         monster.state = 'dead';
@@ -273,6 +334,65 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
 
   if (monster.state === 'attack' && monster.attack) {
     const attack = monster.attack;
+    if (attack.skill === 'tailSmash') {
+      if (attack.phase === 'windup' && now >= attack.resolveAt) {
+        scatterPile(arena, now);
+        for (const target of arena.players) {
+          if (target.hp > 0 && Math.hypot(target.x - ARENA_CONFIG.stonePile.x, target.z - ARENA_CONFIG.stonePile.z) <= attack.radius + ARENA_CONFIG.playerCollisionRadius) {
+            damagePlayer(arena, target, ARENA_CONFIG.newSkills.tailSmash.damage, 'tailSmash', now, events);
+            knockback(target, ARENA_CONFIG.stonePile.x, ARENA_CONFIG.stonePile.z, ARENA_CONFIG.newSkills.tailSmash.knockback);
+          }
+        }
+        if (arena.state !== 'active') return events;
+        attack.phase = 'recovery';
+        attack.resolveAt = now;
+        attack.endsAt = now + ARENA_CONFIG.newSkills.tailSmash.recoveryMs;
+      } else if (attack.phase === 'recovery' && now >= attack.endsAt) finishMonsterAttack(monster, now);
+      return events;
+    }
+    if (attack.skill === 'burrow') {
+      if (attack.phase === 'dive' && now >= attack.resolveAt) {
+        attack.phase = 'underground';
+        attack.resolveAt = now + ARENA_CONFIG.newSkills.burrow.undergroundMs;
+        return events;
+      }
+      if (attack.phase === 'underground') {
+        const target = nearestLivingPlayer(arena) ?? player;
+        const desiredX = target.x + Math.sin(now * 0.001) * 1.8;
+        const desiredZ = target.z + Math.cos(now * 0.0013) * 1.8;
+        const dx = desiredX - monster.x, dz = desiredZ - monster.z;
+        const length = Math.hypot(dx, dz) || 1;
+        const step = Math.min(ARENA_CONFIG.newSkills.burrow.speed * deltaSeconds, length);
+        monster.x += dx / length * step;
+        monster.z += dz / length * step;
+        monster.facing = Math.atan2(dx, dz);
+        attack.targetX = monster.x;
+        attack.targetZ = monster.z;
+        if (now >= attack.resolveAt) {
+          attack.phase = 'telegraph';
+          attack.startedAt = now;
+          attack.resolveAt = now + ARENA_CONFIG.newSkills.burrow.emergeWarningMs;
+          attack.endsAt = attack.resolveAt + ARENA_CONFIG.newSkills.burrow.recoveryMs;
+          attack.targetX = monster.x;
+          attack.targetZ = monster.z;
+        }
+        return events;
+      }
+      if (attack.phase === 'telegraph' && now >= attack.resolveAt) {
+        monster.x = attack.targetX ?? monster.x;
+        monster.z = attack.targetZ ?? monster.z;
+        for (const target of arena.players) {
+          if (target.hp > 0 && Math.hypot(target.x - monster.x, target.z - monster.z) <= attack.radius + ARENA_CONFIG.playerCollisionRadius) {
+            damagePlayer(arena, target, ARENA_CONFIG.newSkills.burrow.damage, 'burrow', now, events);
+            knockback(target, monster.x, monster.z, ARENA_CONFIG.newSkills.burrow.knockback);
+          }
+        }
+        if (arena.state !== 'active') return events;
+        attack.phase = 'recovery';
+        attack.resolveAt = now;
+      } else if (attack.phase === 'recovery' && now >= attack.endsAt) finishMonsterAttack(monster, now);
+      return events;
+    }
     if (attack.skill === 'lunge' && attack.phase === 'windup' && now >= attack.resolveAt) {
       attack.phase = 'charge';
       attack.resolveAt = now;
@@ -326,9 +446,13 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
     monster.x += dx / (distance || 1) * moveStep;
     monster.z += dz / (distance || 1) * moveStep;
   }
-  if (distance <= ARENA_CONFIG.attacks.bite.range && now >= monster.skillReadyAt.bite) beginMonsterAttack(monster, player, 'bite', now);
-  else if (distance <= ARENA_CONFIG.attacks.tailSweep.range && now >= monster.skillReadyAt.tailSweep) beginMonsterAttack(monster, player, 'tailSweep', now);
-  else if (distance <= ARENA_CONFIG.attacks.lunge.range && distance > ARENA_CONFIG.attacks.bite.range && now >= monster.skillReadyAt.lunge) beginMonsterAttack(monster, player, 'lunge', now);
+  if (distance <= ARENA_CONFIG.attacks.bite.range && now >= monster.skillReadyAt.bite)   beginMonsterAttack(arena, player, 'bite', now);
+  else if (distance <= ARENA_CONFIG.attacks.tailSweep.range && now >= monster.skillReadyAt.tailSweep) beginMonsterAttack(arena, player, 'tailSweep', now);
+  else if (distance <= ARENA_CONFIG.attacks.lunge.range && distance > ARENA_CONFIG.attacks.bite.range && now >= monster.skillReadyAt.lunge) beginMonsterAttack(arena, player, 'lunge', now);
+  else if (now >= Math.min(monster.skillReadyAt.tailSmash, monster.skillReadyAt.burrow)) {
+    const skill = chooseSkill(arena, player, now);
+    if (skill) beginMonsterAttack(arena, player, skill, now);
+  }
   else if (distance <= ARENA_CONFIG.attacks.bite.range && now < monster.skillReadyAt.bite) monster.state = 'cooldown';
   return events;
 }

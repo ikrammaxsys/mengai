@@ -231,6 +231,10 @@ let activeBigCatch: BigCatchEvent | null = null;
 let bigCatchTimer = 0;
 const fishViewer = new FishViewer(fishViewerRoot, () => currentLeaderboard);
 let joined = false;
+let reconnectTimer = 0;
+let reconnectDeadline = 0;
+let reconnectAttempt = 0;
+let reconnecting = false;
 let arenaMode = false;
 let portalPromptDismissedUntilExit = false;
 let lastArenaMoveAt = 0;
@@ -787,8 +791,32 @@ function observeServerTime(serverTime: number): void {
 
 function setConnected(value: boolean): void {
   connectionDot.classList.toggle('offline', !value);
+  connectionDot.classList.toggle('reconnecting', !value && reconnecting);
   connectionLabel.textContent = value ? 'Connected' : 'Disconnected';
   document.querySelector<HTMLButtonElement>('#connection-control')!.setAttribute('aria-label', value ? 'Connected' : 'Disconnected');
+}
+
+function scheduleReconnect(): void {
+  window.clearTimeout(reconnectTimer);
+  if (!reconnecting) return;
+  const remainingMs = reconnectDeadline - Date.now();
+  if (remainingMs <= 0) {
+    reconnecting = false;
+    setConnected(false);
+    joinScreen.classList.remove('hidden');
+    hud.classList.add('hidden');
+    formError.textContent = 'Could not reconnect within 20 seconds. Please join again.';
+    joinButton.disabled = false;
+    joinButton.innerHTML = 'Rejoin the pond <span aria-hidden="true">→</span>';
+    return;
+  }
+  const delayMs = Math.min(2000 + reconnectAttempt * 500, remainingMs);
+  reconnectTimer = window.setTimeout(() => {
+    if (!reconnecting) return;
+    reconnectAttempt += 1;
+    connectionLabel.textContent = `Reconnecting… (${Math.ceil((reconnectDeadline - Date.now()) / 1000)}s)`;
+    join(currentRoom, nameInput.value.trim(), true);
+  }, delayMs);
 }
 
 function updateVoiceButton(): void {
@@ -1297,12 +1325,18 @@ function makeCastTarget(): { x: number; z: number } | null {
   return { x: Math.cos(angle) * targetRadius, z: Math.sin(angle) * targetRadius };
 }
 
-function join(room: string, name: string): void {
-  formError.textContent = '';
+function join(room: string, name: string, isReconnectAttempt = false): void {
+  if (!isReconnectAttempt) {
+    reconnecting = false;
+    window.clearTimeout(reconnectTimer);
+    formError.textContent = '';
+  }
   joinButton.disabled = true;
-  joinButton.innerHTML = 'Joining…';
+  joinButton.innerHTML = isReconnectAttempt ? 'Reconnecting…' : 'Joining…';
   network = new Network({
     joined: (message) => {
+      reconnecting = false;
+      window.clearTimeout(reconnectTimer);
       observeServerTime(message.serverTime);
       arenaMode = false;
       appRoot.classList.remove('in-arena');
@@ -1389,6 +1423,11 @@ function join(room: string, name: string): void {
       serverClockOffset = offsetMs; hasServerClockSample = true; scene.setServerClockOffset(offsetMs); jukebox.setClockOffset(offsetMs);
     },
     error: (message) => {
+      if (reconnecting) {
+        network.close();
+        scheduleReconnect();
+        return;
+      }
       joinButton.disabled = false;
       joinButton.innerHTML = 'Join the pond <span aria-hidden="true">→</span>';
       formError.textContent = message;
@@ -1478,7 +1517,11 @@ function join(room: string, name: string): void {
     monsterDied: () => arenaView.monsterDied(),
     playerDied: () => arenaView.playerDied(),
     portalExited: (respawned) => exitCrocodileArena(respawned),
-    disconnected: () => {
+    disconnected: (details) => {
+      if (reconnecting) {
+        scheduleReconnect();
+        return;
+      }
       joined = false;
       roomPlayers.clear();
       currentArenaParty = null;
@@ -1514,14 +1557,13 @@ function join(room: string, name: string): void {
       reelElement.classList.add('hidden');
       reelElement.classList.remove('is-ending', 'is-success', 'is-escaped', 'is-pulling');
       setConnected(false);
-      hud.classList.add('hidden');
-      joinScreen.classList.remove('hidden');
-      startRoomPolling();
-      document.querySelector('h1')!.innerHTML = 'Connection<br/><span>lost</span>';
-      document.querySelector('.intro')!.textContent = 'The pond connection dropped. Join again to get back to the water.';
-      joinButton.innerHTML = 'Rejoin the pond <span aria-hidden="true">→</span>';
-      joinButton.disabled = false;
-      formError.textContent = 'Disconnected. Your old spot has been released.';
+      reconnecting = true;
+      reconnectAttempt = 0;
+      reconnectDeadline = Date.now() + 10_000;
+      connectionLabel.textContent = 'Reconnecting…';
+      connectionDot.classList.add('reconnecting');
+      showToast('Connection lost. Reconnecting…');
+      scheduleReconnect();
     },
   });
   const resumeKey = `mengai:resume:${encodeURIComponent(room)}:${encodeURIComponent(name.toLocaleLowerCase())}`;

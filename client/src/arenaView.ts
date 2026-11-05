@@ -37,6 +37,7 @@ export class ArenaView {
   private lungeWarning!: THREE.Mesh;
   private readonly stonePile = new THREE.Group();
   private readonly pileStones: THREE.Mesh[] = [];
+  private readonly scatteredStoneMeshes = new Map<string, THREE.Mesh>();
   private readonly projectileMeshes = new Map<string, THREE.Mesh>();
   private readonly playerAvatars = new Map<string, ArenaAvatar>();
   private readonly partyHealthRows = new Map<string, PartyHealthRow>();
@@ -49,6 +50,7 @@ export class ArenaView {
   private monsterHitUntil = 0;
   private localHitUntil = 0;
   private localPlayerId = '';
+  private lastAttackKey = '';
 
   constructor(root: HTMLElement, callbacks: ArenaViewCallbacks) {
     this.root = root;
@@ -125,6 +127,12 @@ export class ArenaView {
       }
     }
     this.snapshot = snapshot;
+    const attack = snapshot.monster.attack;
+    const attackKey = attack ? `${attack.skill}:${attack.phase}:${attack.resolveAt}` : '';
+    if (attackKey && attackKey !== this.lastAttackKey) {
+      window.dispatchEvent(new CustomEvent('arena:crocodile-skill', { detail: { skill: attack.skill, phase: attack.phase } }));
+    }
+    this.lastAttackKey = attackKey;
     this.snapshots.push(snapshot);
     while (this.snapshots.length > 5) this.snapshots.shift();
     this.updateHud(snapshot);
@@ -180,7 +188,14 @@ export class ArenaView {
     const localParticipant = this.snapshot.players.find((entry) => entry.playerId === this.localPlayerId);
     const player = localParticipant ? this.predictedPlayer ?? localParticipant : null;
     if (!player) return;
-    const target = new THREE.Vector3(player.x - Math.sin(player.facing) * 8.5, 7.2, player.z - Math.cos(player.facing) * 8.5);
+    const attack = this.snapshot.monster.attack;
+    const impact = attack?.phase === 'recovery' && serverNow - attack.resolveAt < 360;
+    const shake = impact ? 0.14 : 0;
+    const target = new THREE.Vector3(
+      player.x - Math.sin(player.facing) * 8.5 + (Math.random() - 0.5) * shake,
+      7.2 + (Math.random() - 0.5) * shake,
+      player.z - Math.cos(player.facing) * 8.5 + (Math.random() - 0.5) * shake,
+    );
     const cameraDamping = 1 - Math.exp(-5.5 * Math.max(0, deltaSeconds));
     this.camera.position.lerp(target, cameraDamping);
     this.camera.lookAt(player.x, 1.0, player.z);
@@ -208,6 +223,24 @@ export class ArenaView {
     }
     this.monsterGroup.position.set(monsterPose.x, 0, monsterPose.z);
     this.monsterGroup.rotation.y = monsterPose.facing;
+    const burrowPhase = attack?.skill === 'burrow' ? attack.phase : null;
+    const attackElapsed = attack ? Math.max(0, serverNow - attack.startedAt) : 0;
+    const diveProgress = attack?.skill === 'burrow' && attack.phase === 'dive'
+      ? Math.min(1, attackElapsed / ARENA_CONFIG.newSkills.burrow.diveMs) : 0;
+    const emergeProgress = attack?.skill === 'burrow' && attack.phase === 'telegraph'
+      ? Math.min(1, Math.max(0, (serverNow - attack.startedAt) / ARENA_CONFIG.newSkills.burrow.emergeWarningMs)) : 0;
+    const smashProgress = attack?.skill === 'tailSmash' && attack.phase === 'windup'
+      ? Math.min(1, attackElapsed / ARENA_CONFIG.newSkills.tailSmash.warningMs) : 0;
+    const recoveryElapsed = attack?.phase === 'recovery' ? Math.max(0, serverNow - attack.resolveAt) : 0;
+    this.monsterGroup.visible = burrowPhase !== 'underground';
+    this.monsterGroup.position.y = attack?.skill === 'burrow' && burrowPhase === 'dive'
+      ? -0.65 * diveProgress
+      : attack?.skill === 'burrow' && burrowPhase === 'telegraph' ? 0.7 * emergeProgress : 0;
+    if (attack?.skill === 'tailSmash' && attack.phase === 'windup') {
+      this.monsterGroup.position.y = Math.sin(smashProgress * Math.PI) * 0.72;
+    } else if (attack?.skill === 'tailSmash' && attack.phase === 'recovery') {
+      this.monsterGroup.position.y = Math.max(0, 0.18 - recoveryElapsed * 0.002);
+    }
     const dying = this.deathStartedAt !== null;
     if (dying) {
       const progress = Math.min(1, (performance.now() - this.deathStartedAt!) / ARENA_CONFIG.monsterDeathDurationMs);
@@ -216,9 +249,24 @@ export class ArenaView {
       if (progress >= 1) this.victoryPanel.classList.remove('hidden');
     } else {
       this.monsterGroup.rotation.z = 0;
-      this.monsterGroup.scale.y = 1 + (this.snapshot.monster.state === 'attack' ? Math.sin(serverNow * 0.02) * 0.06 : 0);
+      this.monsterGroup.scale.y = attack?.skill === 'burrow' && burrowPhase === 'dive'
+        ? 1 - diveProgress * 0.72
+        : attack?.skill === 'burrow' && burrowPhase === 'telegraph'
+          ? 0.28 + emergeProgress * 0.72
+          : 1 + (this.snapshot.monster.state === 'attack' ? Math.sin(serverNow * 0.02) * 0.06 : 0);
     }
-    this.monsterTail.rotation.x = this.snapshot.monster.state === 'attack' ? Math.sin(serverNow * 0.025) * 0.18 : Math.sin(serverNow * 0.003) * 0.04;
+    this.monsterGroup.rotation.z += attack?.skill === 'tailSmash' && attack.phase === 'windup'
+      ? Math.sin(Math.min(1, attackElapsed / ARENA_CONFIG.newSkills.tailSmash.warningMs) * Math.PI) * 0.12 : 0;
+    this.monsterTail.rotation.x = attack?.skill === 'tailSmash' && attack.phase === 'windup'
+      ? -0.8 - Math.sin(Math.min(1, attackElapsed / ARENA_CONFIG.newSkills.tailSmash.warningMs) * Math.PI) * 0.35
+      : attack?.skill === 'tailSmash' && attack.phase === 'recovery'
+        ? 0.55 : attack?.skill === 'tailSweep' && attack.phase === 'windup'
+          ? Math.sin(Math.min(1, attackElapsed / ARENA_CONFIG.attacks.tailSweep.warningMs) * Math.PI) * 1.15
+          : this.snapshot.monster.state === 'attack' ? Math.sin(serverNow * 0.025) * 0.18 : Math.sin(serverNow * 0.003) * 0.04;
+    if (attack?.skill === 'tailSweep' && attack.phase === 'windup') {
+      const turn = Math.sin(Math.min(1, attackElapsed / ARENA_CONFIG.attacks.tailSweep.warningMs) * Math.PI) * Math.PI;
+      this.monsterGroup.rotation.y = monsterPose.facing + turn;
+    }
     this.monsterMaterials[0].emissive.setHex(performance.now() < this.monsterHitUntil ? 0x8d3421 : 0x000000);
     this.renderAttackTelegraph(monsterPose.x, monsterPose.z);
     this.renderProjectiles(serverNow);
@@ -299,13 +347,20 @@ export class ArenaView {
 
   private renderAttackTelegraph(monsterX: number, monsterZ: number): void {
     const attack = this.snapshot?.monster.attack;
-    this.attackRing.visible = Boolean(attack && attack.phase === 'windup' && attack.skill !== 'lunge');
+    this.attackRing.visible = Boolean(attack && (
+      (attack.skill === 'tailSmash' && attack.phase === 'windup') ||
+      (attack.skill === 'burrow' && (attack.phase === 'underground' || attack.phase === 'telegraph')) ||
+      (attack.phase === 'windup' && attack.skill !== 'lunge')
+    ));
     this.lungeWarning.visible = Boolean(attack && attack.skill === 'lunge' && attack.phase === 'windup');
     if (!attack) return;
     if (this.attackRing.visible) {
-      this.attackRing.position.set(attack.originX, 0.075, attack.originZ);
-      this.attackRing.scale.setScalar(attack.radius * 2);
-      (this.attackRing.material as THREE.MeshBasicMaterial).opacity = 0.2 + Math.sin(performance.now() * 0.018) * 0.09;
+      const targetX = attack.targetX ?? attack.originX;
+      const targetZ = attack.targetZ ?? attack.originZ;
+      this.attackRing.position.set(targetX, 0.075, targetZ);
+      const pulse = attack.skill === 'burrow' ? 0.72 + Math.sin(performance.now() * 0.014) * 0.22 : 1;
+      this.attackRing.scale.setScalar(attack.radius * 2 * pulse);
+      (this.attackRing.material as THREE.MeshBasicMaterial).opacity = 0.22 + Math.sin(performance.now() * 0.018) * 0.1;
     }
     if (this.lungeWarning.visible) {
       this.lungeWarning.position.set(monsterX + attack.directionX * 5, 0.065, monsterZ + attack.directionZ * 5);
@@ -320,6 +375,24 @@ export class ArenaView {
     for (const [index, stone] of this.pileStones.entries()) {
       stone.visible = index < count;
       stone.position.y = 0.3 + Math.sin(serverNow * 0.003 + index) * 0.04;
+    }
+    const active = new Set<string>();
+    for (const scattered of this.snapshot?.scatteredStones ?? []) {
+      active.add(scattered.id);
+      let mesh = this.scatteredStoneMeshes.get(scattered.id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32, 0), new THREE.MeshStandardMaterial({ color: '#b7aa8b', roughness: 1, flatShading: true }));
+        this.scatteredStoneMeshes.set(scattered.id, mesh);
+        this.scene.add(mesh);
+      }
+      mesh.position.set(scattered.x, 0.32 + Math.sin(serverNow * 0.003 + scattered.x) * 0.03, scattered.z);
+    }
+    for (const [id, mesh] of this.scatteredStoneMeshes) {
+      if (active.has(id)) continue;
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+      this.scatteredStoneMeshes.delete(id);
     }
   }
 
