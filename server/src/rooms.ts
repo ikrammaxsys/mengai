@@ -19,7 +19,7 @@ export class Rooms {
          state: 'ground' as const, carriedBy: null, flight: null, chickenHitId: null, respawnAt: null,
        }]));
        const createdAt = Date.now();
-        room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map(), jukebox: { current: null, queue: [], skipVotes: new Set(), emptySince: null }, theater: { currentPresenterId: null, presenterName: null, mode: 'none', pdfUrl: null, currentPage: 1, freeBrowse: false }, seatOccupancy: new Map() };
+        room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map(), jukebox: { current: null, queue: [], skipVotes: new Set(), emptySince: null }, theater: { currentPresenterId: null, presenterName: null, mode: 'none', pdfUrl: null, currentPage: 1, freeBrowse: false }, seatOccupancy: new Map(), ferrisWheelStartedAt: createdAt, islandVisitorSettings: new Map() };
        this.rooms.set(roomId, room);
     } else if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', Date.now());
     if (room.players.size === 0 && room.jukebox.emptySince !== null) {
@@ -88,8 +88,14 @@ export class Rooms {
       chickenScore: 0,
       crocodilesSlain: 0,
       arenaInstanceId: null,
+      islandOwnerName: null,
+      islandReturnPosition: null,
       inPhotobooth: false,
       seatedSeatId: null,
+      ferrisSeatIndex: null,
+      ferrisSlot: null,
+      ferrisRideStartedAt: null,
+      ferrisExitQueued: false,
       speaking: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
@@ -163,16 +169,31 @@ export class Rooms {
   }
 
   snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
-    return [...room.players.values()].filter((player) => player.arenaInstanceId === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, speaking }) => ({
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, speaking }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
       seatedSeatId,
+      ferrisSeatIndex,
+      ferrisSlot,
+      ferrisRideStartedAt,
+      ferrisExitQueued,
       chickenScore,
       crocodilesSlain,
       ...(includeSpeaking ? { speaking } : {}),
       ...(includeHoldingFish ? { holdingFish } : {}),
       moving,
     }));
+  }
+
+  islandSnapshot(room: Room, ownerName: string, includeHoldingFish = true): PlayerSnapshot[] {
+    const ownerKey = ownerName.trim().toLocaleLowerCase();
+    return [...room.players.values()]
+      .filter((player) => player.arenaInstanceId === null && player.islandOwnerName === ownerKey)
+      .map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain }) => ({
+        id, name, color, x, z, facing, fishing, cast, carryingStoneId, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain,
+        ...(includeHoldingFish ? { holdingFish } : {}),
+        moving,
+      }));
   }
 
   stoneSnapshot(room: Room) { return [...room.stones.values()]; }

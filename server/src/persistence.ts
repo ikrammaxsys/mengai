@@ -3,23 +3,44 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CampfireCooking, CatchEntry, Room } from './types.js';
 import type { CatchRecord } from './inventory.js';
-import { FISH_CONFIG } from '../../shared/fishConfig.js';
+import { FISH_CONFIG, type FishSpeciesId } from '../../shared/fishConfig.js';
+import {
+  defaultSeedInventory, isGardenSpotId, isGardenTreeType,
+  UNLIMITED_SEEDS, type GardenSpot, type GardenTreeType, type SeedInventory,
+} from '../../shared/gardenConfig.js';
 
 export interface PlayerFishData {
   items: CatchRecord[];
   totalCaught: number;
   personalBest: CatchRecord | null;
   collection: CatchRecord[];
+  fishCollection: FishCollection;
+  aquariumFish: CatchRecord[];
   crocodilesSlain: number;
+  garden: GardenSpot[];
+  seeds: SeedInventory;
 }
+
+export interface CollectionEntry {
+  caught: boolean;
+  bestWeight: number;
+  totalCaught: number;
+  firstCaughtAt: number;
+}
+
+export type FishCollection = Partial<Record<FishSpeciesId, CollectionEntry>>;
 
 export interface PersistentGameDataStore {
   load(): Promise<void>;
   hydrateRoom(room: Room): void;
+  ensurePlayer(roomId: string, playerName: string): Promise<void>;
   playerFish(roomId: string, playerName: string): PlayerFishData;
   recordCrocodileKill(roomId: string, playerName: string): Promise<number>;
   recordCatch(roomId: string, playerName: string, entry: CatchEntry, item: CatchRecord): Promise<void>;
   recordJunk(roomId: string, playerName: string, item: CatchRecord): Promise<void>;
+  plantGardenTree(roomId: string, playerName: string, spotId: string, treeType: GardenTreeType, plantedAt: number): Promise<boolean>;
+  removeGardenTree(roomId: string, playerName: string, spotId: string): Promise<boolean>;
+  addSeed(roomId: string, playerName: string, treeType: GardenTreeType): Promise<number>;
   releaseFish(roomId: string, playerName: string, catchId: string): Promise<boolean>;
   startCooking(roomId: string, playerName: string, catchId: string, cooking: CampfireCooking): Promise<boolean>;
   finishCooking(roomId: string, cookId: string): Promise<boolean>;
@@ -28,7 +49,11 @@ export interface PersistentGameDataStore {
 
 interface StoredPlayer {
   inventory: CatchRecord[];
+  collection?: FishCollection;
+  aquariumFish?: CatchRecord[];
   crocodilesSlain?: number;
+  garden?: GardenSpot[];
+  seeds?: SeedInventory;
 }
 
 interface StoredRoom {
@@ -64,6 +89,45 @@ export class JsonGameDataStore implements PersistentGameDataStore {
       throw new Error(`Unsupported or invalid game data file: ${this.filePath}`);
     }
     this.data = parsed as StoredGameData;
+    let migrated = false;
+    for (const room of Object.values(this.data.rooms)) {
+      room.players ??= {};
+      for (const entry of room.catches ?? []) {
+        const player = room.players[normalizePlayerName(entry.playerName)] ??= { inventory: [] };
+        player.aquariumFish ??= [
+          ...room.catches
+          .filter((playerCatch) => normalizePlayerName(playerCatch.playerName) === normalizePlayerName(entry.playerName))
+          .map(catchRecord),
+          ...(player.inventory ?? []).filter((item) => item.kind === 'junk'),
+        ];
+        if (!player.collection) {
+          player.collection = {};
+          for (const playerCatch of room.catches.filter((candidate) =>
+            normalizePlayerName(candidate.playerName) === normalizePlayerName(entry.playerName))) {
+            const record = player.collection[playerCatch.species];
+            if (record) {
+              record.bestWeight = Math.max(record.bestWeight, playerCatch.weightKg);
+              record.totalCaught += 1;
+              record.firstCaughtAt = Math.min(record.firstCaughtAt, playerCatch.timestamp);
+            } else {
+              player.collection[playerCatch.species] = {
+                caught: true, bestWeight: playerCatch.weightKg, totalCaught: 1, firstCaughtAt: playerCatch.timestamp,
+              };
+            }
+          }
+        }
+      }
+      for (const player of Object.values(room.players)) {
+        player.inventory ??= [];
+        const garden = normalizeGarden(player.garden);
+        const seeds = defaultSeedInventory(player.seeds);
+        if (!player.garden || JSON.stringify(garden) !== JSON.stringify(player.garden) ||
+            JSON.stringify(seeds) !== JSON.stringify(player.seeds)) migrated = true;
+        player.garden = garden;
+        player.seeds = seeds;
+      }
+    }
+    if (migrated) await this.queueWrite();
   }
 
   hydrateRoom(room: Room): void {
@@ -81,6 +145,20 @@ export class JsonGameDataStore implements PersistentGameDataStore {
     }
   }
 
+  ensurePlayer(roomId: string, playerName: string): Promise<void> {
+    const storedRoom = this.room(roomId);
+    const playerKey = normalizePlayerName(playerName);
+    const player = storedRoom.players[playerKey] ??= { inventory: [] };
+    const garden = normalizeGarden(player.garden);
+    const seeds = defaultSeedInventory(player.seeds);
+    const changed = !player.garden || JSON.stringify(garden) !== JSON.stringify(player.garden) ||
+      JSON.stringify(seeds) !== JSON.stringify(player.seeds) || !player.inventory;
+    player.inventory ??= [];
+    player.garden = garden;
+    player.seeds = seeds;
+    return changed ? this.queueWrite() : Promise.resolve();
+  }
+
   playerFish(roomId: string, playerName: string): PlayerFishData {
     const room = this.data.rooms[roomId];
     const playerKey = normalizePlayerName(playerName);
@@ -96,7 +174,16 @@ export class JsonGameDataStore implements PersistentGameDataStore {
       totalCaught: catches.length,
       personalBest: bestCatch ? catchRecord(bestCatch) : null,
       collection: [...speciesBest.values()].map(catchRecord),
+      fishCollection: Object.fromEntries(Object.entries(room?.players[playerKey]?.collection ?? {}).map(
+        ([species, record]) => [species, { ...record }],
+      )),
+      aquariumFish: [...(room?.players[playerKey]?.aquariumFish ?? [])]
+        .sort((a, b) => fishRarityRank(b.rarity) - fishRarityRank(a.rarity) || b.weightKg - a.weightKg)
+        .slice(0, 40)
+        .map((item) => ({ ...item })),
       crocodilesSlain: room?.players[playerKey]?.crocodilesSlain ?? 0,
+      garden: (room?.players[playerKey]?.garden ?? []).map((spot) => ({ ...spot })),
+      seeds: defaultSeedInventory(room?.players[playerKey]?.seeds),
     };
   }
 
@@ -115,6 +202,8 @@ export class JsonGameDataStore implements PersistentGameDataStore {
     const player = room.players[playerKey] ??= { inventory: [] };
     room.catches.push(entry);
     player.inventory.push(item);
+    (player.aquariumFish ??= []).push({ ...item });
+    this.recordCollectionCatch(player, entry.species, entry.weightKg, entry.timestamp);
     return this.queueWrite();
   }
 
@@ -123,7 +212,71 @@ export class JsonGameDataStore implements PersistentGameDataStore {
     const playerKey = normalizePlayerName(playerName);
     const player = room.players[playerKey] ??= { inventory: [] };
     player.inventory.push(item);
+    (player.aquariumFish ??= []).push({ ...item });
+    this.recordCollectionCatch(player, item.species, item.weightKg, item.caughtAt);
     return this.queueWrite();
+  }
+
+  async plantGardenTree(roomId: string, playerName: string, spotId: string, treeType: GardenTreeType, plantedAt: number): Promise<boolean> {
+    if (!isGardenSpotId(spotId) || !isGardenTreeType(treeType) || !Number.isFinite(plantedAt)) return false;
+    const player = this.room(roomId).players[normalizePlayerName(playerName)] ??= { inventory: [] };
+    player.garden ??= [];
+    player.seeds = defaultSeedInventory(player.seeds);
+    if (player.garden.some((spot) => spot.spotId === spotId) ||
+        (treeType !== 'pine' && player.seeds[treeType] < 1)) return false;
+    const planted = { spotId, treeType, plantedAt };
+    player.garden.push(planted);
+    if (treeType !== 'pine') player.seeds[treeType] -= 1;
+    try {
+      await this.queueWrite();
+    } catch (error) {
+      player.garden = player.garden.filter((spot) => spot.spotId !== spotId);
+      if (treeType !== 'pine') player.seeds[treeType] += 1;
+      throw error;
+    }
+    return true;
+  }
+
+  async removeGardenTree(roomId: string, playerName: string, spotId: string): Promise<boolean> {
+    const player = this.data.rooms[roomId]?.players[normalizePlayerName(playerName)];
+    const index = player?.garden?.findIndex((spot) => spot.spotId === spotId) ?? -1;
+    if (!player?.garden || index < 0) return false;
+    const [removed] = player.garden.splice(index, 1);
+    try {
+      await this.queueWrite();
+    } catch (error) {
+      player.garden.splice(index, 0, removed);
+      throw error;
+    }
+    return true;
+  }
+
+  async addSeed(roomId: string, playerName: string, treeType: GardenTreeType): Promise<number> {
+    if (treeType === 'pine') return UNLIMITED_SEEDS;
+    const player = this.room(roomId).players[normalizePlayerName(playerName)] ??= { inventory: [] };
+    player.seeds = defaultSeedInventory(player.seeds);
+    player.seeds[treeType] += 1;
+    const count = player.seeds[treeType];
+    try {
+      await this.queueWrite();
+    } catch (error) {
+      player.seeds[treeType] -= 1;
+      throw error;
+    }
+    return count;
+  }
+
+  private recordCollectionCatch(player: StoredPlayer, species: FishSpeciesId, weightKg: number, caughtAt: number): void {
+    const collection = player.collection ??= {};
+    const record = collection[species];
+    if (record) {
+      record.caught = true;
+      record.bestWeight = Math.max(record.bestWeight, weightKg);
+      record.totalCaught += 1;
+      record.firstCaughtAt = Math.min(record.firstCaughtAt, caughtAt);
+    } else {
+      collection[species] = { caught: true, bestWeight: weightKg, totalCaught: 1, firstCaughtAt: caughtAt };
+    }
   }
 
   async releaseFish(roomId: string, playerName: string, catchId: string): Promise<boolean> {
@@ -198,4 +351,19 @@ export function normalizePlayerName(name: string): string { return name.trim().t
 
 function catchRecord(entry: CatchEntry): CatchRecord {
   return { catchId: entry.id, species: entry.species, rarity: entry.rarity, weightKg: entry.weightKg, caughtAt: entry.timestamp };
+}
+
+function fishRarityRank(rarity: CatchRecord['rarity']): number {
+  return ({ common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 })[rarity];
+}
+
+function normalizeGarden(garden?: GardenSpot[]): GardenSpot[] {
+  if (!Array.isArray(garden)) return [];
+  const seen = new Set<string>();
+  return garden.filter((spot) => {
+    if (!isGardenSpotId(spot?.spotId) || !isGardenTreeType(spot.treeType) ||
+        !Number.isFinite(spot.plantedAt) || spot.plantedAt < 0 || seen.has(spot.spotId)) return false;
+    seen.add(spot.spotId);
+    return true;
+  }).map((spot) => ({ spotId: spot.spotId, treeType: spot.treeType, plantedAt: spot.plantedAt }));
 }

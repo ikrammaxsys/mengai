@@ -13,17 +13,19 @@ import { BROADCAST_SCOPE, calculateReelParameters, FISH_CONFIG } from '../../sha
 import { isSafeMovementPosition, movementViolation, MOVEMENT_RULES, normalizeRotation } from '../../shared/movement.js';
 import { RESUME_GRACE_MS, Rooms } from './rooms.js';
 import { rollSpecies, rollWeight } from './fishing.js';
-import type { CatchEntry, JukeboxTrack, Player, Room } from './types.js';
+import type { CatchEntry, JukeboxTrack, Player, PlayerSnapshot, Room } from './types.js';
 import { InMemoryInventoryStore, type CatchRecord, type InventoryStore } from './inventory.js';
 import { awardChickenScore, chickenSnapshots, hitChickenAt, updateChickenFlock } from './chickens.js';
 import { CHICKEN_CONFIG } from '../../shared/chickenConfig.js';
-import { JsonGameDataStore, type PersistentGameDataStore } from './persistence.js';
+import { JsonGameDataStore, normalizePlayerName, type PersistentGameDataStore } from './persistence.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
 import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/theaterSeats.js';
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
 import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
+import { GARDEN_CONFIG, isGardenSpotId, isGardenTreeType } from '../../shared/gardenConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
 import { initializeFileLogging } from './logger.js';
+import { ferrisBottomSeat, ferrisSeatBottomDistance, ferrisSeatPose, FERRIS_BOTTOM_TOLERANCE, FERRIS_SEAT_CAPACITY, FERRIS_SEAT_COUNT } from '../../shared/playground.js';
 
 await initializeFileLogging();
 
@@ -683,6 +685,131 @@ function broadcastSeatOccupancy(room: Room): void {
   broadcast(room, { type: 'seat:state', occupancy: Object.fromEntries(room.seatOccupancy) });
 }
 
+function broadcastFerrisState(room: Room): void {
+  broadcast(room, { type: 'state', players: rooms.snapshot(room, false, false), serverTime: Date.now() });
+}
+
+function openIslandList(room: Room): { ownerName: string }[] {
+  return [...room.islandVisitorSettings.entries()]
+    .filter(([ownerName, allowed]) => allowed && [...room.players.values()].some(
+      (player) => player.disconnectedAt === null && normalizePlayerName(player.name) === ownerName,
+    ))
+    .map(([ownerName]) => ({ ownerName: [...room.players.values()].find(
+      (player) => normalizePlayerName(player.name) === ownerName,
+    )?.name ?? ownerName }));
+}
+
+function sendIslandState(room: Room, ownerName: string): void {
+  const ownerKey = normalizePlayerName(ownerName);
+  const owner = [...room.players.values()].find((player) => normalizePlayerName(player.name) === ownerKey);
+  if (!owner) return;
+  const players = rooms.islandSnapshot(room, ownerKey);
+  const fishData = persistentData.playerFish(room.id, owner.name);
+  for (const member of room.players.values()) {
+    if (member.disconnectedAt !== null || member.islandOwnerName !== ownerKey) continue;
+    send(member.socket, {
+      type: 'island:state', ownerName: owner.name, ownerId: owner.id,
+      isOwner: member.id === owner.id,
+      visitorsAllowed: room.islandVisitorSettings.get(ownerKey) ?? false,
+      collection: fishData.fishCollection,
+      aquariumFish: fishData.aquariumFish,
+      garden: fishData.garden,
+      seeds: fishData.seeds,
+      players,
+    });
+  }
+}
+
+function broadcastIslandPlayers(room: Room, now = Date.now()): void {
+  const owners = new Set([...room.players.values()]
+    .map((player) => player.islandOwnerName).filter((owner): owner is string => owner !== null));
+  for (const ownerName of owners) {
+    const players = rooms.islandSnapshot(room, ownerName, false);
+    for (const member of room.players.values()) {
+      if (member.disconnectedAt === null && member.islandOwnerName === ownerName) {
+        send(member.socket, { type: 'island:players', players, serverTime: now });
+      }
+    }
+  }
+}
+
+function leaveIsland(room: Room, player: Player, now = Date.now()): PlayerSnapshot[] | null {
+  if (player.islandOwnerName === null) return null;
+  const ownerKey = player.islandOwnerName;
+  const affected = [...room.players.values()].filter((member) => member.islandOwnerName === ownerKey);
+  const owner = affected.find((member) => normalizePlayerName(member.name) === ownerKey);
+  if (player.id === owner?.id) {
+    for (const member of affected) {
+      member.islandOwnerName = null;
+      member.x = member.id === player.id ? WORLD_CONFIG.crocodilePortal.x : member.islandReturnPosition?.x ?? WORLD_CONFIG.crocodilePortal.x;
+      member.z = member.id === player.id ? WORLD_CONFIG.crocodilePortal.z : member.islandReturnPosition?.z ?? WORLD_CONFIG.crocodilePortal.z;
+      member.facing = member.islandReturnPosition?.facing ?? 0;
+      member.islandReturnPosition = null;
+    }
+    const returned = rooms.snapshot(room, false, false);
+    for (const member of affected) {
+      send(member.socket, { type: 'island:exit', players: returned, serverTime: now });
+      send(member.socket, { type: 'notice', message: 'The island owner returned to the pond.' });
+    }
+    for (const member of affected) broadcast(room, { type: 'player_joined', player: rooms.snapshot(room).find((entry) => entry.id === member.id), serverTime: now });
+    return returned;
+  }
+
+  player.islandOwnerName = null;
+  player.x = player.islandReturnPosition?.x ?? WORLD_CONFIG.crocodilePortal.x;
+  player.z = player.islandReturnPosition?.z ?? WORLD_CONFIG.crocodilePortal.z;
+  player.facing = player.islandReturnPosition?.facing ?? 0;
+  player.islandReturnPosition = null;
+  const returned = rooms.snapshot(room, false, false);
+  send(player.socket, { type: 'island:exit', players: returned, serverTime: now });
+  broadcast(room, { type: 'player_joined', player: rooms.snapshot(room).find((entry) => entry.id === player.id), serverTime: now });
+  sendIslandState(room, ownerKey);
+  return returned;
+}
+
+function broadcastFishCollection(room: Room, playerName: string): void {
+  const fishData = persistentData.playerFish(room.id, playerName);
+  const ownerKey = normalizePlayerName(playerName);
+  const ownerId = [...room.players.values()].find((player) => normalizePlayerName(player.name) === ownerKey)?.id;
+  for (const member of room.players.values()) {
+    if (member.disconnectedAt === null && (member.id === ownerId || member.islandOwnerName === ownerKey)) {
+      send(member.socket, {
+        type: 'collection:update', collection: fishData.fishCollection,
+        aquariumFish: fishData.aquariumFish, ownerName: playerName,
+      });
+    }
+  }
+}
+
+function broadcastGarden(room: Room, playerName: string): void {
+  const fishData = persistentData.playerFish(room.id, playerName);
+  const ownerKey = normalizePlayerName(playerName);
+  for (const member of room.players.values()) {
+    if (member.disconnectedAt === null &&
+        (normalizePlayerName(member.name) === ownerKey || member.islandOwnerName === ownerKey)) {
+      send(member.socket, {
+        type: 'garden:update', ownerName: playerName, garden: fishData.garden, seeds: fishData.seeds,
+      });
+    }
+  }
+}
+
+function releaseFerrisRide(room: Room, player: Player, now = Date.now(), broadcastState = true): void {
+  if (player.ferrisSeatIndex === null) return;
+  player.ferrisSeatIndex = null;
+  player.ferrisSlot = null;
+  player.ferrisRideStartedAt = null;
+  player.ferrisExitQueued = false;
+  player.x = WORLD_CONFIG.playground.wheel.boardingSpot.x;
+  player.z = WORLD_CONFIG.playground.wheel.boardingSpot.z;
+  player.facing = 0;
+  player.moving = false;
+  player.velocityX = 0;
+  player.velocityZ = 0;
+  player.lastMoveAt = now;
+  if (broadcastState) broadcastFerrisState(room);
+}
+
 function broadcastBigCatch(room: Room, message: object): void {
   if (BROADCAST_SCOPE === 'server') {
     for (const targetRoom of rooms.all()) broadcast(targetRoom, message);
@@ -753,6 +880,7 @@ function roomSnapshot(room: Room, player: Player) {
     weather: room.weather,
     theater: { ...room.theater },
     seatOccupancy: Object.fromEntries(room.seatOccupancy),
+    ferrisWheelStartedAt: room.ferrisWheelStartedAt,
     chickens: chickenSnapshots(room.chickens),
     crocodileScores: [...room.crocodileScores.values()].sort((a, b) => b.count - a.count),
     resumeToken: player.resumeToken,
@@ -929,6 +1057,7 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
     startReel(room, player, now);
     send(player.socket, { type: 'catch_result', entry, flags: { newPersonalBest: false, newRoomRecord: false }, personalBest: null, message: messages[Math.floor(Math.random() * messages.length)] });
     send(player.socket, { type: 'inventory_add', item: inventoryItem });
+    broadcastFishCollection(room, player.name);
     return;
   }
   const playerKey = player.name.toLocaleLowerCase();
@@ -952,12 +1081,26 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   const highRarity = (FISH_CONFIG.bigCatch.notableRarities as readonly string[]).includes(species.rarity);
   const notable = species.id === 'ikan-bulan' ? weightKg > 150 : highRarity || heavy || newRoomRecord;
   startReel(room, player, now);
+  const seedRoll = Math.random();
+  const seedType = seedRoll < GARDEN_CONFIG.seedDrops.cherry
+    ? 'cherry'
+    : seedRoll < GARDEN_CONFIG.seedDrops.cherry + GARDEN_CONFIG.seedDrops.round ? 'round' : null;
+  if (seedType) {
+    try {
+      await persistentData.addSeed(room.id, player.name, seedType);
+      send(player.socket, { type: 'notice', message: `You found a ${GARDEN_CONFIG.trees[seedType].name} seed!` });
+      broadcastGarden(room, player.name);
+    } catch (error) {
+      console.error('[game-data] Failed to save a garden seed:', error);
+    }
+  }
   send(player.socket, {
     type: 'catch_result', entry,
     flags: { newPersonalBest, newRoomRecord },
     personalBest: room.personalBests.get(playerKey),
   });
   send(player.socket, { type: 'inventory_add', item: inventoryItem });
+  broadcastFishCollection(room, player.name);
   broadcast(room, { type: 'leaderboard_update', entries: room.leaderboard });
   if (notable && (species.rarity === 'epic' || species.rarity === 'legendary' || newRoomRecord)) {
     const announcement = `${player.name} caught a ${weightKg.toFixed(2)} kg ${species.name}!`;
@@ -1029,6 +1172,14 @@ wss.on('connection', (socket) => {
       room.jukebox.emptySince = null;
       memberships.set(socket, { roomId, playerId: player.id });
       persistentData.hydrateRoom(room);
+      try {
+        await persistentData.ensurePlayer(roomId, player.name);
+      } catch (error) {
+        console.error('[game-data] Could not initialize player data:', error);
+        send(socket, { type: 'error', message: 'Your player data could not be saved. Please try joining again.' });
+        socket.close();
+        return;
+      }
       const fishData = persistentData.playerFish(roomId, player.name);
       player.crocodilesSlain = fishData.crocodilesSlain;
       room.crocodileScores.set(player.id, { playerId: player.id, playerName: player.name, count: player.crocodilesSlain });
@@ -1041,9 +1192,17 @@ wss.on('connection', (socket) => {
       }
       send(socket, roomSnapshot(room, player));
       send(socket, jukeboxState(room));
-      send(socket, { type: 'inventory_sync', items: inventory, totalCaught: inventoryStore.totalCaught(player.id), personalBest: inventoryStore.personalBest(player.id), collection: inventoryStore.collection(player.id) });
+      send(socket, {
+        type: 'inventory_sync', items: inventory, totalCaught: inventoryStore.totalCaught(player.id),
+        personalBest: inventoryStore.personalBest(player.id), collection: inventoryStore.collection(player.id),
+        fishCollection: fishData.fishCollection, aquariumFish: fishData.aquariumFish,
+        seeds: fishData.seeds, garden: fishData.garden,
+      });
       if (player.holdingFish) broadcast(room, { type: 'player_holding', playerId: player.id, fish: player.holdingFish }, socket);
-      broadcast(room, { type: 'player_joined', player: rooms.snapshot(room).find((entry) => entry.id === player.id), serverTime: Date.now() }, socket);
+      const visiblePlayer = rooms.snapshot(room).find((entry) => entry.id === player.id);
+      if (visiblePlayer) broadcast(room, { type: 'player_joined', player: visiblePlayer, serverTime: Date.now() }, socket);
+      send(socket, { type: 'island:list', islands: openIslandList(room) });
+      if (player.islandOwnerName) sendIslandState(room, player.islandOwnerName);
       return;
     }
 
@@ -1054,6 +1213,109 @@ wss.on('connection', (socket) => {
     const player = rooms.getPlayer(membership.roomId, membership.playerId);
     const room = rooms.getRoom(membership.roomId);
     if (!player || !room) return;
+
+    if (message.type === 'island:list') {
+      send(socket, { type: 'island:list', islands: openIslandList(room) });
+      return;
+    }
+
+    if (message.type === 'island:enter-own' || message.type === 'island:visit') {
+      if (player.islandOwnerName !== null || player.arenaInstanceId || player.fishing !== 'idle' || player.inPhotobooth) return;
+      const ownerName = message.type === 'island:enter-own'
+        ? player.name
+        : typeof message.ownerName === 'string' ? message.ownerName.trim() : '';
+      const ownerKey = normalizePlayerName(ownerName);
+      const owner = [...room.players.values()].find((candidate) =>
+        candidate.disconnectedAt === null && normalizePlayerName(candidate.name) === ownerKey,
+      );
+      if (!owner || (message.type === 'island:visit' &&
+          (owner.id === player.id || room.islandVisitorSettings.get(ownerKey) !== true))) {
+        send(socket, { type: 'notice', message: 'That island is not open to visitors.' });
+        return;
+      }
+      player.islandReturnPosition = { x: player.x, z: player.z, facing: player.facing };
+      player.islandOwnerName = ownerKey;
+      player.x = 0;
+      player.z = 12;
+      player.facing = Math.PI;
+      player.moving = false;
+      player.velocityX = 0;
+      player.velocityZ = 0;
+      player.lastMoveAt = Date.now();
+      broadcast(room, { type: 'player_left', playerId: player.id });
+      sendIslandState(room, ownerKey);
+      return;
+    }
+
+    if (message.type === 'island:return') {
+      leaveIsland(room, player);
+      return;
+    }
+
+    if (message.type === 'island:visitors') {
+      const ownerKey = normalizePlayerName(player.name);
+      if (player.islandOwnerName !== ownerKey || typeof message.allowed !== 'boolean') return;
+      room.islandVisitorSettings.set(ownerKey, message.allowed);
+      sendIslandState(room, ownerKey);
+      broadcast(room, { type: 'island:list', islands: openIslandList(room) });
+      return;
+    }
+
+    if (message.type === 'island:kick') {
+      const ownerKey = normalizePlayerName(player.name);
+      const targetId = typeof message.playerId === 'string' ? message.playerId : '';
+      const target = room.players.get(targetId);
+      if (player.islandOwnerName !== ownerKey || !target || target.islandOwnerName !== ownerKey || target.id === player.id) return;
+      leaveIsland(room, target);
+      send(target.socket, { type: 'notice', message: 'The island owner sent you back to the pond.' });
+      return;
+    }
+
+    if (message.type === 'garden:plant' || message.type === 'garden:remove') {
+      const ownerKey = normalizePlayerName(player.name);
+      if (player.islandOwnerName !== ownerKey) {
+        send(socket, { type: 'notice', message: 'Only the island owner can change this garden.' });
+        return;
+      }
+      const spotId = typeof message.spotId === 'string' ? message.spotId : '';
+      const spot = GARDEN_CONFIG.spots.find((candidate) => candidate.id === spotId);
+      if (!spot || Math.hypot(player.x - spot.x, player.z - spot.z) > GARDEN_CONFIG.interactionRadius) {
+        send(socket, { type: 'notice', message: 'Walk closer to a garden spot first.' });
+        return;
+      }
+      try {
+        if (message.type === 'garden:plant') {
+          if (!isGardenSpotId(spotId) || !isGardenTreeType(message.treeType)) {
+            send(socket, { type: 'notice', message: 'Choose a valid tree and garden spot.' });
+            return;
+          }
+          const planted = await persistentData.plantGardenTree(room.id, player.name, spotId, message.treeType, Date.now());
+          if (!planted) {
+            send(socket, { type: 'notice', message: 'That spot is already planted or you need more seeds.' });
+            return;
+          }
+        } else if (!await persistentData.removeGardenTree(room.id, player.name, spotId)) {
+          send(socket, { type: 'notice', message: 'There is no tree at that spot.' });
+          return;
+        }
+        broadcastGarden(room, player.name);
+      } catch (error) {
+        console.error('[game-data] Failed to update the island garden:', error);
+        send(socket, { type: 'notice', message: 'The garden could not be saved. Please try again.' });
+      }
+      return;
+    }
+
+    if (player.islandOwnerName !== null &&
+        !['move', 'speaking', 'chat', 'ping', 'jukebox:enqueue', 'jukebox:enqueue-library', 'jukebox:skip', 'jukebox:ended', 'jukebox:failed'].includes(String(message.type))) {
+      send(socket, {
+        type: 'notice',
+        message: normalizePlayerName(player.name) === player.islandOwnerName
+          ? 'That activity is unavailable on your island.'
+          : 'Visitors can look around, but can’t change anything on this island.',
+      });
+      return;
+    }
 
     if (message.type === 'seat:sit') {
       const seatId = typeof message.seatId === 'string' ? message.seatId : '';
@@ -1081,6 +1343,44 @@ wss.on('connection', (socket) => {
         player.velocityZ = 0;
         player.lastMoveAt = Date.now();
         broadcastSeatOccupancy(room);
+      }
+      return;
+    }
+
+    if (message.type === 'ferris:board') {
+      const now = Date.now();
+      const wheel = WORLD_CONFIG.playground.wheel;
+      if (player.ferrisSeatIndex !== null || player.seatedSeatId || player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.carryingStoneId) return;
+      if (Math.hypot(player.x - wheel.boardingSpot.x, player.z - wheel.boardingSpot.z) > wheel.boardingRadius) return;
+      const seatIndex = ferrisBottomSeat(room.ferrisWheelStartedAt, now);
+      if (ferrisSeatBottomDistance(seatIndex, room.ferrisWheelStartedAt, now) > FERRIS_BOTTOM_TOLERANCE) return;
+      const occupants = [...room.players.values()].filter((rider) => rider.ferrisSeatIndex === seatIndex);
+      if (occupants.length >= FERRIS_SEAT_CAPACITY) return;
+      const occupiedSlots = new Set(occupants.map((rider) => rider.ferrisSlot));
+      const slot = Array.from({ length: FERRIS_SEAT_CAPACITY }, (_, index) => index).find((index) => !occupiedSlots.has(index));
+      if (slot === undefined) return;
+      player.ferrisSeatIndex = seatIndex;
+      player.ferrisSlot = slot;
+      player.ferrisRideStartedAt = now;
+      player.ferrisExitQueued = false;
+      player.x = wheel.boardingSpot.x;
+      player.z = wheel.boardingSpot.z;
+      player.facing = 0;
+      player.moving = false;
+      player.velocityX = 0;
+      player.velocityZ = 0;
+      player.lastMoveAt = now;
+      broadcastFerrisState(room);
+      return;
+    }
+
+    if (message.type === 'ferris:exit') {
+      if (player.ferrisSeatIndex === null || player.ferrisRideStartedAt === null) return;
+      if (message.rescue === true || ferrisSeatBottomDistance(player.ferrisSeatIndex, room.ferrisWheelStartedAt, Date.now()) <= FERRIS_BOTTOM_TOLERANCE) {
+        releaseFerrisRide(room, player);
+      } else {
+        player.ferrisExitQueued = true;
+        broadcastFerrisState(room);
       }
       return;
     }
@@ -1400,6 +1700,11 @@ wss.on('connection', (socket) => {
     }
 
     if (message.type === 'move') {
+      if (player.ferrisSeatIndex !== null) {
+        if (Boolean(message.moving)) releaseFerrisRide(room, player);
+        else player.lastMoveAt = Date.now();
+        return;
+      }
       const seq = Number(message.seq);
       if (!Number.isSafeInteger(seq) || seq <= player.lastMoveSeq) return;
       player.lastMoveSeq = seq;
@@ -1741,8 +2046,10 @@ wss.on('connection', (socket) => {
     const departing = rooms.getPlayer(membership.roomId, membership.playerId);
     const existingRoom = rooms.getRoom(membership.roomId);
     if (departing && existingRoom) {
+      if (departing.islandOwnerName !== null) leaveIsland(existingRoom, departing);
       if (existingRoom.theater.currentPresenterId === departing.id) clearTheater(existingRoom);
       if (rooms.releaseSeat(existingRoom, departing.id)) broadcastSeatOccupancy(existingRoom);
+      if (departing.ferrisSeatIndex !== null) releaseFerrisRide(existingRoom, departing);
       const partyId = playerArenaParties.get(departing.id);
       const party = partyId ? arenaParties.get(partyId) : undefined;
       if (party) removeArenaPartyMember(existingRoom, party, departing.id);
@@ -1780,6 +2087,24 @@ wss.on('connection', (socket) => {
     }
   });
 });
+
+setInterval(() => {
+  const now = Date.now();
+  const rideLimitMs = WORLD_CONFIG.playground.wheel.rotationSeconds * 1500;
+  for (const room of rooms.all()) {
+    let changed = false;
+    for (const player of room.players.values()) {
+      if (player.ferrisSeatIndex === null || player.ferrisRideStartedAt === null) continue;
+      const atBottom = ferrisSeatBottomDistance(player.ferrisSeatIndex, room.ferrisWheelStartedAt, now) <= FERRIS_BOTTOM_TOLERANCE;
+      const rideFinished = now - player.ferrisRideStartedAt >= rideLimitMs;
+      if (atBottom && (player.ferrisExitQueued || rideFinished)) {
+        releaseFerrisRide(room, player, now, false);
+        changed = true;
+      }
+    }
+    if (changed) broadcastFerrisState(room);
+  }
+}, 100);
 
 setInterval(() => {
   for (const socket of wss.clients) {
@@ -1902,7 +2227,10 @@ setInterval(() => {
         broadcast(room, { type: 'stone_respawn', stoneId: stone.id, position: { x: stone.x, z: stone.z } });
       }
     }
-    if ((changed || room.players.size) && room.players.size) broadcast(room, { type: 'state', players: rooms.snapshot(room, false, false), serverTime: now });
+    if ((changed || room.players.size) && room.players.size) {
+      broadcast(room, { type: 'state', players: rooms.snapshot(room, false, false), serverTime: now });
+      broadcastIslandPlayers(room, now);
+    }
   }
 }, 50);
 
