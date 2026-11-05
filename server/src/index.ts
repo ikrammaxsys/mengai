@@ -22,6 +22,9 @@ import { WORLD_CONFIG } from '../../shared/worldConfig.js';
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
 import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
+import { initializeFileLogging } from './logger.js';
+
+await initializeFileLogging();
 
 const PORT = Number(process.env.PORT ?? 3002);
 const execFileAsync = promisify(execFile);
@@ -224,6 +227,23 @@ function notifyJukeboxRequester(room: Room, track: JukeboxTrack, message: string
   if (requester) send(requester.socket, { type: 'jukebox:error', message });
 }
 
+function logJukeboxPreparationError(videoId: string, error: unknown): void {
+  if (!(error instanceof Error)) {
+    console.error(`[jukebox] audio preparation failed for ${videoId}:`, error);
+    return;
+  }
+  const processError = error as Error & { code?: string | number; signal?: string; stderr?: string; stdout?: string };
+  const stderr = processError.stderr?.trim();
+  const stdout = processError.stdout?.trim();
+  console.error(`[jukebox] audio preparation failed for ${videoId}:`, {
+    message: processError.message,
+    code: processError.code,
+    signal: processError.signal,
+    ...(stderr ? { stderr: stderr.slice(-8000) } : {}),
+    ...(stdout ? { stdout: stdout.slice(-2000) } : {}),
+  });
+}
+
 function beginJukeboxDownload(track: JukeboxTrack): void {
   if (jukeboxDownloads.has(track.videoId)) return;
   const job = ensureJukeboxAudio(track.videoId)
@@ -246,7 +266,7 @@ function beginJukeboxDownload(track: JukeboxTrack): void {
       }
     })
     .catch((error: unknown) => {
-      console.error(`[jukebox] audio preparation failed for ${track.videoId}:`, error);
+      logJukeboxPreparationError(track.videoId, error);
       for (const room of rooms.all()) {
         const failedTracks: JukeboxTrack[] = [];
         if (room.jukebox.current?.videoId === track.videoId && room.jukebox.current.status === 'downloading') {
