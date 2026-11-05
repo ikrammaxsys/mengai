@@ -282,16 +282,15 @@ const forcedWeather = (() => {
   return isWeatherType(value) ? value : null;
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
-type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'jukebox' | 'catch' | 'progress' };
-const whatsNewVersion = '1.1.1'; // Bump when shipping a new What's New update.
+type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'catch' | 'progress' };
+const whatsNewVersion = '1.1.0'; // Bump when shipping a new What's New update.
 const whatsNewReleaseDate = 'Nov 2026';
 const whatsNewSeenKey = 'mengai:whats-new:last-seen-version';
 let whatsNewReturnFocus: HTMLElement | null = null;
 const whatsNewItems: WhatsNewItem[] = [
   { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Crocodile arena', description: 'Team up with friends to battle the crocodile.' },
   { tier: 'highlight', tone: 'voice', icon: '🎙️', title: 'Proximity voice', description: 'Talk with nearby fishers as you explore.' },
-  { tier: 'highlight', tone: 'jukebox', icon: '🎵', title: 'Shared jukebox', description: 'Search songs and play them together around the island.' },
-  { tier: 'also', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
+  { tier: 'highlight', tone: 'backpack', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
   { tier: 'also', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
   { tier: 'also', icon: '💾', title: 'Progress that saves', description: 'Catch records save; crowns mark the room leader.' },
   { tier: 'also', icon: '🍲', title: 'Campfire cooking', description: 'Share a warm meal by the fire.' },

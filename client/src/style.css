@@ -339,7 +339,6 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .whats-new-highlight.arena { border-color: #e8ddc5; background: linear-gradient(145deg, #fbf6e9, #efe8d7); }
 .whats-new-highlight.voice { border-color: #d7e8df; background: linear-gradient(145deg, #eff8f2, #e1f1e8); }
 .whats-new-highlight.backpack { border-color: #d8e8d5; background: linear-gradient(145deg, #f4f8e9, #e7f2e4); }
-.whats-new-highlight.jukebox { border-color: #d9d7ec; background: linear-gradient(145deg, #f5f1fb, #e8e8f5); }
 .whats-new-highlight.catch { border-color: #d8e9e4; background: linear-gradient(145deg, #edf8f5, #e1f1ed); }
 .whats-new-highlight.progress { border-color: #e8e0c9; background: linear-gradient(145deg, #fbf6e9, #f2edda); }
 .whats-new-highlight-icon { display: grid; flex: 0 0 52px; place-items: center; width: 52px; height: 52px; border: 1px solid rgba(255,255,255,.72); border-radius: 15px; background: rgba(255,255,255,.68); font-size: 29px; }
