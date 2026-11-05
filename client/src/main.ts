@@ -165,6 +165,12 @@ seatPrompt.className = 'seat-proximity-prompt hidden';
 seatPrompt.innerHTML = '<kbd>E</kbd><span>Press E to sit</span>';
 appRoot.append(seatPrompt);
 seatPrompt.addEventListener('click', () => interactWithSeat());
+const ferrisPrompt = document.createElement('button');
+ferrisPrompt.type = 'button';
+ferrisPrompt.className = 'seat-proximity-prompt ferris-proximity-prompt hidden';
+ferrisPrompt.innerHTML = '<kbd>E</kbd><span>Press E to board Ferris Wheel</span>';
+appRoot.append(ferrisPrompt);
+ferrisPrompt.addEventListener('click', () => interactWithFerris());
 const jukebox = new Jukebox(document.querySelector<HTMLElement>('#jukebox-root')!, {
   pauseMovement: () => {
     keys.clear();
@@ -263,6 +269,7 @@ let reconnecting = false;
 let arenaMode = false;
 let portalPromptDismissedUntilExit = false;
 let lastArenaMoveAt = 0;
+let lastFerrisRiding = false;
 let firstPersonView = false;
 let selfId = '';
 let currentRoom = '';
@@ -769,6 +776,36 @@ function interactWithSeat(): void {
   if (scene.seatedSeatId) { standFromSeat(); return; }
   const seatId = scene.nearbySeatId();
   if (seatId && !scene.isSeatOccupied(seatId)) network.sitAtSeat(seatId);
+}
+
+function interactWithFerris(): void {
+  if (!joined) return;
+  if (scene.isFerrisRiding) network.requestFerrisExit();
+  else if (isNearFerris() && scene.ferrisBoardingReady) network.boardFerrisWheel();
+}
+
+function isNearFerris(): boolean {
+  const wheel = WORLD_CONFIG.playground.wheel;
+  const position = scene.getPosition();
+  return Math.hypot(position.x - wheel.boardingSpot.x, position.z - wheel.boardingSpot.z) <= wheel.queueRadius;
+}
+
+function playFerrisDing(starting: boolean): void {
+  try {
+    const audio = new AudioContext();
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    const now = audio.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(starting ? 659.25 : 523.25, now);
+    oscillator.frequency.exponentialRampToValueAtTime(starting ? 880 : 392, now + 0.22);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.045, now + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+    oscillator.connect(gain); gain.connect(audio.destination);
+    oscillator.start(now); oscillator.stop(now + 0.34);
+    window.setTimeout(() => { void audio.close(); }, 500);
+  } catch { /* Audio may not be available in this browser. */ }
 }
 
 function isNearPhotobooth(): boolean {
@@ -1441,6 +1478,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       reconnecting = false;
       window.clearTimeout(reconnectTimer);
       observeServerTime(message.serverTime);
+      scene.setFerrisWheelStartedAt(message.ferrisWheelStartedAt);
       arenaMode = false;
       appRoot.classList.remove('in-arena');
       arenaView.close();
@@ -1513,7 +1551,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     state: (players, serverTime) => {
       observeServerTime(serverTime);
       syncRoomPlayerRoster(players);
-      for (const player of players) if (player.id !== selfId) scene.upsert(player, serverTime);
+      for (const player of players) scene.upsert(player, serverTime);
       const me = players.find((player) => player.id === selfId);
       if (me) updateChickenScore(me.chickenScore);
       updateCount();
@@ -1879,6 +1917,17 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (scene.isFerrisRiding && key === 'e' && !event.repeat) {
+    event.preventDefault();
+    network.requestFerrisExit();
+    return;
+  }
+  if (scene.isFerrisRiding && ['w', 'a', 's', 'd'].includes(key)) {
+    event.preventDefault();
+    keys.clear();
+    network.requestFerrisExit(true);
+    return;
+  }
   if (scene.seatedSeatId && ['w', 'a', 's', 'd'].includes(key)) {
     event.preventDefault();
     if (event.repeat) return;
@@ -1911,6 +1960,11 @@ window.addEventListener('keydown', (event) => {
   if (key === 'e' && joined && !event.repeat && (scene.seatedSeatId || scene.nearbySeatId())) {
     event.preventDefault();
     interactWithSeat();
+    return;
+  }
+  if (key === 'e' && joined && !event.repeat && isNearFerris() && scene.ferrisBoardingReady) {
+    event.preventDefault();
+    interactWithFerris();
     return;
   }
   if (key === 'e' && joined && !event.repeat && theater.isNearby) {
@@ -2061,6 +2115,15 @@ function animate(now: number): void {
   requestAnimationFrame(animate);
   const delta = Math.min((now - lastFrame) / 1000, 0.05);
   lastFrame = now;
+  const ferrisRiding = scene.isFerrisRiding;
+  if (ferrisRiding !== lastFerrisRiding) {
+    playFerrisDing(ferrisRiding);
+    if (ferrisRiding && localStorage.getItem('mengai:ferris-first-ride') !== 'true') {
+      localStorage.setItem('mengai:ferris-first-ride', 'true');
+      showToast('Penumpang Roda Besar');
+    }
+    lastFerrisRiding = ferrisRiding;
+  }
   updateNetDebug(now);
   if (joined && reelGame) {
     const snapshot = reelGame.update(delta);
@@ -2077,7 +2140,7 @@ function animate(now: number): void {
       lastArenaMoveAt = now;
     }
   }
-  if (joined && !arenaMode && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && scene.fishingState() === 'idle') {
+  if (joined && !arenaMode && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && !scene.isFerrisRiding && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
     let turn = keyboardTurn;
@@ -2114,6 +2177,14 @@ function animate(now: number): void {
       const seatLabel = seatPrompt.querySelector('span');
       if (seatLabel) seatLabel.textContent = scene.seatedSeatId ? 'Press E to stand' : 'Press E to sit';
       seatPrompt.disabled = false;
+      const wheel = WORLD_CONFIG.playground.wheel;
+      const nearFerris = scene.isFerrisRiding || isNearFerris();
+      ferrisPrompt.classList.toggle('hidden', !nearFerris || theater.isFocused || theater.isMenuOpen || isPhotoboothMode);
+      const ferrisLabel = ferrisPrompt.querySelector('span');
+      if (ferrisLabel) ferrisLabel.textContent = scene.isFerrisRiding
+        ? scene.ferrisExitQueued ? 'Exit queued · Press E to leave at the bottom' : 'Press E to get off at the bottom'
+        : scene.ferrisBoardingReady ? 'Press E to board Ferris Wheel' : 'Waiting for a free gondola';
+      ferrisPrompt.disabled = !scene.isFerrisRiding && !scene.ferrisBoardingReady;
       const fishing = scene.fishingState();
       const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
       photoboothPrompt.classList.toggle('hidden', !nearPhotobooth);
@@ -2131,6 +2202,7 @@ function animate(now: number): void {
     theater.setNearby(false);
     photoboothPrompt.classList.add('hidden');
     jukeboxPrompt.classList.add('hidden');
+    ferrisPrompt.classList.add('hidden');
     photoboothEnter.disabled = true;
     portalPrompt.classList.add('hidden');
   }

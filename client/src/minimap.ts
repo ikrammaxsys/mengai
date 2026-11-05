@@ -13,7 +13,7 @@ export interface MapPlayer {
 }
 
 export class Minimap {
-  private zoom = 36;
+  private zoom = 46;
   private lastRenderAt = 0;
   private readonly canvases: HTMLCanvasElement[];
   private readonly expanded: HTMLElement;
@@ -101,6 +101,18 @@ export class Minimap {
       context.beginPath(); context.arc(p.x, p.y, Math.max(1.2, scale * 0.18), 0, Math.PI * 2);
       context.fillStyle = '#786e62'; context.fill();
     }
+
+    const wheel = WORLD_CONFIG.playground.wheel;
+    const wheelPoint = point(wheel.x, wheel.z);
+    context.beginPath(); context.arc(wheelPoint.x, wheelPoint.y, Math.max(3, wheel.radius * scale), 0, Math.PI * 2);
+    context.strokeStyle = '#d987a7'; context.lineWidth = Math.max(2, scale * 0.5); context.stroke();
+    context.beginPath(); context.arc(wheelPoint.x, wheelPoint.y, Math.max(1.5, scale * 0.35), 0, Math.PI * 2);
+    context.fillStyle = '#e8c874'; context.fill();
+    const slide = point(WORLD_CONFIG.playground.slide.x, WORLD_CONFIG.playground.slide.z);
+    context.fillStyle = '#d987a7'; context.fillRect(slide.x - 3, slide.y - 2, 6, 4);
+    const seesaw = point(WORLD_CONFIG.playground.seesaw.x, WORLD_CONFIG.playground.seesaw.z);
+    context.strokeStyle = '#c99b73'; context.lineWidth = Math.max(2, scale * 0.45);
+    context.beginPath(); context.moveTo(seesaw.x - 4, seesaw.y); context.lineTo(seesaw.x + 4, seesaw.y); context.stroke();
 
     const theater = point(WORLD_CONFIG.theater.x, WORLD_CONFIG.theater.z);
     context.fillStyle = '#284c40'; context.fillRect(theater.x - 5, theater.y - 3.5, 10, 7);

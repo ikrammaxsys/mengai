@@ -146,6 +146,10 @@ export interface PlayerSnapshot {
   chickenScore: number;
   crocodilesSlain: number;
   seatedSeatId?: string | null;
+  ferrisSeatIndex?: number | null;
+  ferrisSlot?: number | null;
+  ferrisRideStartedAt?: number | null;
+  ferrisExitQueued?: boolean;
 }
 
 export interface JukeboxTrack {
@@ -181,7 +185,7 @@ export interface TheaterSignal {
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; theater: TheaterState; seatOccupancy: Record<string, string> }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -459,6 +463,8 @@ export class Network {
   }
   sitAtSeat(seatId: string): void { this.send({ type: 'seat:sit', seatId }); }
   standFromSeat(): void { this.send({ type: 'seat:stand' }); }
+  boardFerrisWheel(): void { this.send({ type: 'ferris:board' }); }
+  requestFerrisExit(rescue = false): void { this.send({ type: 'ferris:exit', rescue }); }
   async uploadTheaterPdf(room: string, resumeToken: string, file: File): Promise<string> {
     const response = await fetch(`/api/theater/upload?room=${encodeURIComponent(room)}`, {
       method: 'POST',

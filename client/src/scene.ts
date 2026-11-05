@@ -10,10 +10,12 @@ import type { WeatherSnapshot } from '../../shared/weatherConfig';
 import type { ChickenSnapshot } from '../../shared/chickenConfig';
 import { PHOTOBOOTH_CONFIG } from './photobooth';
 import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/theaterSeats';
+import { ferrisBottomSeat, ferrisSeatBottomDistance, ferrisSeatPose, FERRIS_BOTTOM_TOLERANCE, FERRIS_SEAT_CAPACITY } from '../../shared/playground';
+import { Playground } from './playground';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
@@ -37,6 +39,8 @@ export class GameScene {
   private readonly photoboothLabel: HTMLDivElement;
   private readonly jukeboxLabel: HTMLDivElement;
   private readonly jukeboxRoot = new THREE.Group();
+  private readonly playground: Playground;
+  private ferrisWheelStartedAt = Date.now();
   private readonly jukeboxModel = new THREE.Group();
   private readonly jukeboxParticles: JukeboxParticle[] = [];
   private readonly jukeboxReduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -137,6 +141,7 @@ export class GameScene {
     this.camera.position.set(0, 14, 18);
     this.camera.lookAt(0, 0, 0);
     this.buildWorld();
+    this.playground = new Playground(this.scene);
     this.weatherEffects = new WeatherEffects(this.scene, this.ambientLight, this.directionalLight, this.waterGeometry, this.waterMaterial);
     this.chickens = new ChickenFlock(this.scene, this.labels);
     this.campfire = new Campfire(this.scene, this.labels);
@@ -155,7 +160,7 @@ export class GameScene {
     this.directionalLight.shadow.bias = -0.00015;
     this.directionalLight.shadow.normalBias = 0.035;
     this.directionalLight.shadow.radius = 3;
-    this.directionalLight.shadow.camera.left = -34; this.directionalLight.shadow.camera.right = 34; this.directionalLight.shadow.camera.top = 34; this.directionalLight.shadow.camera.bottom = -34;
+    this.directionalLight.shadow.camera.left = -46; this.directionalLight.shadow.camera.right = 46; this.directionalLight.shadow.camera.top = 46; this.directionalLight.shadow.camera.bottom = -46;
     this.directionalLight.shadow.camera.near = 1; this.directionalLight.shadow.camera.far = 60;
     this.scene.add(this.directionalLight);
 
@@ -462,13 +467,21 @@ export class GameScene {
       position.copy(local.group.localToWorld(new THREE.Vector3(0, 1.56, 0.02)));
       const facing = local.group.rotation.y;
       target = new THREE.Vector3(position.x + Math.sin(facing) * 10, position.y - 0.12, position.z + Math.cos(facing) * 10);
+    } else if (local.ferrisSeatIndex !== null) {
+      position.set(local.group.position.x, local.group.position.y + 7.5, local.group.position.z - 10);
+      target = new THREE.Vector3(local.group.position.x, local.group.position.y + 0.9, local.group.position.z);
     } else {
       position.copy(local.group.localToWorld(this.cameraOffset.clone()));
       const halfWidth = WORLD_CONFIG.theater.width / 2 + 0.65;
       if (Math.abs(position.z - WORLD_CONFIG.theater.z) < halfWidth && position.y < 10 && position.y > 0.5 && position.x < WORLD_CONFIG.theater.x + 0.7) {
         position.x = WORLD_CONFIG.theater.x + 0.7;
       }
-      target = new THREE.Vector3(local.group.position.x, 0.8, local.group.position.z);
+      target = new THREE.Vector3(local.group.position.x, local.ferrisSeatIndex === null ? 0.8 : local.group.position.y + 0.8, local.group.position.z);
+    }
+    if (!this.photoboothCameraActive && !this.theaterFocused) {
+      const maxRadius = WORLD_CONFIG.groundRadius - 1;
+      const radius = Math.hypot(position.x, position.z);
+      if (radius > maxRadius) { position.x *= maxRadius / radius; position.z *= maxRadius / radius; }
     }
     this.theaterOrientation.position.copy(position);
     this.theaterOrientation.up.set(0, 1, 0);
@@ -783,7 +796,7 @@ export class GameScene {
     this.labels.appendChild(label);
     const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
     this.crocodileSlainCounts.set(player.id, crocodilesSlain);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null };
     this.avatarDance.set(player.id, { root: visualRoot, note: danceNote, moving: player.moving, phase: Math.random() * Math.PI * 2, speed: 0.9 + Math.random() * 0.2, blend: 0 });
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
@@ -933,6 +946,27 @@ export class GameScene {
   }
 
   setServerClockOffset(offsetMs: number): void { this.serverClockOffset = offsetMs; }
+  setFerrisWheelStartedAt(startedAt: number): void { this.ferrisWheelStartedAt = startedAt; }
+  get isFerrisRiding(): boolean { return (this.avatars.get(this.localId)?.ferrisSeatIndex ?? null) !== null; }
+  get ferrisExitQueued(): boolean { return this.avatars.get(this.localId)?.ferrisExitQueued ?? false; }
+  get ferrisBoardingReady(): boolean {
+    const now = Date.now() + this.serverClockOffset;
+    const seat = ferrisBottomSeat(this.ferrisWheelStartedAt, now);
+    if (ferrisSeatBottomDistance(seat, this.ferrisWheelStartedAt, now) > FERRIS_BOTTOM_TOLERANCE) return false;
+    return [...this.avatars.values()].filter((avatar) => avatar.ferrisSeatIndex === seat).length < FERRIS_SEAT_CAPACITY;
+  }
+
+  private applyFerrisSeatPose(avatar: Avatar, now: number): void {
+    if (avatar.ferrisSeatIndex === null || avatar.ferrisSlot === null || avatar.ferrisRideStartedAt === null) {
+      avatar.group.scale.y = avatar.seatedSeatId ? 0.82 : 1;
+      return;
+    }
+    const pose = ferrisSeatPose(avatar.ferrisSeatIndex, avatar.ferrisSlot, this.ferrisWheelStartedAt, now);
+    avatar.group.position.set(pose.x, pose.y - 0.42, pose.z);
+    avatar.group.rotation.y = pose.angle + Math.PI / 2;
+    avatar.group.rotation.z = 0;
+    avatar.group.scale.y = 0.84;
+  }
 
   setInterpolationDelay(delayMs: number): void {
     this.interpolationDelayMs = Math.max(FISH_CONFIG.sync.interpolationDelayMinMs,
@@ -970,6 +1004,10 @@ export class GameScene {
       this.updateCrocodileRobeAppearance();
     }
     avatar.fishing = player.fishing;
+    avatar.ferrisSeatIndex = player.ferrisSeatIndex ?? null;
+    avatar.ferrisSlot = player.ferrisSlot ?? null;
+    avatar.ferrisRideStartedAt = player.ferrisRideStartedAt ?? null;
+    avatar.ferrisExitQueued = player.ferrisExitQueued ?? false;
     const dance = this.avatarDance.get(player.id);
     if (dance) dance.moving = player.moving;
     if (player.seatedSeatId !== undefined && player.seatedSeatId !== avatar.seatedSeatId) this.setAvatarSeat(avatar, player.seatedSeatId);
@@ -1432,13 +1470,15 @@ export class GameScene {
 
   render(deltaSeconds = 1 / 60): void {
     const serverNow = Date.now() + this.serverClockOffset;
+    this.playground.render(serverNow, this.ferrisWheelStartedAt);
     const portalPulse = Math.sin(serverNow * 0.0025);
     this.crocodilePortalRing.rotation.y = Math.sin(serverNow * 0.0007) * 0.12;
     this.crocodilePortalRing.position.y = portalPulse * 0.06;
     const remoteRenderTime = serverNow - this.interpolationDelayMs;
     const local = this.avatars.get(this.localId);
     if (local) {
-      local.group.rotation.y += this.angleDelta(local.group.rotation.y, local.targetFacing) * 0.24;
+      if (local.ferrisSeatIndex === null) local.group.rotation.y += this.angleDelta(local.group.rotation.y, local.targetFacing) * 0.24;
+      this.applyFerrisSeatPose(local, serverNow);
       this.updateTheaterCamera(local, performance.now(), deltaSeconds);
     }
     this.camera.updateMatrixWorld();
@@ -1462,10 +1502,12 @@ export class GameScene {
         avatar.heldModel.rotation.x = wiggle > 0.94 ? (wiggle - 0.94) * 0.35 : 0;
       }
       if (!avatar.local) this.interpolateRemote(avatar, remoteRenderTime);
+      if (!avatar.local) this.applyFerrisSeatPose(avatar, serverNow);
       const dance = this.avatarDance.get(id);
       if (dance) this.updateAvatarDance(avatar, dance, serverNow, deltaSeconds);
       this.renderCast(avatar, serverNow);
-      this.ray.set(avatar.group.position.x, 2.2, avatar.group.position.z).project(this.camera);
+      const labelHeight = avatar.ferrisSeatIndex === null ? 2.2 : avatar.group.position.y + 2.2;
+      this.ray.set(avatar.group.position.x, labelHeight, avatar.group.position.z).project(this.camera);
       const labelLeft = Math.round((this.ray.x * 0.5 + 0.5) * innerWidth);
       const labelTop = Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight);
       avatar.label.style.translate = `${labelLeft}px ${labelTop}px`;

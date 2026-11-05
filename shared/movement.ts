@@ -18,7 +18,7 @@ export function shortestAngleDelta(from: number, to: number): number {
 export function isSafeMovementPosition(x: number, z: number): boolean {
   const radius = Math.hypot(x, z);
   return Number.isFinite(x) && Number.isFinite(z) && radius <= MOVEMENT_RULES.mapRadius && radius >= MOVEMENT_RULES.waterRadius &&
-    !isInsideTheaterCollider(x, z, 0.55);
+    !isInsideTheaterCollider(x, z, 0.55) && !isInsidePlaygroundCollider(x, z, 0.55);
 }
 
 export function isInsideTheaterCollider(x: number, z: number, padding = 0): boolean {
@@ -27,6 +27,18 @@ export function isInsideTheaterCollider(x: number, z: number, padding = 0): bool
   const localX = Math.cos(rotationY) * dx - Math.sin(rotationY) * dz;
   const localZ = Math.sin(rotationY) * dx + Math.cos(rotationY) * dz;
   return Math.abs(localX) < colliderHalfWidth + padding && Math.abs(localZ) < colliderHalfDepth + padding;
+}
+
+export function isInsidePlaygroundCollider(x: number, z: number, padding = 0): boolean {
+  const { playground } = WORLD_CONFIG;
+  const wheel = playground.wheel;
+  const dx = x - wheel.x, dz = z - wheel.z;
+  const wheelSupport = Math.abs(dx) < 1.75 + padding && Math.abs(dz) < 0.42 + padding;
+  const slide = playground.slide;
+  const slideCollider = Math.abs(x - slide.x) < 1.15 + padding && Math.abs(z - slide.z) < 2.45 + padding;
+  const seesaw = playground.seesaw;
+  const seesawCollider = Math.abs(x - seesaw.x) < 2.2 + padding && Math.abs(z - seesaw.z) < 0.48 + padding;
+  return wheelSupport || slideCollider || seesawCollider;
 }
 
 /** Shared client prediction step; server validation uses the same speed/bounds rules. */
@@ -47,7 +59,7 @@ export function stepMovement(current: MovementTransform, forwardAxis: number, tu
     const scale = MOVEMENT_RULES.mapRadius / Math.max(radius, 0.001);
     x *= scale; z *= scale;
   }
-  if (isInsideTheaterCollider(x, z, 0.55)) return { ...current, rotY };
+  if (isInsideTheaterCollider(x, z, 0.55) || isInsidePlaygroundCollider(x, z, 0.55)) return { ...current, rotY };
   return { x, z, rotY };
 }
 
