@@ -6,6 +6,7 @@ export const WORLD_CONFIG = {
   crocodilePortal: { x: 18, z: -20, useRadius: 2.8 },
   jukebox: { x: 21, z: -2, interactionRadius: 4.5, hearingRadius: 22, fullVolumeRadius: 4 },
   campfire: { x: 0, z: 20, useRadius: 4.8, shareRadius: 8, cookDurationMs: 9000 },
+  theater: { x: -29, z: 0, rotationY: Math.PI / 2, width: 17.5, height: 9.84375, interactionRadius: 5.5, colliderHalfWidth: 9.35, colliderHalfDepth: 0.45 },
   trees: [
     [-12, -8], [-13, 7], [12, -10], [13, 7], [-7, 14], [8, 13], [16, -1], [-16, 0],
     [-21, -9], [-22, 7], [-17, 19], [-8, 24], [5, 22], [20, 14], [24, 4], [21, -13],

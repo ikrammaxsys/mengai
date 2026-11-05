@@ -142,6 +142,7 @@ export interface PlayerSnapshot {
   speaking?: boolean;
   chickenScore: number;
   crocodilesSlain: number;
+  seatedSeatId?: string | null;
 }
 
 export interface JukeboxTrack {
@@ -159,8 +160,23 @@ export interface JukeboxCurrent extends JukeboxTrack {
   startedAt: number | null;
 }
 
+export interface TheaterState {
+  currentPresenterId: string | null;
+  presenterName: string | null;
+  mode: 'none' | 'screen' | 'pdf';
+  pdfUrl: string | null;
+  currentPage: number;
+  freeBrowse: boolean;
+}
+
+export interface TheaterSignal {
+  fromId: string;
+  signalType: 'viewer' | 'offer' | 'answer' | 'ice';
+  payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
+}
+
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[] }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; theater: TheaterState; seatOccupancy: Record<string, string> }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -207,6 +223,10 @@ type Handlers = {
   weatherChanged: (weather: WeatherSnapshot) => void;
   jukeboxState: (current: JukeboxCurrent | null, queue: JukeboxTrack[], skipVotes: number) => void;
   jukeboxError: (message: string) => void;
+  theaterState: (state: TheaterState) => void;
+  theaterSignal: (signal: TheaterSignal) => void;
+  theaterError: (message: string) => void;
+  seatState: (occupancy: Record<string, string>) => void;
   disconnected: () => void;
 };
 
@@ -288,6 +308,10 @@ export class Network {
         case 'player_left': this.handlers.playerLeft(String(message.playerId)); break;
         case 'jukebox:state': this.handlers.jukeboxState((message.current as JukeboxCurrent | null) ?? null, Array.isArray(message.queue) ? message.queue as JukeboxTrack[] : [], Number(message.skipVotes) || 0); break;
         case 'jukebox:error': this.handlers.jukeboxError(String(message.message ?? 'The jukebox could not complete that action.')); break;
+        case 'theater:state': this.handlers.theaterState(message.state as TheaterState); break;
+        case 'theater:signal': this.handlers.theaterSignal(message as unknown as TheaterSignal); break;
+        case 'theater:error': this.handlers.theaterError(String(message.message ?? 'The theater action failed.')); break;
+        case 'seat:state': this.handlers.seatState((message.occupancy as Record<string, string>) ?? {}); break;
         case 'speaking': this.handlers.speaking(String(message.playerId), Boolean(message.speaking)); break;
         case 'correction': this.handlers.correction(message as unknown as Parameters<Handlers['correction']>[0]); break;
         case 'error': this.handlers.error(String(message.message)); break;
@@ -411,6 +435,26 @@ export class Network {
   skipJukebox(): void { this.send({ type: 'jukebox:skip' }); }
   jukeboxEnded(videoId: string): void { this.send({ type: 'jukebox:ended', videoId }); }
   jukeboxFailed(videoId: string): void { this.send({ type: 'jukebox:failed', videoId }); }
+  startTheater(mode: 'screen' | 'pdf'): void { this.send({ type: 'theater:start', mode }); }
+  stopTheater(): void { this.send({ type: 'theater:stop' }); }
+  setTheaterPage(currentPage: number): void { this.send({ type: 'theater:page', currentPage }); }
+  setTheaterFreeBrowse(freeBrowse: boolean): void { this.send({ type: 'theater:freeBrowse', freeBrowse }); }
+  setTheaterPdf(pdfUrl: string): void { this.send({ type: 'theater:file', pdfUrl }); }
+  theaterSignal(targetId: string, signalType: 'viewer' | 'offer' | 'answer' | 'ice', payload?: RTCSessionDescriptionInit | RTCIceCandidateInit): void {
+    this.send({ type: 'theater:signal', targetId, signalType, payload });
+  }
+  sitAtSeat(seatId: string): void { this.send({ type: 'seat:sit', seatId }); }
+  standFromSeat(): void { this.send({ type: 'seat:stand' }); }
+  async uploadTheaterPdf(room: string, resumeToken: string, file: File): Promise<string> {
+    const response = await fetch(`/api/theater/upload?room=${encodeURIComponent(room)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf', Authorization: `Bearer ${resumeToken}` },
+      body: file,
+    });
+    const result = await response.json() as { url?: string; error?: string };
+    if (!response.ok || !result.url) throw new Error(result.error ?? 'The PDF upload failed.');
+    return result.url;
+  }
   pickStone(stoneId: string): void { this.send({ type: 'stone_pickup', stoneId }); }
   throwStone(): void { this.send({ type: 'stone_throw' }); }
   setDebugWeather(weatherType: WeatherType): void { this.send({ type: 'weather:debug', weatherType }); }

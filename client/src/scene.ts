@@ -9,10 +9,11 @@ import { WeatherEffects } from './weatherEffects';
 import type { WeatherSnapshot } from '../../shared/weatherConfig';
 import type { ChickenSnapshot } from '../../shared/chickenConfig';
 import { PHOTOBOOTH_CONFIG } from './photobooth';
+import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/theaterSeats';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
@@ -26,6 +27,7 @@ export class GameScene {
   private readonly chatBubbles = new Map<string, ChatBubble[]>();
   private readonly eatBubbles = new Map<string, ChatBubble>();
   private readonly stones = new Map<string, StoneVisual>();
+  private readonly theaterSeats = new Map<string, { group: THREE.Group; cushionMaterial: THREE.MeshStandardMaterial; marker: THREE.Mesh; occupiedBy: string | null }>();
   private readonly bonks = new Map<string, BonkFx>();
   private readonly labels: HTMLElement;
   private readonly stoneHint: HTMLDivElement;
@@ -66,6 +68,30 @@ export class GameScene {
   private readonly chickens: ChickenFlock;
   private readonly campfire: Campfire;
   private readonly weatherEffects: WeatherEffects;
+  private theaterScreenMaterial!: THREE.MeshBasicMaterial;
+  private theaterScreenMesh!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private theaterScreenBacking!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private theaterPlaceholderTexture!: THREE.CanvasTexture;
+  private theaterTexture!: THREE.Texture;
+  private theaterTextureSource: HTMLVideoElement | HTMLCanvasElement | null = null;
+  private theaterScreenAspect = 16 / 9;
+  private theaterPresenterLabel!: HTMLDivElement;
+  private theaterGlow!: THREE.Mesh;
+  private theaterGlowLight!: THREE.PointLight;
+  private theaterPresenterActive = false;
+  private theaterFocused = false;
+  private theaterScreenVisible = false;
+  private theaterVisibilityHandler?: (visible: boolean) => void;
+  private readonly theaterFrustum = new THREE.Frustum();
+  private readonly theaterProjectionView = new THREE.Matrix4();
+  private readonly theaterScreenWorldPosition = new THREE.Vector3();
+  private readonly theaterScreenLabelPosition = new THREE.Vector3(WORLD_CONFIG.theater.x + 0.3, 11.45, WORLD_CONFIG.theater.z);
+  private readonly theaterOrientation = new THREE.PerspectiveCamera();
+  private readonly theaterFocusPosition = new THREE.Vector3();
+  private readonly theaterFocusTarget = new THREE.Vector3(WORLD_CONFIG.theater.x, 0, WORLD_CONFIG.theater.z);
+  private theaterFocusFov = 45;
+  private readonly theaterParallax = new THREE.Vector2();
+  private theaterTransition: { fromPosition: THREE.Vector3; fromQuaternion: THREE.Quaternion; fromFov: number; startedAt: number; focusing: boolean } | null = null;
 
   constructor(container: HTMLElement, labels: HTMLElement) {
     this.labels = labels;
@@ -79,6 +105,9 @@ export class GameScene {
     this.jukeboxLabel.className = 'jukebox-world-label';
     this.jukeboxLabel.textContent = 'Jukebox';
     labels.appendChild(this.jukeboxLabel);
+    this.theaterPresenterLabel = document.createElement('div');
+    this.theaterPresenterLabel.className = 'theater-world-label hidden';
+    labels.appendChild(this.theaterPresenterLabel);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.setSize(innerWidth, innerHeight);
@@ -172,6 +201,304 @@ export class GameScene {
     }
     this.buildPhotobooth();
     this.buildJukebox();
+    this.buildTheaterScreen();
+    this.buildTheaterSeats();
+  }
+
+  private buildTheaterScreen(): void {
+    const canvas = document.createElement('canvas');
+    const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    canvas.width = innerWidth < 720 || deviceMemory !== undefined && deviceMemory <= 4 ? 1280 : 1920;
+    canvas.height = Math.round(canvas.width * 9 / 16);
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#19362d'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#d9eadb'; context.textAlign = 'center'; context.textBaseline = 'middle';
+    context.font = `700 ${Math.round(canvas.width * 0.052)}px Trebuchet MS, Segoe UI, sans-serif`;
+    context.fillText('NO ONE IS PRESENTING', canvas.width / 2, canvas.height / 2 - canvas.height * 0.035);
+    context.fillStyle = '#99b9a3'; context.font = `500 ${Math.round(canvas.width * 0.026)}px Trebuchet MS, Segoe UI, sans-serif`;
+    context.fillText('Theater screen', canvas.width / 2, canvas.height / 2 + canvas.height * 0.085);
+    this.theaterPlaceholderTexture = new THREE.CanvasTexture(canvas);
+    this.theaterPlaceholderTexture.colorSpace = THREE.SRGBColorSpace;
+    this.theaterTexture = this.theaterPlaceholderTexture;
+    this.theaterScreenMaterial = new THREE.MeshBasicMaterial({ map: this.theaterPlaceholderTexture, toneMapped: false, fog: false });
+
+    const structure = new THREE.Group();
+    structure.position.set(WORLD_CONFIG.theater.x, 0.015, WORLD_CONFIG.theater.z);
+    structure.rotation.set(0, WORLD_CONFIG.theater.rotationY, 0);
+    const frameMaterial = this.material('#39584c');
+    const width = WORLD_CONFIG.theater.width;
+    const height = WORLD_CONFIG.theater.height;
+    const bottomClearance = 1.0;
+    const centerY = bottomClearance + height / 2;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(width + 0.5, height + 0.5, 0.32), frameMaterial);
+    frame.position.set(0, centerY, -0.2); frame.castShadow = true; structure.add(frame);
+    this.theaterScreenBacking = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ color: '#101b17', fog: false }));
+    this.theaterScreenBacking.position.set(0, centerY, -0.02); structure.add(this.theaterScreenBacking);
+    this.theaterScreenMesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), this.theaterScreenMaterial);
+    this.theaterScreenMesh.position.set(0, centerY, 0.015); structure.add(this.theaterScreenMesh);
+    const postHeight = centerY + height / 2 + 0.25;
+    for (const x of [-(width / 2 + 0.42), width / 2 + 0.42]) {
+      const support = new THREE.Mesh(new THREE.BoxGeometry(0.32, postHeight, 0.4), frameMaterial);
+      support.position.set(x, postHeight / 2, -0.2); support.castShadow = true; structure.add(support);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.24, 0.9), frameMaterial);
+      foot.position.set(x, 0.12, -0.14); foot.castShadow = true; structure.add(foot);
+    }
+    const header = new THREE.Mesh(new THREE.BoxGeometry(width + 0.5, 0.24, 0.38), this.material('#547768'));
+    header.position.set(0, centerY + height / 2 + 0.14, -0.2); header.castShadow = true; structure.add(header);
+    this.scene.add(structure);
+
+    this.theaterGlow = new THREE.Mesh(new THREE.CircleGeometry(5.2, 20), new THREE.MeshBasicMaterial({ color: '#70d9ac', transparent: true, opacity: 0.11, depthWrite: false, side: THREE.DoubleSide }));
+    this.theaterGlow.rotation.x = -Math.PI / 2;
+    this.theaterGlow.position.set(WORLD_CONFIG.theater.x + 4.4, 0.04, WORLD_CONFIG.theater.z);
+    this.theaterGlow.visible = false;
+    this.scene.add(this.theaterGlow);
+    this.theaterGlowLight = new THREE.PointLight('#8beac0', 0, 12, 2);
+    this.theaterGlowLight.position.set(WORLD_CONFIG.theater.x + 1.9, 2.4, WORLD_CONFIG.theater.z);
+    this.scene.add(this.theaterGlowLight);
+  }
+
+  private buildTheaterSeats(): void {
+    const wood = this.material('#805b42');
+    const occupiedMaterial = new THREE.MeshStandardMaterial({ color: '#e4b65c', emissive: '#8a5a13', emissiveIntensity: 0.5, flatShading: true });
+    for (const seat of THEATER_SEATS) {
+      const cushion = this.material('#668b73');
+      const group = new THREE.Group();
+      group.position.set(seat.x, 0, seat.z);
+      group.rotation.y = seat.rotationY;
+      const legs = new THREE.BoxGeometry(0.12, 0.58, 0.12);
+      for (const x of [-0.34, 0.34]) for (const z of [-0.31, 0.31]) {
+        const leg = new THREE.Mesh(legs, wood);
+        leg.position.set(x, 0.29, z);
+        leg.castShadow = true;
+        group.add(leg);
+      }
+      const seatBase = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.18, 0.82), cushion);
+      seatBase.position.set(0, 0.62, 0);
+      seatBase.castShadow = true;
+      seatBase.receiveShadow = true;
+      group.add(seatBase);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.9, 0.18), wood);
+      back.position.set(0, 1.12, -0.34);
+      back.castShadow = true;
+      group.add(back);
+      const backInset = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.05), cushion);
+      backInset.position.set(0, 1.12, -0.23);
+      group.add(backInset);
+      const marker = new THREE.Mesh(new THREE.SphereGeometry(0.105, 6, 5), occupiedMaterial);
+      marker.position.set(0, 1.7, -0.38);
+      marker.visible = false;
+      group.add(marker);
+      group.traverse((part) => { if (part instanceof THREE.Mesh) part.castShadow = true; });
+      this.scene.add(group);
+      this.theaterSeats.set(seat.id, { group, cushionMaterial: cushion, marker, occupiedBy: null });
+    }
+  }
+
+  setSeatOccupancy(occupancy: Record<string, string>): void {
+    for (const [seatId, visual] of this.theaterSeats) {
+      visual.occupiedBy = occupancy[seatId] ?? null;
+      visual.cushionMaterial.color.set(visual.occupiedBy ? '#9b7750' : '#668b73');
+      visual.marker.visible = Boolean(visual.occupiedBy);
+    }
+    for (const [playerId, avatar] of this.avatars) {
+      const seatId = Object.entries(occupancy).find(([, occupantId]) => occupantId === playerId)?.[0] ?? null;
+      this.setAvatarSeat(avatar, seatId);
+    }
+  }
+
+  private setAvatarSeat(avatar: Avatar, seatId: string | null): void {
+    const previousSeat = avatar.seatedSeatId ? THEATER_SEATS.find((entry) => entry.id === avatar.seatedSeatId) : null;
+    avatar.seatedSeatId = seatId;
+    avatar.group.scale.y = seatId ? 0.82 : 1;
+    avatar.samples.length = 0;
+    if (!seatId) {
+      if (previousSeat) {
+        avatar.group.position.set(previousSeat.x, 0, previousSeat.z);
+        avatar.targetX = avatar.group.position.x;
+        avatar.targetZ = avatar.group.position.z;
+        avatar.targetFacing = previousSeat.rotationY;
+        avatar.group.rotation.y = previousSeat.rotationY;
+      }
+      return;
+    }
+    const seat = THEATER_SEATS.find((entry) => entry.id === seatId);
+    if (!seat) return;
+    avatar.group.position.set(seat.x, 0, seat.z);
+    avatar.targetX = seat.x;
+    avatar.targetZ = seat.z;
+    avatar.targetFacing = seat.rotationY;
+    avatar.group.rotation.y = seat.rotationY;
+  }
+
+  setLocalSeat(seatId: string | null): void {
+    const local = this.avatars.get(this.localId);
+    if (local) this.setAvatarSeat(local, seatId);
+  }
+
+  get seatedSeatId(): string | null { return this.avatars.get(this.localId)?.seatedSeatId ?? null; }
+
+  nearbySeatId(): string | null {
+    const position = this.getPosition();
+    let best: { id: string; distance: number } | null = null;
+    for (const seat of THEATER_SEATS) {
+      if (this.isSeatOccupied(seat.id)) continue;
+      const distance = Math.hypot(position.x - seat.x, position.z - seat.z);
+      if (distance <= THEATER_SEAT_INTERACTION_RADIUS && (!best || distance < best.distance)) best = { id: seat.id, distance };
+    }
+    return best?.id ?? null;
+  }
+
+  isSeatOccupied(seatId: string): boolean { return Boolean(this.theaterSeats.get(seatId)?.occupiedBy); }
+
+  setTheaterDisplay(video: HTMLVideoElement | null, canvas: HTMLCanvasElement | null, refreshCanvas = false): void {
+    const source = video ?? canvas;
+    const aspect = video?.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight
+      : canvas?.width && canvas.height ? canvas.width / canvas.height : 16 / 9;
+    if (source === this.theaterTextureSource) {
+      if (refreshCanvas && source && this.theaterTexture instanceof THREE.CanvasTexture) this.theaterTexture.needsUpdate = true;
+      this.fitTheaterScreen(aspect);
+      return;
+    }
+    if (this.theaterTexture !== this.theaterPlaceholderTexture) this.theaterTexture.dispose();
+    this.theaterTextureSource = source;
+    if (video) {
+      const texture = new THREE.VideoTexture(video);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      this.theaterTexture = texture;
+    } else if (canvas) {
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      this.theaterTexture = texture;
+    } else {
+      this.theaterTexture = this.theaterPlaceholderTexture;
+    }
+    this.fitTheaterScreen(aspect);
+    this.theaterScreenMaterial.map = this.theaterTexture;
+    this.theaterScreenMaterial.needsUpdate = true;
+  }
+
+  private fitTheaterScreen(aspect: number): void {
+    if (Math.abs(this.theaterScreenAspect - aspect) < 0.001) return;
+    this.theaterScreenAspect = aspect;
+    const maxWidth = WORLD_CONFIG.theater.width, maxHeight = WORLD_CONFIG.theater.height;
+    const width = Math.min(maxWidth, maxHeight * aspect);
+    const height = Math.min(maxHeight, maxWidth / aspect);
+    this.theaterScreenMesh.geometry.dispose();
+    this.theaterScreenMesh.geometry = new THREE.PlaneGeometry(width, height);
+  }
+
+  setTheaterPresenter(name: string | null): void {
+    this.theaterPresenterActive = Boolean(name);
+    this.theaterPresenterLabel.textContent = name ? `${name} is presenting` : '';
+    this.theaterPresenterLabel.classList.toggle('hidden', !name);
+    this.theaterGlow.visible = Boolean(name);
+    this.theaterGlowLight.intensity = name ? 0.7 : 0;
+  }
+
+  setTheaterFocus(focused: boolean): void {
+    if (focused === this.theaterFocused) return;
+    this.theaterFocused = focused;
+    if (!focused) this.theaterParallax.set(0, 0);
+    this.theaterTransition = {
+      fromPosition: this.camera.position.clone(),
+      fromQuaternion: this.camera.quaternion.clone(),
+      fromFov: this.camera.fov,
+      startedAt: performance.now(),
+      focusing: focused,
+    };
+  }
+
+  setTheaterParallax(x: number, y: number): void {
+    this.theaterParallax.set(THREE.MathUtils.clamp(x, -1, 1), THREE.MathUtils.clamp(y, -1, 1));
+  }
+
+  private focusedCameraPose(): { position: THREE.Vector3; quaternion: THREE.Quaternion; fov: number } {
+    this.theaterScreenMesh.updateWorldMatrix(true, false);
+    this.theaterScreenMesh.getWorldPosition(this.theaterFocusTarget);
+    const frontSeat = THEATER_SEATS.find((seat) => seat.id === this.seatedSeatId);
+    const viewerX = frontSeat?.x ?? this.getPosition().x;
+    const verticalFov = THREE.MathUtils.degToRad(70);
+    const aspect = Math.max(0.25, this.camera.aspect);
+    const { width, height } = this.theaterScreenMesh.geometry.parameters;
+    const fitDistance = Math.max(height / 2, width / (2 * aspect)) / Math.tan(verticalFov / 2) * 1.1;
+    const seatDistance = Math.max(0, viewerX - this.theaterFocusTarget.x);
+    const distance = Math.max(fitDistance, seatDistance);
+    this.theaterFocusPosition.set(this.theaterFocusTarget.x + distance, this.theaterFocusTarget.y + this.theaterParallax.y * 0.12, this.theaterFocusTarget.z - this.theaterParallax.x * 0.18);
+    this.theaterOrientation.position.copy(this.theaterFocusPosition);
+    this.theaterOrientation.up.set(0, 1, 0);
+    this.theaterOrientation.lookAt(this.theaterFocusTarget);
+    this.theaterFocusFov = 70;
+    return { position: this.theaterFocusPosition, quaternion: this.theaterOrientation.quaternion, fov: this.theaterFocusFov };
+  }
+
+  private normalCameraPose(local: Avatar): { position: THREE.Vector3; quaternion: THREE.Quaternion; fov: number } {
+    const position = new THREE.Vector3();
+    let target: THREE.Vector3;
+    if (this.photoboothCameraActive) {
+      position.copy(this.photoboothCameraPosition);
+      target = this.photoboothCameraTarget;
+    } else if (this.firstPersonView) {
+      position.copy(local.group.localToWorld(new THREE.Vector3(0, 1.56, 0.02)));
+      const facing = local.group.rotation.y;
+      target = new THREE.Vector3(position.x + Math.sin(facing) * 10, position.y - 0.12, position.z + Math.cos(facing) * 10);
+    } else {
+      position.copy(local.group.localToWorld(this.cameraOffset.clone()));
+      const halfWidth = WORLD_CONFIG.theater.width / 2 + 0.65;
+      if (Math.abs(position.z - WORLD_CONFIG.theater.z) < halfWidth && position.y < 10 && position.y > 0.5 && position.x < WORLD_CONFIG.theater.x + 0.7) {
+        position.x = WORLD_CONFIG.theater.x + 0.7;
+      }
+      target = new THREE.Vector3(local.group.position.x, 0.8, local.group.position.z);
+    }
+    this.theaterOrientation.position.copy(position);
+    this.theaterOrientation.up.set(0, 1, 0);
+    this.theaterOrientation.lookAt(target);
+    return { position, quaternion: this.theaterOrientation.quaternion, fov: 45 };
+  }
+
+  private updateTheaterCamera(local: Avatar, now: number, deltaSeconds: number): void {
+    if (this.theaterFocused || this.theaterTransition?.focusing) {
+      const pose = this.focusedCameraPose();
+      if (this.theaterTransition) {
+        const amount = Math.max(0, Math.min(1, (now - this.theaterTransition.startedAt) / 500));
+        const eased = amount * amount * (3 - 2 * amount);
+        this.camera.position.copy(this.theaterTransition.fromPosition).lerp(pose.position, eased);
+        this.camera.quaternion.copy(this.theaterTransition.fromQuaternion).slerp(pose.quaternion, eased);
+        this.camera.fov = THREE.MathUtils.lerp(this.theaterTransition.fromFov, pose.fov, eased);
+        if (amount >= 1) this.theaterTransition = null;
+      } else {
+        this.camera.position.copy(pose.position);
+        this.camera.quaternion.copy(pose.quaternion);
+        this.camera.fov = pose.fov;
+      }
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+
+    const pose = this.normalCameraPose(local);
+    if (this.theaterTransition) {
+      const amount = Math.max(0, Math.min(1, (now - this.theaterTransition.startedAt) / 500));
+      const eased = amount * amount * (3 - 2 * amount);
+      this.camera.position.copy(this.theaterTransition.fromPosition).lerp(pose.position, eased);
+      this.camera.quaternion.copy(this.theaterTransition.fromQuaternion).slerp(pose.quaternion, eased);
+      this.camera.fov = THREE.MathUtils.lerp(this.theaterTransition.fromFov, pose.fov, eased);
+      if (amount >= 1) this.theaterTransition = null;
+    } else {
+      const damping = 1 - Math.exp(-8 * Math.max(0, deltaSeconds));
+      this.camera.position.lerp(pose.position, damping);
+      this.camera.quaternion.slerp(pose.quaternion, damping);
+      this.camera.fov = pose.fov;
+    }
+    this.camera.updateProjectionMatrix();
+  }
+
+  setTheaterVisibilityHandler(handler: (visible: boolean) => void): void {
+    this.theaterVisibilityHandler = handler;
+    handler(this.theaterScreenVisible);
   }
 
   private buildJukebox(): void {
@@ -328,7 +655,7 @@ export class GameScene {
     this.labels.appendChild(label);
     const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
     this.crocodileSlainCounts.set(player.id, crocodilesSlain);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe], hat, crown, crocodileRobe, speaking: false, crocodilesSlain };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null };
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
@@ -514,6 +841,7 @@ export class GameScene {
       this.updateCrocodileRobeAppearance();
     }
     avatar.fishing = player.fishing;
+    if (player.seatedSeatId !== undefined && player.seatedSeatId !== avatar.seatedSeatId) this.setAvatarSeat(avatar, player.seatedSeatId);
     this.setPhotoboothState(player.id, player.inPhotobooth ?? false);
     if (player.holdingFish !== undefined) this.setHoldingFish(player.id, player.holdingFish);
     avatar.reelActive = player.fishing === 'fighting';
@@ -763,7 +1091,7 @@ export class GameScene {
     this.bonks.delete(id);
     this.updateCrocodileRobeAppearance();
   }
-  clearPlayers(): void { for (const id of [...this.avatars.keys()]) this.remove(id); this.localId = ''; this.crocodileSlainCounts.clear(); this.updateCrocodileRobeAppearance(); }
+  clearPlayers(): void { this.setSeatOccupancy({}); for (const id of [...this.avatars.keys()]) this.remove(id); this.localId = ''; this.crocodileSlainCounts.clear(); this.updateCrocodileRobeAppearance(); }
   getPosition(): THREE.Vector3 { const avatar = this.avatars.get(this.localId); return avatar?.group.position ?? new THREE.Vector3(); }
   setPosition(x: number, z: number): void { const avatar = this.avatars.get(this.localId); if (avatar) { avatar.group.position.x = x; avatar.group.position.z = z; } }
   setLocalMotion(x: number, z: number, rotY: number): void {
@@ -901,6 +1229,25 @@ export class GameScene {
     bubble.expiresAt = performance.now() + 3600;
   }
 
+  private updateTheaterLabel(): void {
+    if (!this.theaterPresenterActive) { this.theaterPresenterLabel.classList.add('hidden'); return; }
+    this.ray.copy(this.theaterScreenLabelPosition).project(this.camera);
+    this.theaterPresenterLabel.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
+    this.theaterPresenterLabel.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
+    this.theaterPresenterLabel.classList.toggle('hidden', this.ray.z < -1 || this.ray.z > 1 || Math.abs(this.ray.x) > 1.1 || Math.abs(this.ray.y) > 1.1);
+  }
+
+  private updateTheaterScreenVisibility(): void {
+    this.theaterScreenMesh.updateWorldMatrix(true, false);
+    this.theaterProjectionView.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this.theaterFrustum.setFromProjectionMatrix(this.theaterProjectionView);
+    this.theaterScreenMesh.getWorldPosition(this.theaterScreenWorldPosition);
+    const visible = this.camera.position.distanceTo(this.theaterScreenWorldPosition) < 72 && this.theaterFrustum.intersectsObject(this.theaterScreenMesh);
+    if (visible === this.theaterScreenVisible) return;
+    this.theaterScreenVisible = visible;
+    this.theaterVisibilityHandler?.(visible);
+  }
+
   render(deltaSeconds = 1 / 60): void {
     const serverNow = Date.now() + this.serverClockOffset;
     const portalPulse = Math.sin(serverNow * 0.0025);
@@ -910,24 +1257,11 @@ export class GameScene {
     const local = this.avatars.get(this.localId);
     if (local) {
       local.group.rotation.y += this.angleDelta(local.group.rotation.y, local.targetFacing) * 0.24;
-      if (this.photoboothCameraActive) {
-        const damping = 1 - Math.exp(-7 * Math.max(0, deltaSeconds));
-        this.camera.position.lerp(this.photoboothCameraPosition, damping);
-        this.camera.lookAt(this.photoboothCameraTarget);
-      } else if (this.firstPersonView) {
-        const eye = local.group.localToWorld(new THREE.Vector3(0, 1.56, 0.02));
-        const facing = local.group.rotation.y;
-        const damping = 1 - Math.exp(-15 * Math.max(0, deltaSeconds));
-        this.camera.position.lerp(eye, damping);
-        this.camera.lookAt(eye.x + Math.sin(facing) * 10, eye.y - 0.12, eye.z + Math.cos(facing) * 10);
-      } else {
-        const target = local.group.localToWorld(this.cameraOffset.clone());
-        const damping = 1 - Math.exp(-8 * Math.max(0, deltaSeconds));
-        this.camera.position.lerp(target, damping);
-        this.camera.lookAt(local.group.position.x, 0.8, local.group.position.z);
-      }
+      this.updateTheaterCamera(local, performance.now(), deltaSeconds);
     }
     this.camera.updateMatrixWorld();
+    this.updateTheaterLabel();
+    this.updateTheaterScreenVisibility();
     this.ray.set(PHOTOBOOTH_CONFIG.position.x, 5.1, PHOTOBOOTH_CONFIG.position.z).project(this.camera);
     this.photoboothLabel.style.left = `${Math.round((this.ray.x * 0.5 + 0.5) * innerWidth)}px`;
     this.photoboothLabel.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;

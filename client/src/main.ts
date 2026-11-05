@@ -15,6 +15,7 @@ import { isWeatherType, WEATHER_CONFIG, type WeatherSnapshot, type WeatherType }
 import { VoiceClient, type VoiceConnectionStatus } from './voice';
 import { MusicManager, type MusicTrackId } from './music';
 import { Jukebox } from './jukebox';
+import { Theater } from './theater';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const appRoot = document.querySelector<HTMLElement>('#app')!;
@@ -141,6 +142,29 @@ const music = new MusicManager();
 const speakingPlayers = new Set<string>();
 let keys = new Set<string>();
 let network: Network;
+const theater = new Theater(appRoot, {
+  start: (mode) => network.startTheater(mode),
+  stop: () => network.stopTheater(),
+  page: (page) => network.setTheaterPage(page),
+  freeBrowse: (enabled) => network.setTheaterFreeBrowse(enabled),
+  setPdf: (url) => network.setTheaterPdf(url),
+  signal: (targetId, type, payload) => network.theaterSignal(targetId, type, payload),
+  upload: (room, token, file) => network.uploadTheaterPdf(room, token, file),
+  display: (video, canvas, refreshCanvas) => scene.setTheaterDisplay(video, canvas, refreshCanvas),
+  focus: (focused) => {
+    scene.setTheaterFocus(focused);
+    appRoot.classList.toggle('theater-focused', focused);
+    if (focused) { keys.clear(); cancelMouseTurn(); sendLocalMovement(true); }
+  },
+  presenter: (name) => scene.setTheaterPresenter(name),
+});
+scene.setTheaterVisibilityHandler((visible) => theater.setDisplayVisible(visible));
+const seatPrompt = document.createElement('button');
+seatPrompt.type = 'button';
+seatPrompt.className = 'seat-proximity-prompt hidden';
+seatPrompt.innerHTML = '<kbd>E</kbd><span>Press E to sit</span>';
+appRoot.append(seatPrompt);
+seatPrompt.addEventListener('click', () => interactWithSeat());
 const jukebox = new Jukebox(document.querySelector<HTMLElement>('#jukebox-root')!, {
   pauseMovement: () => {
     keys.clear();
@@ -544,6 +568,7 @@ function updateChickenScore(score: number): void {
 
 function enterCrocodileArena(snapshot: ArenaSnapshot): void {
   arenaMode = true;
+  theater.setOccluded(true);
   portalPrompt.classList.add('hidden');
   cancelMouseTurn();
   keys.clear();
@@ -554,6 +579,7 @@ function enterCrocodileArena(snapshot: ArenaSnapshot): void {
 
 function exitCrocodileArena(respawned: boolean): void {
   arenaMode = false;
+  theater.setOccluded(false);
   arenaView.close();
   appRoot.classList.remove('in-arena');
   keys.clear();
@@ -723,6 +749,21 @@ function sendLocalMovement(force = false): void {
   lastSentMotion = { x: position.x, z: position.z, rotY, moving, inPhotobooth: isPhotoboothMode };
   lastMovementSentAt = now;
   lastMovementHeartbeatAt = now;
+}
+
+function standFromSeat(): void {
+  if (!scene.seatedSeatId) return;
+  network.standFromSeat();
+  scene.setLocalSeat(null);
+  theater.setSeated(false);
+  sendLocalMovement(true);
+}
+
+function interactWithSeat(): void {
+  if (!joined) return;
+  if (scene.seatedSeatId) { standFromSeat(); return; }
+  const seatId = scene.nearbySeatId();
+  if (seatId && !scene.isSeatOccupied(seatId)) network.sitAtSeat(seatId);
 }
 
 function isNearPhotobooth(): boolean {
@@ -1315,6 +1356,9 @@ function join(room: string, name: string): void {
       applyWeather(message.weather, false);
       selfId = message.selfId;
       voiceResumeToken = message.resumeToken;
+      theater.setSession(selfId, message.room, message.resumeToken);
+      theater.setOccluded(false);
+      theater.applyState(message.theater);
       jukebox.setClockOffset(serverClockOffset);
       movementSequence = 0; lastSentMotion = null; lastMovementSentAt = 0; lastMovementHeartbeatAt = 0;
       currentRoom = message.room;
@@ -1322,6 +1366,7 @@ function join(room: string, name: string): void {
       document.querySelector('h1')!.innerHTML = 'Welcome to<br/><span>Mengai</span>';
       document.querySelector('.intro')!.textContent = 'Find a quiet spot by the water and see who else is out fishing.';
       scene.clearPlayers();
+      seatPrompt.classList.add('hidden');
       scene.setLocalId(selfId);
       scene.setFirstPersonView(firstPersonView);
       syncRoomPlayerRoster(message.players);
@@ -1330,6 +1375,8 @@ function join(room: string, name: string): void {
       updateChickenScore(me?.chickenScore ?? 0);
       if (me) scene.addLocal(me);
       for (const player of message.players) if (player.id !== selfId) scene.upsert(player, message.serverTime);
+      scene.setSeatOccupancy(message.seatOccupancy ?? {});
+      theater.setSeated(Boolean(scene.seatedSeatId));
       scene.setStones(message.stones ?? []);
       scene.setChickens(message.chickens ?? [], message.serverTime);
       scene.setCampfireCooking(message.campfireCooking ?? null);
@@ -1378,6 +1425,7 @@ function join(room: string, name: string): void {
     speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
     playerJoined: (player, serverTime) => { observeServerTime(serverTime); roomPlayers.set(player.id, player); scene.upsert(player, serverTime); updateCount(); renderArenaParty(); renderVoicePlayers(); showToast(`${player.name} joined the pond`); },
     playerLeft: (id) => {
+      theater.playerLeft(id);
       voice.removeGamePlayer(id);
       speakingPlayers.delete(id);
       syncMusicDuck();
@@ -1443,6 +1491,13 @@ function join(room: string, name: string): void {
       for (const playerId of event.recipientIds) scene.showEatBubble(playerId, species.name);
     },
     weatherChanged: (weather) => applyWeather(weather, true),
+    theaterState: (state) => theater.applyState(state),
+    theaterSignal: (signal) => theater.handleSignal(signal),
+    theaterError: (message) => theater.handleError(message),
+    seatState: (occupancy) => {
+      scene.setSeatOccupancy(occupancy);
+      theater.setSeated(Boolean(scene.seatedSeatId));
+    },
     jukeboxState: (current, queue, skipVotes) => {
       jukebox.setState(current, queue, skipVotes);
       scene.setJukeboxPlaying(current !== null);
@@ -1480,6 +1535,7 @@ function join(room: string, name: string): void {
     portalExited: (respawned) => exitCrocodileArena(respawned),
     disconnected: () => {
       joined = false;
+      theater.reset();
       roomPlayers.clear();
       currentArenaParty = null;
       incomingArenaInvites.clear();
@@ -1496,6 +1552,7 @@ function join(room: string, name: string): void {
       if (isPhotoboothMode) exitPhotobooth();
       cancelMouseTurn();
       scene.clearPlayers();
+      seatPrompt.classList.add('hidden');
       chatUi.classList.add('hidden');
       setChatOpen(false);
       leaderboardUi.classList.add('hidden');
@@ -1637,14 +1694,19 @@ function cancelMouseTurn(): void {
 }
 
 gameCanvas.addEventListener('pointerdown', (event) => {
-  if (!joined || isPhotoboothMode || reelGame || scene.fishingState() !== 'idle' || event.pointerType !== 'mouse' || event.button !== 0) return;
+  if (!joined || theater.isFocused || theater.isMenuOpen || isPhotoboothMode || reelGame || scene.fishingState() !== 'idle' || event.pointerType !== 'mouse' || event.button !== 0) return;
   if (document.pointerLockElement === gameCanvas) return;
   event.preventDefault();
   try { void Promise.resolve(gameCanvas.requestPointerLock()).catch(() => {}); }
   catch { showToast('Mouse look could not be enabled. Use A/D to turn.'); }
 });
 gameCanvas.addEventListener('pointermove', (event) => {
-  if (document.pointerLockElement !== gameCanvas || !joined || isPhotoboothMode || reelGame || scene.fishingState() !== 'idle') return;
+  if (!joined) return;
+  if (theater.isFocused) {
+    scene.setTheaterParallax((event.clientX / innerWidth - 0.5) * 2, (event.clientY / innerHeight - 0.5) * 2);
+    return;
+  }
+  if (document.pointerLockElement !== gameCanvas || isPhotoboothMode || reelGame || scene.fishingState() !== 'idle') return;
   mouseTurnRemaining = Math.max(-0.5, Math.min(0.5, mouseTurnRemaining - event.movementX * 0.006));
   event.preventDefault();
 });
@@ -1713,6 +1775,25 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (scene.seatedSeatId && ['w', 'a', 's', 'd'].includes(key)) {
+    event.preventDefault();
+    if (event.repeat) return;
+    if (theater.isFocused) theater.toggleFocusFromKeyboard();
+    standFromSeat();
+    keys.add(key);
+    return;
+  }
+  if (key === 'f' && joined && !event.repeat && theater.canFocus) {
+    event.preventDefault();
+    theater.toggleFocusFromKeyboard();
+    return;
+  }
+  if (key === 'e' && joined && !event.repeat && scene.seatedSeatId) {
+    event.preventDefault();
+    interactWithSeat();
+    return;
+  }
+  if (theater.isMenuOpen || theater.isFocused) return;
   if (key === 'j' && joined && !event.repeat && isNearJukebox()) {
     event.preventDefault();
     openJukebox();
@@ -1721,6 +1802,16 @@ window.addEventListener('keydown', (event) => {
   if (key === 'v' && joined && voice.isPushToTalk) {
     event.preventDefault();
     if (!event.repeat) void voice.setPushToTalkHeld(true);
+    return;
+  }
+  if (key === 'e' && joined && !event.repeat && (scene.seatedSeatId || scene.nearbySeatId())) {
+    event.preventDefault();
+    interactWithSeat();
+    return;
+  }
+  if (key === 'e' && joined && !event.repeat && theater.isNearby) {
+    event.preventDefault();
+    theater.openMenu();
     return;
   }
   if (!arenaMode && event.key === 'Enter' && !portalPrompt.classList.contains('hidden') && !(event.target instanceof HTMLButtonElement)) {
@@ -1882,7 +1973,7 @@ function animate(now: number): void {
       lastArenaMoveAt = now;
     }
   }
-  if (joined && !arenaMode && !isPhotoboothMode && !jukebox.isOpen && !reelGame && scene.fishingState() === 'idle') {
+  if (joined && !arenaMode && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
     let turn = keyboardTurn;
@@ -1903,12 +1994,22 @@ function animate(now: number): void {
   if (joined) {
     voice.updateSpatialAudio(scene.mapPlayers(), selfId, now);
     if (arenaMode) {
+      theater.setNearby(false);
+      seatPrompt.classList.add('hidden');
       photoboothPrompt.classList.add('hidden');
       jukeboxPrompt.classList.add('hidden');
       fishPrompt.classList.add('hidden');
     } else {
       sendLocalMovement(false);
       const distance = Math.hypot(scene.getPosition().x, scene.getPosition().z);
+      const theaterDistance = Math.hypot(scene.getPosition().x - WORLD_CONFIG.theater.x, scene.getPosition().z - WORLD_CONFIG.theater.z);
+      theater.setNearby(!isPhotoboothMode && theaterDistance <= WORLD_CONFIG.theater.interactionRadius);
+      const nearbySeat = !isPhotoboothMode && scene.nearbySeatId();
+      const seatPromptVisible = Boolean(scene.seatedSeatId || nearbySeat);
+      seatPrompt.classList.toggle('hidden', !seatPromptVisible || theater.isFocused || theater.isMenuOpen);
+      const seatLabel = seatPrompt.querySelector('span');
+      if (seatLabel) seatLabel.textContent = scene.seatedSeatId ? 'Press E to stand' : 'Press E to sit';
+      seatPrompt.disabled = false;
       const fishing = scene.fishingState();
       const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
       photoboothPrompt.classList.toggle('hidden', !nearPhotobooth);
@@ -1923,6 +2024,7 @@ function animate(now: number): void {
       updatePortalPrompt();
     }
   } else {
+    theater.setNearby(false);
     photoboothPrompt.classList.add('hidden');
     jukeboxPrompt.classList.add('hidden');
     photoboothEnter.disabled = true;

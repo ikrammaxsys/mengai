@@ -19,6 +19,7 @@ import { awardChickenScore, chickenSnapshots, hitChickenAt, updateChickenFlock }
 import { CHICKEN_CONFIG } from '../../shared/chickenConfig.js';
 import { JsonGameDataStore, type PersistentGameDataStore } from './persistence.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
+import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/theaterSeats.js';
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
 import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
@@ -29,6 +30,8 @@ await initializeFileLogging();
 const PORT = Number(process.env.PORT ?? 3002);
 const execFileAsync = promisify(execFile);
 const JUKEBOX_CACHE_DIR = resolve(process.cwd(), 'cache');
+const THEATER_DIR = join(JUKEBOX_CACHE_DIR, 'theater');
+const THEATER_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const JUKEBOX_MUSIC_DIR = join(JUKEBOX_CACHE_DIR, 'music');
 const JUKEBOX_THUMB_DIR = join(JUKEBOX_CACHE_DIR, 'thumb');
 const configuredCacheLimit = Number(process.env.JUKEBOX_CACHE_MAX_BYTES);
@@ -48,6 +51,15 @@ const server = createServer((request, response) => {
   if (request.method === 'GET' && pathname === '/api/rooms') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     response.end(JSON.stringify({ rooms: rooms.list() }));
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/theater/upload') {
+    void uploadTheaterPdf(request, response, requestUrl);
+    return;
+  }
+  const theaterFileMatch = /^\/api\/theater\/files\/([0-9a-f-]{36})\.pdf$/i.exec(pathname);
+  if (request.method === 'GET' && theaterFileMatch) {
+    void serveTheaterPdf(response, theaterFileMatch[1]);
     return;
   }
   if (request.method === 'GET' && pathname === '/api/jukebox/search') {
@@ -96,6 +108,89 @@ const JUKEBOX_MAX_QUEUE_LENGTH = 10;
 const youtubeSearchCache = new Map<string, { expiresAt: number; results: YouTubeSearchResult[] }>();
 const youtubeVideoCache = new Map<string, { expiresAt: number; result: YouTubeSearchResult }>();
 const youtubeRequests = new Map<string, number[]>();
+
+function jsonResponse(response: import('node:http').ServerResponse, status: number, body: object): void {
+  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  response.end(JSON.stringify(body));
+}
+
+async function uploadTheaterPdf(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, requestUrl: URL): Promise<void> {
+  const roomId = requestUrl.searchParams.get('room') ?? '';
+  const token = /^Bearer (.+)$/.exec(request.headers.authorization ?? '')?.[1];
+  const room = rooms.getRoom(roomId);
+  const player = token ? rooms.findPlayerByResumeToken(roomId, token) : undefined;
+  if (!room || !player || player.disconnectedAt !== null || room.theater.currentPresenterId !== player.id || room.theater.mode !== 'pdf') {
+    request.resume();
+    jsonResponse(response, 403, { error: 'Only the active PDF presenter can upload a file.' });
+    return;
+  }
+  if ((request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase() !== 'application/pdf') {
+    request.resume();
+    jsonResponse(response, 415, { error: 'Upload a PDF file.' });
+    return;
+  }
+  const contentLength = Number(request.headers['content-length']);
+  if (Number.isFinite(contentLength) && contentLength > THEATER_MAX_FILE_BYTES) {
+    request.resume();
+    jsonResponse(response, 413, { error: 'PDF files are limited to 20 MB.' });
+    return;
+  }
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  try {
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      byteLength += buffer.length;
+      if (byteLength > THEATER_MAX_FILE_BYTES) {
+        jsonResponse(response, 413, { error: 'PDF files are limited to 20 MB.' });
+        request.resume();
+        return;
+      }
+      chunks.push(buffer);
+    }
+    const bytes = Buffer.concat(chunks);
+    if (bytes.length < 5 || bytes.subarray(0, 5).toString('ascii') !== '%PDF-') {
+      jsonResponse(response, 415, { error: 'The selected file is not a valid PDF.' });
+      return;
+    }
+    const currentRoom = rooms.getRoom(roomId);
+    const currentPlayer = rooms.findPlayerByResumeToken(roomId, token!);
+    if (!currentRoom || !currentPlayer || currentPlayer.disconnectedAt !== null || currentRoom.theater.currentPresenterId !== currentPlayer.id || currentRoom.theater.mode !== 'pdf') {
+      jsonResponse(response, 403, { error: 'The PDF presentation ended before the upload finished.' });
+      return;
+    }
+    const fileId = randomUUID();
+    await mkdir(THEATER_DIR, { recursive: true });
+    await writeFile(join(THEATER_DIR, `${fileId}.pdf`), bytes, { flag: 'wx' });
+    jsonResponse(response, 201, { url: `/api/theater/files/${fileId}.pdf` });
+  } catch (error) {
+    if (!response.headersSent) jsonResponse(response, 500, { error: 'The PDF could not be saved.' });
+    console.error('[theater] PDF upload failed:', error);
+  }
+}
+
+async function serveTheaterPdf(response: import('node:http').ServerResponse, fileId: string): Promise<void> {
+  try {
+    const path = join(THEATER_DIR, `${fileId}.pdf`);
+    const file = await stat(path);
+    response.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': file.size, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+    const stream = createReadStream(path);
+    stream.on('error', () => response.destroy());
+    stream.pipe(response);
+  } catch {
+    jsonResponse(response, 404, { error: 'This shared PDF is no longer available.' });
+  }
+}
+
+function clearTheater(room: Room): void {
+  const pdfUrl = room.theater.pdfUrl;
+  room.theater = { currentPresenterId: null, presenterName: null, mode: 'none', pdfUrl: null, currentPage: 1, freeBrowse: false };
+  if (pdfUrl) {
+    const fileId = /\/api\/theater\/files\/([0-9a-f-]{36})\.pdf$/i.exec(pdfUrl)?.[1];
+    if (fileId) void rm(join(THEATER_DIR, `${fileId}.pdf`), { force: true });
+  }
+  broadcast(room, { type: 'theater:state', state: { ...room.theater } });
+}
 
 interface YouTubeSearchResult {
   videoId: string;
@@ -519,6 +614,10 @@ function broadcast(room: Room, message: object, except?: WebSocket): void {
   }
 }
 
+function broadcastSeatOccupancy(room: Room): void {
+  broadcast(room, { type: 'seat:state', occupancy: Object.fromEntries(room.seatOccupancy) });
+}
+
 function broadcastBigCatch(room: Room, message: object): void {
   if (BROADCAST_SCOPE === 'server') {
     for (const targetRoom of rooms.all()) broadcast(targetRoom, message);
@@ -587,6 +686,8 @@ function roomSnapshot(room: Room, player: Player) {
     stones: rooms.stoneSnapshot(room),
     campfireCooking: room.campfireCooking,
     weather: room.weather,
+    theater: { ...room.theater },
+    seatOccupancy: Object.fromEntries(room.seatOccupancy),
     chickens: chickenSnapshots(room.chickens),
     crocodileScores: [...room.crocodileScores.values()].sort((a, b) => b.count - a.count),
     resumeToken: player.resumeToken,
@@ -867,6 +968,113 @@ wss.on('connection', (socket) => {
     const room = rooms.getRoom(membership.roomId);
     if (!player || !room) return;
 
+    if (message.type === 'seat:sit') {
+      const seatId = typeof message.seatId === 'string' ? message.seatId : '';
+      const seat = THEATER_SEATS.find((entry) => entry.id === seatId);
+      if (!seat || player.seatedSeatId || player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.carryingStoneId) return;
+      const distance = Math.hypot(player.x - seat.x, player.z - seat.z);
+      if (distance > THEATER_SEAT_INTERACTION_RADIUS || room.seatOccupancy.has(seatId)) return;
+      player.seatedSeatId = seatId;
+      player.x = seat.x;
+      player.z = seat.z;
+      player.facing = seat.rotationY;
+      player.moving = false;
+      player.velocityX = 0;
+      player.velocityZ = 0;
+      player.lastMoveAt = Date.now();
+      room.seatOccupancy.set(seatId, player.id);
+      broadcastSeatOccupancy(room);
+      return;
+    }
+
+    if (message.type === 'seat:stand') {
+      if (rooms.releaseSeat(room, player.id)) {
+        player.moving = false;
+        player.velocityX = 0;
+        player.velocityZ = 0;
+        player.lastMoveAt = Date.now();
+        broadcastSeatOccupancy(room);
+      }
+      return;
+    }
+
+    if (message.type === 'theater:start') {
+      const mode = message.mode;
+      if ((mode !== 'screen' && mode !== 'pdf') || player.arenaInstanceId || room.theater.mode !== 'none') {
+        send(socket, { type: 'theater:error', message: room.theater.mode !== 'none' ? `${room.theater.presenterName ?? 'Someone'} is already presenting.` : 'You cannot start presenting right now.' });
+        return;
+      }
+      room.theater = { currentPresenterId: player.id, presenterName: player.name, mode, pdfUrl: null, currentPage: 1, freeBrowse: false };
+      broadcast(room, { type: 'theater:state', state: { ...room.theater } });
+      return;
+    }
+
+    if (message.type === 'theater:stop') {
+      if (room.theater.currentPresenterId !== player.id) {
+        send(socket, { type: 'theater:error', message: 'Only the current presenter can stop the presentation.' });
+        return;
+      }
+      clearTheater(room);
+      return;
+    }
+
+    if (message.type === 'theater:file') {
+      const pdfUrl = typeof message.pdfUrl === 'string' ? message.pdfUrl : '';
+      const fileId = /^\/api\/theater\/files\/([0-9a-f-]{36})\.pdf$/i.exec(pdfUrl)?.[1];
+      if (room.theater.currentPresenterId !== player.id || room.theater.mode !== 'pdf' || !fileId) {
+        send(socket, { type: 'theater:error', message: 'The PDF could not be attached to this presentation.' });
+        return;
+      }
+      try { await stat(join(THEATER_DIR, `${fileId}.pdf`)); }
+      catch { send(socket, { type: 'theater:error', message: 'The uploaded PDF is no longer available.' }); return; }
+      const previousPdfUrl = room.theater.pdfUrl;
+      room.theater.pdfUrl = pdfUrl;
+      room.theater.currentPage = 1;
+      if (previousPdfUrl && previousPdfUrl !== pdfUrl) {
+        const previousId = /\/api\/theater\/files\/([0-9a-f-]{36})\.pdf$/i.exec(previousPdfUrl)?.[1];
+        if (previousId) void rm(join(THEATER_DIR, `${previousId}.pdf`), { force: true });
+      }
+      broadcast(room, { type: 'theater:state', state: { ...room.theater } });
+      return;
+    }
+
+    if (message.type === 'theater:page') {
+      if (room.theater.currentPresenterId !== player.id || room.theater.mode !== 'pdf') {
+        send(socket, { type: 'theater:error', message: 'Only the PDF presenter can change pages.' });
+        return;
+      }
+      const page = Number(message.currentPage);
+      if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) return;
+      room.theater.currentPage = page;
+      broadcast(room, { type: 'theater:state', state: { ...room.theater } });
+      return;
+    }
+
+    if (message.type === 'theater:freeBrowse') {
+      if (room.theater.currentPresenterId !== player.id || room.theater.mode !== 'pdf') {
+        send(socket, { type: 'theater:error', message: 'Only the PDF presenter can change free browse.' });
+        return;
+      }
+      room.theater.freeBrowse = Boolean(message.freeBrowse);
+      broadcast(room, { type: 'theater:state', state: { ...room.theater } });
+      return;
+    }
+
+    if (message.type === 'theater:signal') {
+      const targetId = typeof message.targetId === 'string' ? message.targetId : '';
+      const signalType = message.signalType;
+      const target = room.players.get(targetId);
+      const isPresenter = room.theater.currentPresenterId === player.id;
+      const directionIsValid = (signalType === 'viewer' && !isPresenter && targetId === room.theater.currentPresenterId)
+        || (signalType === 'offer' && isPresenter)
+        || (signalType === 'answer' && !isPresenter && targetId === room.theater.currentPresenterId)
+        || (signalType === 'ice' && (isPresenter ? targetId !== player.id : targetId === room.theater.currentPresenterId));
+      if (room.theater.mode !== 'screen' || !target || target.disconnectedAt !== null || !directionIsValid) return;
+      if (signalType === 'offer' && targetId === room.theater.currentPresenterId) return;
+      send(target.socket, { type: 'theater:signal', fromId: player.id, signalType, payload: message.payload });
+      return;
+    }
+
     if (message.type === 'arenaPartyCreate') {
       if (player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle') {
         send(socket, { type: 'notice', message: 'Finish your current activity before forming an arena party.' });
@@ -1102,7 +1310,17 @@ wss.on('connection', (socket) => {
         player.lastMoveAt = Date.now();
         return;
       }
+      if (player.seatedSeatId && !Boolean(message.moving)) {
+        player.lastMoveAt = Date.now();
+        return;
+      }
       const x = Number(message.x), z = Number(message.z), rotY = Number(message.rotY);
+      if (player.seatedSeatId && (Boolean(message.moving) || Math.hypot(x - player.x, z - player.z) > 0.2)) {
+        if (rooms.releaseSeat(room, player.id)) {
+          broadcastSeatOccupancy(room);
+        }
+        player.lastMoveAt = Date.now();
+      }
       const now = Date.now();
       const elapsed = Math.min(1, Math.max(0, (now - player.lastMoveAt) / 1000));
       const previous = { x: player.x, z: player.z, rotY: player.facing };
@@ -1382,6 +1600,8 @@ wss.on('connection', (socket) => {
     const departing = rooms.getPlayer(membership.roomId, membership.playerId);
     const existingRoom = rooms.getRoom(membership.roomId);
     if (departing && existingRoom) {
+      if (existingRoom.theater.currentPresenterId === departing.id) clearTheater(existingRoom);
+      if (rooms.releaseSeat(existingRoom, departing.id)) broadcastSeatOccupancy(existingRoom);
       const partyId = playerArenaParties.get(departing.id);
       const party = partyId ? arenaParties.get(partyId) : undefined;
       if (party) removeArenaPartyMember(existingRoom, party, departing.id);
@@ -1596,6 +1816,8 @@ setInterval(() => {
 
 await persistentData.load();
 await mkdir(JUKEBOX_CACHE_DIR, { recursive: true });
+await rm(THEATER_DIR, { recursive: true, force: true });
+await mkdir(THEATER_DIR, { recursive: true });
 const toolChecks = await Promise.allSettled([
   execFileAsync(YT_DLP, ['--version'], { timeout: 5000, windowsHide: true }),
   execFileAsync(FFMPEG, ['-version'], { timeout: 5000, windowsHide: true }),

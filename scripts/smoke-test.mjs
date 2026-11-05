@@ -148,6 +148,7 @@ try {
   skye.moveSeq = 0;
   assert.deepEqual(skyeJoined.chickens.map((chicken) => chicken.id), riverJoined.chickens.map((chicken) => chicken.id),
     'same-room joiners should receive the same chicken flock');
+  assert.equal(riverJoined.theater.mode, 'none', 'new rooms should start with an idle theater');
   await waitFor(river, 'player_joined');
   const voiceUrl = `http://127.0.0.1:${port}/voice-token?room=pond-test&playerId=${encodeURIComponent(riverJoined.selfId)}`;
   const unauthorizedVoiceToken = await fetch(voiceUrl);
@@ -173,6 +174,40 @@ try {
   const roomsResponse = await fetch(`http://127.0.0.1:${port}/api/rooms`);
   const roomList = await roomsResponse.json();
   assert.equal(roomList.rooms.find((room) => room.room === 'pond-test').playerCount, 2);
+
+  river.send(JSON.stringify({ type: 'theater:start', mode: 'pdf' }));
+  const pdfPresentation = await waitFor(river, 'theater:state', (message) => message.state.currentPresenterId === riverJoined.selfId);
+  assert.equal(pdfPresentation.state.mode, 'pdf');
+  await waitFor(skye, 'theater:state', (message) => message.state.currentPresenterId === riverJoined.selfId);
+  skye.send(JSON.stringify({ type: 'theater:start', mode: 'screen' }));
+  await waitFor(skye, 'theater:error', (message) => /already presenting/i.test(message.message));
+  skye.send(JSON.stringify({ type: 'theater:page', currentPage: 4 }));
+  await waitFor(skye, 'theater:error', (message) => /Only the PDF presenter/i.test(message.message));
+  river.send(JSON.stringify({ type: 'theater:page', currentPage: 3 }));
+  await waitFor(skye, 'theater:state', (message) => message.state.currentPage === 3);
+  river.send(JSON.stringify({ type: 'theater:freeBrowse', freeBrowse: true }));
+  await waitFor(skye, 'theater:state', (message) => message.state.freeBrowse);
+
+  const lateViewer = await connect();
+  lateViewer.send(JSON.stringify({ type: 'join', room: 'pond-test', name: 'LateViewer' }));
+  const lateViewerJoined = await waitFor(lateViewer, 'joined');
+  assert.equal(lateViewerJoined.theater.currentPresenterId, riverJoined.selfId, 'late joiners should receive the active presenter');
+  assert.equal(lateViewerJoined.theater.currentPage, 3, 'late joiners should receive the current PDF page');
+
+  const pdfUpload = await fetch(`http://127.0.0.1:${port}/api/theater/upload?room=pond-test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/pdf', Authorization: `Bearer ${riverJoined.resumeToken}` },
+    body: Buffer.from('%PDF-1.4\n%%EOF'),
+  });
+  assert.equal(pdfUpload.status, 201, 'the active presenter should be able to upload a PDF');
+  const { url: pdfUrl } = await pdfUpload.json();
+  river.send(JSON.stringify({ type: 'theater:file', pdfUrl }));
+  await waitFor(skye, 'theater:state', (message) => message.state.pdfUrl === pdfUrl);
+  skye.send(JSON.stringify({ type: 'theater:stop' }));
+  await waitFor(skye, 'theater:error', (message) => /Only the current presenter/i.test(message.message));
+  river.send(JSON.stringify({ type: 'theater:stop' }));
+  await waitFor(skye, 'theater:state', (message) => message.state.mode === 'none');
+  assert.equal((await fetch(`http://127.0.0.1:${port}${pdfUrl}`)).status, 404, 'stopping should remove the uploaded room PDF');
 
   const duplicate = await connect();
   duplicate.send(JSON.stringify({ type: 'join', room: 'pond-test', name: 'river' }));
@@ -425,7 +460,21 @@ try {
   await delay(150);
   assert.equal(distantFriend.messages.some((message) => message.type === 'arenaState' || message.type === 'portalEnter'), false,
     'arena snapshots should only be sent to members of the arena instance');
-  console.log('Smoke test passed: multiplayer gameplay, stone-hit fishing interruption, inventory privacy/release, held-fish sync, reconnect and JSON restart restoration, campfire cooking, range-limited sharing, and invite-based shared arena entry.');
+
+  const theaterOwner = await connect();
+  theaterOwner.send(JSON.stringify({ type: 'join', room: 'theater-disconnect-test', name: 'Owner' }));
+  const theaterOwnerJoined = await waitFor(theaterOwner, 'joined');
+  const theaterWatcher = await connect();
+  theaterWatcher.send(JSON.stringify({ type: 'join', room: 'theater-disconnect-test', name: 'Watcher' }));
+  const theaterWatcherJoined = await waitFor(theaterWatcher, 'joined');
+  theaterOwner.send(JSON.stringify({ type: 'theater:start', mode: 'screen' }));
+  await waitFor(theaterOwner, 'theater:state', (message) => message.state.currentPresenterId === theaterOwnerJoined.selfId);
+  await waitFor(theaterWatcher, 'theater:state', (message) => message.state.currentPresenterId === theaterOwnerJoined.selfId);
+  theaterWatcher.send(JSON.stringify({ type: 'theater:signal', targetId: theaterOwnerJoined.selfId, signalType: 'viewer' }));
+  await waitFor(theaterOwner, 'theater:signal', (message) => message.signalType === 'viewer' && message.fromId === theaterWatcherJoined.selfId);
+  theaterOwner.close();
+  await waitFor(theaterWatcher, 'theater:state', (message) => message.state.mode === 'none');
+  console.log('Smoke test passed: multiplayer gameplay, screen/PDF presenter state and validation, late-join sync, PDF upload cleanup, presenter disconnect cleanup, reconnect and JSON restart restoration, and shared arena entry.');
 } finally {
   for (const socket of clients) socket.close();
   stopServer(server);

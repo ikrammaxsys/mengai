@@ -102,6 +102,7 @@ export interface Player {
   crocodilesSlain: number;
   arenaInstanceId: string | null;
   inPhotobooth: boolean;
+  seatedSeatId: string | null;
   speaking: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
@@ -124,6 +125,17 @@ export interface Room {
   chickens: Map<string, ChickenAgent>;
   crocodileScores: Map<string, { playerId: string; playerName: string; count: number }>;
   jukebox: JukeboxRoomState;
+  theater: TheaterRoomState;
+  seatOccupancy: Map<string, string>;
+}
+
+export interface TheaterRoomState {
+  currentPresenterId: string | null;
+  presenterName: string | null;
+  mode: 'none' | 'screen' | 'pdf';
+  pdfUrl: string | null;
+  currentPage: number;
+  freeBrowse: boolean;
 }
 
 export interface JukeboxTrack {
@@ -157,6 +169,7 @@ export interface PlayerSnapshot {
   carryingStoneId: string | null;
   holdingFish?: CatchRecord | null;
   inPhotobooth: boolean;
+  seatedSeatId?: string | null;
   chickenScore: number;
   crocodilesSlain: number;
   speaking?: boolean;

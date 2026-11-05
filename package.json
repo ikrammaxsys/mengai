@@ -16,6 +16,7 @@
     "dotenv": "^18.0.9",
     "livekit-client": "^2.23.0",
     "livekit-server-sdk": "^2.19.2",
+    "pdfjs-dist": "^4.10.38",
     "three": "^0.170.0",
     "ws": "^8.18.0"
   },

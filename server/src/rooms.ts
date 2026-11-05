@@ -19,7 +19,7 @@ export class Rooms {
          state: 'ground' as const, carriedBy: null, flight: null, chickenHitId: null, respawnAt: null,
        }]));
        const createdAt = Date.now();
-       room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map(), jukebox: { current: null, queue: [], skipVotes: new Set(), emptySince: null } };
+        room = { id: roomId, players: new Map(), leaderboard: [], personalBests: new Map(), fishingProfiles: new Map(), stones, campfireCooking: null, campfireReserved: false, weather: createWeatherSnapshot('clear', createdAt), chickens: createChickenFlock(createdAt), crocodileScores: new Map(), jukebox: { current: null, queue: [], skipVotes: new Set(), emptySince: null }, theater: { currentPresenterId: null, presenterName: null, mode: 'none', pdfUrl: null, currentPage: 1, freeBrowse: false }, seatOccupancy: new Map() };
        this.rooms.set(roomId, room);
     } else if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', Date.now());
     if (room.players.size === 0 && room.jukebox.emptySince !== null) {
@@ -34,6 +34,7 @@ export class Rooms {
           room.players.delete(existing.id);
           if (room.players.size === 0) room.weather = createWeatherSnapshot('clear', now);
         } else if (existing.disconnectedAt !== null && resumeToken && existing.resumeToken === resumeToken) {
+          this.releaseSeat(room, existing.id);
           existing.socket = socket;
           existing.disconnectedAt = null;
           if (existing.arenaInstanceId) {
@@ -88,6 +89,7 @@ export class Rooms {
       crocodilesSlain: 0,
       arenaInstanceId: null,
       inPhotobooth: false,
+      seatedSeatId: null,
       speaking: false,
       lastStoneThrowAt: 0,
       pityMisses: profile.pityMisses,
@@ -138,6 +140,18 @@ export class Rooms {
 
   getRoom(roomId: string): Room | undefined { return this.rooms.get(roomId); }
 
+  releaseSeat(room: Room, playerId: string): boolean {
+    const player = room.players.get(playerId);
+    if (player) player.seatedSeatId = null;
+    for (const [seatId, occupantId] of room.seatOccupancy) {
+      if (occupantId === playerId) {
+        room.seatOccupancy.delete(seatId);
+        return true;
+      }
+    }
+    return false;
+  }
+
   all(): IterableIterator<Room> {
     return this.rooms.values();
   }
@@ -149,9 +163,10 @@ export class Rooms {
   }
 
   snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
-    return [...room.players.values()].filter((player) => player.arenaInstanceId === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, chickenScore, crocodilesSlain, speaking }) => ({
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, speaking }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
+      seatedSeatId,
       chickenScore,
       crocodilesSlain,
       ...(includeSpeaking ? { speaking } : {}),

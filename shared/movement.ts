@@ -1,4 +1,5 @@
 import { FISH_CONFIG } from './fishConfig.js';
+import { WORLD_CONFIG } from './worldConfig.js';
 
 export const MOVEMENT_RULES = {
   ...FISH_CONFIG.movement,
@@ -16,7 +17,16 @@ export function shortestAngleDelta(from: number, to: number): number {
 
 export function isSafeMovementPosition(x: number, z: number): boolean {
   const radius = Math.hypot(x, z);
-  return Number.isFinite(x) && Number.isFinite(z) && radius <= MOVEMENT_RULES.mapRadius && radius >= MOVEMENT_RULES.waterRadius;
+  return Number.isFinite(x) && Number.isFinite(z) && radius <= MOVEMENT_RULES.mapRadius && radius >= MOVEMENT_RULES.waterRadius &&
+    !isInsideTheaterCollider(x, z, 0.55);
+}
+
+export function isInsideTheaterCollider(x: number, z: number, padding = 0): boolean {
+  const { x: centerX, z: centerZ, rotationY, colliderHalfWidth, colliderHalfDepth } = WORLD_CONFIG.theater;
+  const dx = x - centerX, dz = z - centerZ;
+  const localX = Math.cos(rotationY) * dx - Math.sin(rotationY) * dz;
+  const localZ = Math.sin(rotationY) * dx + Math.cos(rotationY) * dz;
+  return Math.abs(localX) < colliderHalfWidth + padding && Math.abs(localZ) < colliderHalfDepth + padding;
 }
 
 /** Shared client prediction step; server validation uses the same speed/bounds rules. */
@@ -37,6 +47,7 @@ export function stepMovement(current: MovementTransform, forwardAxis: number, tu
     const scale = MOVEMENT_RULES.mapRadius / Math.max(radius, 0.001);
     x *= scale; z *= scale;
   }
+  if (isInsideTheaterCollider(x, z, 0.55)) return { ...current, rotY };
   return { x, z, rotY };
 }
 

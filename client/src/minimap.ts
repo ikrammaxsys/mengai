@@ -1,5 +1,6 @@
 import { FISH_CONFIG } from '../../shared/fishConfig';
 import { WORLD_CONFIG } from '../../shared/worldConfig';
+import { THEATER_SEATS } from '../../shared/theaterSeats';
 
 export interface MapPlayer {
   x: number;
@@ -99,6 +100,16 @@ export class Minimap {
       const p = point(pebble.x, pebble.z);
       context.beginPath(); context.arc(p.x, p.y, Math.max(1.2, scale * 0.18), 0, Math.PI * 2);
       context.fillStyle = '#786e62'; context.fill();
+    }
+
+    const theater = point(WORLD_CONFIG.theater.x, WORLD_CONFIG.theater.z);
+    context.fillStyle = '#284c40'; context.fillRect(theater.x - 5, theater.y - 3.5, 10, 7);
+    context.strokeStyle = '#f5eedc'; context.lineWidth = 1.5; context.strokeRect(theater.x - 5, theater.y - 3.5, 10, 7);
+    context.fillStyle = '#83d3a9'; context.fillRect(theater.x - 2.5, theater.y - 2, 5, 4);
+    context.fillStyle = '#b28a62';
+    for (const seat of THEATER_SEATS) {
+      const p = point(seat.x, seat.z);
+      context.fillRect(p.x - 1.4, p.y - 0.9, 2.8, 1.8);
     }
 
     const campfire = point(WORLD_CONFIG.campfire.x, WORLD_CONFIG.campfire.z);
