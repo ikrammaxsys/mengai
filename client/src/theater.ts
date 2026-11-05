@@ -377,10 +377,26 @@ export class Theater {
     if (!navigator.mediaDevices?.getDisplayMedia) { this.setError('Screen sharing is not available in this browser.'); return; }
     this.setError('Choose a screen or window to share…');
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920, max: 2560 },
+          height: { ideal: 1080, max: 1440 },
+          frameRate: { ideal: 30, max: 60 },
+          resizeMode: 'none',
+        },
+        audio: true,
+      });
       this.localStream = stream;
       this.video.srcObject = stream;
       const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.contentHint = 'detail';
+        await videoTrack.applyConstraints({
+          width: { ideal: 1920, max: 2560 },
+          height: { ideal: 1080, max: 1440 },
+          frameRate: { ideal: 30, max: 60 },
+        }).catch(() => undefined);
+      }
       videoTrack.addEventListener('ended', () => { if (!this.stopping) this.stopPresentation(); }, { once: true });
       await this.waitForStart('screen');
       this.setError('');
@@ -453,7 +469,19 @@ export class Theater {
     if (!this.localStream) return;
     const peer = this.peers.get(viewerId) ?? this.createPeer(viewerId);
     try {
-      for (const track of this.localStream.getTracks()) peer.connection.addTrack(track, this.localStream);
+      for (const track of this.localStream.getTracks()) {
+        const sender = peer.connection.addTrack(track, this.localStream);
+        if (track.kind === 'video') {
+          const parameters = sender.getParameters();
+          parameters.encodings = (parameters.encodings?.length ? parameters.encodings : [{}]).map((encoding) => ({
+            ...encoding,
+            maxBitrate: 8_000_000,
+            maxFramerate: 60,
+            scaleResolutionDownBy: 1,
+          }));
+          await sender.setParameters(parameters).catch(() => undefined);
+        }
+      }
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
       this.actions.signal(viewerId, 'offer', peer.connection.localDescription?.toJSON());

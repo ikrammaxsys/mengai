@@ -367,6 +367,7 @@ export class GameScene {
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.generateMipmaps = false;
+      texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
       this.theaterTexture = texture;
     } else if (canvas) {
       const texture = new THREE.CanvasTexture(canvas);

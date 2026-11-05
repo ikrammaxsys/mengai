@@ -129,7 +129,7 @@ export class ArenaView {
     this.snapshot = snapshot;
     const attack = snapshot.monster.attack;
     const attackKey = attack ? `${attack.skill}:${attack.phase}:${attack.resolveAt}` : '';
-    if (attackKey && attackKey !== this.lastAttackKey) {
+    if (attack && attackKey !== this.lastAttackKey) {
       window.dispatchEvent(new CustomEvent('arena:crocodile-skill', { detail: { skill: attack.skill, phase: attack.phase } }));
     }
     this.lastAttackKey = attackKey;

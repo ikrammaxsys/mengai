@@ -106,7 +106,7 @@ export function restartCrocodileArena(arena: ArenaInstance, now: number): void {
   arena.monster.state = 'chase';
   arena.monster.attack = null;
   arena.monster.cooldownUntil = 0;
-  arena.monster.skillReadyAt = { bite: now, tailSweep: now, lunge: now };
+  arena.monster.skillReadyAt = { bite: now, tailSweep: now, lunge: now, tailSmash: now, burrow: now };
   arena.monster.chargeHitIds.clear();
   arena.monster.lastSkill = null;
   arena.state = 'active';
