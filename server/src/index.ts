@@ -344,15 +344,24 @@ function durationSeconds(isoDuration: unknown): number {
 }
 
 async function youtubeApi(path: string, params: URLSearchParams): Promise<Record<string, unknown>> {
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) throw new Error('YouTube search is not configured. Set YOUTUBE_API_KEY on the server.');
-  params.set('key', apiKey);
-  const response = await fetch(`https://www.googleapis.com/youtube/v3/${path}?${params.toString()}`, { signal: AbortSignal.timeout(8000) });
-  if (!response.ok) {
+  const apiKeys = (process.env.YOUTUBE_API_KEYS || process.env.YOUTUBE_API_KEY || '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+  if (!apiKeys.length) throw new Error('YouTube search is not configured. Set YOUTUBE_API_KEYS on the server.');
+
+  for (let index = 0; index < apiKeys.length; index++) {
+    params.set('key', apiKeys[index]);
+    const response = await fetch(`https://www.googleapis.com/youtube/v3/${path}?${params.toString()}`, { signal: AbortSignal.timeout(8000) });
+    if (response.ok) return await response.json() as Record<string, unknown>;
+    if (index < apiKeys.length - 1) {
+      console.warn(`[jukebox] YouTube API key ${index + 1} failed (${response.status}); trying the next key.`);
+      continue;
+    }
     if (response.status === 403 || response.status === 429) throw new Error('YouTube search is temporarily unavailable. Please try again later.');
     throw new Error('YouTube search could not be completed. Please try again.');
   }
-  return await response.json() as Record<string, unknown>;
+  throw new Error('YouTube search is temporarily unavailable. Please try again later.');
 }
 
 async function searchYouTube(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, url: URL): Promise<void> {
