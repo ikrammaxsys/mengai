@@ -172,6 +172,7 @@ const jukebox = new Jukebox(document.querySelector<HTMLElement>('#jukebox-root')
     sendLocalMovement(true);
   },
   enqueue: (videoId) => network.enqueueJukebox(videoId),
+  enqueueLibrary: (libraryId) => network.enqueueJukeboxLibrary(libraryId),
   skip: () => network.skipJukebox(),
   ended: (videoId) => network.jukeboxEnded(videoId),
   failed: (videoId) => network.jukeboxFailed(videoId),
@@ -1057,7 +1058,7 @@ function appendChat(message: { playerId: string; name: string; text: string; at:
 function speciesConfig(id: FishSpeciesId) { return FISH_CONFIG.species.find((species) => species.id === id)!; }
 
 function itemCatchEntry(item: InventoryItem, catcher = nameInput.value.trim()): CatchEntry {
-  return { id: item.catchId, playerId: selfId, playerName: catcher || 'You', species: item.species, weightKg: item.weightKg, rarity: item.rarity, timestamp: item.caughtAt };
+  return { id: item.catchId, playerId: selfId, playerName: catcher || 'You', species: item.species, weightKg: item.weightKg, rarity: item.rarity, timestamp: item.caughtAt, kind: item.kind };
 }
 
 function timeAgo(timestamp: number): string {
@@ -1071,7 +1072,7 @@ function timeAgo(timestamp: number): string {
 
 function renderCollection(): void {
   collectionStrip.replaceChildren();
-  for (const species of FISH_CONFIG.species) {
+  for (const species of FISH_CONFIG.species.filter((entry) => entry.id !== 'kasut-lama')) {
     const best = collectionBests.get(species.id);
     const item = document.createElement('div');
     item.className = `collection-item${best ? '' : ' uncaught'}`;
@@ -1089,7 +1090,9 @@ function renderCollection(): void {
 
 function renderBackpack(): void {
   backpackCount.textContent = inventoryItems.length > 99 ? '99+' : String(inventoryItems.length);
-  backpackSummary.textContent = `Backpack · ${inventoryItems.length} ${inventoryItems.length === 1 ? 'fish' : 'fish'}`;
+  const fishCount = inventoryItems.filter((item) => item.kind !== 'junk').length;
+  const junkCount = inventoryItems.length - fishCount;
+  backpackSummary.textContent = `Backpack · ${fishCount} ${fishCount === 1 ? 'fish' : 'fish'}${junkCount ? ` · ${junkCount} junk` : ''}`;
   backpackStats.textContent = `${totalCaught} total fish caught · Personal best ${personalBestFish ? `${personalBestFish.weightKg.toFixed(2)} kg ${speciesConfig(personalBestFish.species).name}` : '—'}`;
   renderCollection();
 
@@ -1108,17 +1111,23 @@ function renderBackpack(): void {
   }
 
   const rarityRank: Record<string, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 };
-  const sorted = inventoryItems.filter((item) => selectedSpecies === 'all' || item.species === selectedSpecies);
-  if (backpackSort.value === 'heaviest') sorted.sort((a, b) => b.weightKg - a.weightKg);
-  else if (backpackSort.value === 'rarity') sorted.sort((a, b) => rarityRank[b.rarity] - rarityRank[a.rarity] || b.weightKg - a.weightKg);
-  else sorted.sort((a, b) => b.caughtAt - a.caughtAt);
+  const matchesFilter = (item: InventoryItem) => selectedSpecies === 'all' || item.species === selectedSpecies;
+  const sorted = inventoryItems.filter((item) => item.kind !== 'junk' && matchesFilter(item));
+  const junkItems = inventoryItems.filter((item) => item.kind === 'junk' && matchesFilter(item));
+  const sortItems = (items: InventoryItem[]) => {
+    if (backpackSort.value === 'heaviest') items.sort((a, b) => b.weightKg - a.weightKg);
+    else if (backpackSort.value === 'rarity') items.sort((a, b) => rarityRank[b.rarity] - rarityRank[a.rarity] || b.weightKg - a.weightKg);
+    else items.sort((a, b) => b.caughtAt - a.caughtAt);
+  };
+  sortItems(sorted);
+  sortItems(junkItems);
 
   backpackList.replaceChildren();
   if (inventoryItems.length === 0) {
     const empty = document.createElement('p'); empty.className = 'backpack-empty'; empty.textContent = 'No fish yet. Go cast a line!';
     backpackList.append(empty); return;
   }
-  if (sorted.length === 0) {
+  if (sorted.length === 0 && junkItems.length === 0) {
     const empty = document.createElement('p'); empty.className = 'backpack-empty'; empty.textContent = 'No fish of this kind yet.';
     backpackList.append(empty); return;
   }
@@ -1170,6 +1179,57 @@ function renderBackpack(): void {
     row.append(icon, details, actions);
     backpackList.append(row);
   }
+  if (junkItems.length) {
+    const section = document.createElement('h3');
+    section.className = 'backpack-section-title';
+    section.textContent = 'Junk';
+    backpackList.append(section);
+    for (const item of junkItems) {
+      const species = speciesConfig(item.species);
+      const row = document.createElement('article');
+      row.className = 'backpack-row junk-row';
+      row.style.setProperty('--rarity-color', species.rarityColor);
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      const icon = document.createElement('img');
+      icon.className = 'backpack-row-icon'; icon.alt = ''; icon.src = fishArt.iconDataUrl(item.species, item.weightKg);
+      const details = document.createElement('div'); details.className = 'backpack-row-main';
+      const title = document.createElement('strong'); title.textContent = species.name;
+      const meta = document.createElement('span'); meta.className = 'backpack-row-meta'; meta.textContent = `${item.weightKg.toFixed(2)} kg · ${timeAgo(item.caughtAt)}`;
+      const rarity = document.createElement('span'); rarity.className = 'backpack-rarity'; rarity.textContent = 'junk';
+      details.append(title, meta, rarity);
+      const actions = document.createElement('div'); actions.className = 'backpack-row-actions';
+      const hold = document.createElement('button'); hold.type = 'button'; hold.dataset.action = 'hold';
+      hold.textContent = myHeldFish?.catchId === item.catchId ? 'Put away' : 'Hold';
+      hold.addEventListener('click', () => {
+        if (myHeldFish?.catchId === item.catchId) network.holdFish(null);
+        else holdFish(item.catchId);
+      });
+      const release = document.createElement('button'); release.type = 'button'; release.dataset.action = 'release'; release.className = 'release-button';
+      if (pendingReleaseId === item.catchId) {
+        release.textContent = 'Sure?';
+        release.addEventListener('click', () => { network.releaseFish(item.catchId); pendingReleaseId = null; });
+        const keep = document.createElement('button'); keep.type = 'button'; keep.dataset.action = 'cancel-release'; keep.textContent = 'Keep';
+        keep.addEventListener('click', () => { pendingReleaseId = null; renderBackpack(); });
+        actions.append(hold, release, keep);
+      } else {
+        release.textContent = 'Release';
+        release.addEventListener('click', () => { pendingReleaseId = item.catchId; renderBackpack(); });
+        actions.append(hold, release);
+      }
+      row.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement).closest('button')) return;
+        openFishViewer(itemCatchEntry(item));
+      });
+      row.addEventListener('keydown', (event) => {
+        if ((event.key === 'Enter' || event.key === ' ') && !(event.target instanceof HTMLButtonElement)) {
+          event.preventDefault(); openFishViewer(itemCatchEntry(item));
+        }
+      });
+      row.append(icon, details, actions);
+      backpackList.append(row);
+    }
+  }
 }
 
 function syncInventory(items: InventoryItem[], caught: number, best: InventoryItem | null, collection: InventoryItem[]): void {
@@ -1185,7 +1245,7 @@ function addInventoryItem(item: InventoryItem): void {
   const isNewCatch = !inventoryItems.some((existing) => existing.catchId === item.catchId);
   if (isNewCatch) {
     inventoryItems.push(item);
-    totalCaught += 1;
+    if (item.kind !== 'junk') totalCaught += 1;
     if (joined) {
       backpackToggle.classList.remove('pulse');
       void backpackToggle.offsetWidth;
@@ -1194,9 +1254,11 @@ function addInventoryItem(item: InventoryItem): void {
       backpackPulseTimer = window.setTimeout(() => backpackToggle.classList.remove('pulse'), 900);
     }
   }
-  if (!personalBestFish || item.weightKg > personalBestFish.weightKg) personalBestFish = item;
-  const speciesBest = collectionBests.get(item.species);
-  if (!speciesBest || item.weightKg > speciesBest.weightKg) collectionBests.set(item.species, item);
+  if (item.kind !== 'junk') {
+    if (!personalBestFish || item.weightKg > personalBestFish.weightKg) personalBestFish = item;
+    const speciesBest = collectionBests.get(item.species);
+    if (!speciesBest || item.weightKg > speciesBest.weightKg) collectionBests.set(item.species, item);
+  }
   inventoryItems.sort((a, b) => b.caughtAt - a.caughtAt);
   renderBackpack();
 }
@@ -1331,9 +1393,9 @@ function showCatch(result: CatchResult): void {
   cacheCatch(result.entry);
   const species = speciesConfig(result.entry.species);
   fishArt.show(result.entry.species, result.entry.weightKg);
-  catchName.textContent = species.name;
+  catchName.textContent = result.message ?? species.name;
   catchWeight.textContent = `${result.entry.weightKg.toFixed(2)} kg`;
-  catchRarity.textContent = species.rarity;
+  catchRarity.textContent = result.entry.kind === 'junk' ? 'junk' : species.rarity;
   catchTags.replaceChildren();
   catchPopup.style.setProperty('--rarity-color', species.rarityColor);
   for (const [label, visible] of [['New personal best!', result.flags.newPersonalBest], ['New room record!', result.flags.newRoomRecord]] as const) {
@@ -1539,7 +1601,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     },
     jukeboxState: (current, queue, skipVotes) => {
       jukebox.setState(current, queue, skipVotes);
-      scene.setJukeboxPlaying(current !== null);
+      scene.setJukeboxPlaying(current?.status === 'playing');
       syncMusicDuck();
     },
     jukeboxError: (message) => jukebox.showError(message),
@@ -2073,6 +2135,11 @@ function animate(now: number): void {
     portalPrompt.classList.add('hidden');
   }
   catchPopup.classList.toggle('hidden', !fishArt.render(now));
+  scene.setLocalDanceBlocked(arenaMode || isPhotoboothMode || theater.isFocused || theater.isMenuOpen || jukebox.isOpen || reelGame !== null
+    || !chatPanel.classList.contains('hidden') || !backpackPanel.classList.contains('hidden') || !leaderboardPanel.classList.contains('hidden')
+    || !fishViewerRoot.classList.contains('hidden') || !catchPopup.classList.contains('hidden') || !expandedMap.classList.contains('hidden')
+    || !voicePanel.classList.contains('hidden') || !musicPanel.classList.contains('hidden') || !arenaPartyPanel.classList.contains('hidden')
+    || !whatsNew.classList.contains('hidden'));
   if (arenaMode) arenaView.render(Date.now() + serverClockOffset, delta);
   else scene.render(delta);
 }

@@ -647,7 +647,16 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .jukebox-header h2 > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: #eaf5ee; color: #328c78; font-size: 21px; }
 .jukebox-header p { margin: 5px 0 0 42px; color: #61796e; font-size: 12px; }
 .jukebox-columns { display: grid; grid-template-columns: minmax(0, 58fr) minmax(300px, 42fr); gap: 20px; min-height: 0; }
-.jukebox-search-column { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; }
+.jukebox-search-column { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; }
+.jukebox-tabs { display: flex; gap: 5px; padding: 3px; border: 1px solid #e1ebe4; border-radius: 11px; background: #f5f9f5; }
+.jukebox-tab { flex: 1; min-height: 34px; padding: 0 10px; border-radius: 8px; background: transparent; color: #668075; box-shadow: none; font-size: 11px; text-align: center; }
+.jukebox-tab:hover { background: #eaf3ec; transform: none; }
+.jukebox-tab.is-active { background: #fff; color: #347e67; box-shadow: 0 1px 5px rgba(47,86,67,.12); }
+.jukebox-search-pane, .jukebox-library-pane { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; }
+.jukebox-library-pane { grid-template-rows: auto minmax(0, 1fr); }
+.jukebox-library-results { grid-row: 1 / span 2; }
+.jukebox-library-icon, .jukebox-queue-library-icon { position: relative; display: grid; flex: 0 0 96px; place-items: center; width: 96px; height: 54px; border-radius: 8px; background: linear-gradient(135deg, #e5f4ec, #f8e9ee); color: #528e78; font-size: 24px; }
+.jukebox-queue-library-icon { flex-basis: 58px; width: 58px; height: 38px; font-size: 18px; }
 .jukebox-search-form { --jukebox-search-control-height: 38px; display: flex; align-items: stretch; gap: 9px; }
 .jukebox-search-box { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; height: var(--jukebox-search-control-height); margin: 0; padding: 0 12px; border: 1px solid #dce7e4; border-radius: 13px; background: #fbfdfc; color: #5b8574; transition: border-color .15s, box-shadow .15s; }
 .jukebox-search-box:focus-within { border-color: #58a996; box-shadow: 0 0 0 3px rgba(88,169,150,.16); }
@@ -689,6 +698,9 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .jukebox-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
 .jukebox-section-heading h3 { margin: 0; color: #355a4c; font-size: 13px; font-weight: 800; }
 .jukebox-player-slot { position: relative; width: 100%; aspect-ratio: 16 / 9; margin-top: 9px; overflow: hidden; border-radius: 11px; background: #eaf2eb; }
+.jukebox-player-slot.is-library-track { display: grid; place-items: center; background: linear-gradient(135deg, #e4f3e9, #f7e9ef); }
+.jukebox-player-slot.is-library-track::after { content: '♫'; color: #548c76; font-size: 58px; }
+.jukebox-player-slot.is-library-track .jukebox-now-thumbnail { display: none; }
 .jukebox-now-thumbnail { display: block; width: 100%; height: 100%; object-fit: cover; }
 .jukebox-empty-player { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 12px; color: #61796d; text-align: center; }
 .jukebox-empty-player > span:first-child { color: #4b9678; font-size: 30px; line-height: 1; }
@@ -762,6 +774,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
   .jukebox-search-box input { font-size: 11px; }
   .jukebox-result { gap: 7px; min-height: 68px; padding: 6px; }
   .jukebox-result-thumbnail { flex-basis: 80px; width: 80px; height: 45px; }
+  .jukebox-library-icon { flex-basis: 80px; width: 80px; height: 45px; }
   .jukebox-result-copy strong { font-size: 10px; }
   .jukebox-result-copy > span { font-size: 9px; }
   .jukebox-result-action { min-width: 56px; }

@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import type { FishRarity, FishSpeciesId } from '../../shared/fishConfig.js';
+import type { FishKind, FishRarity, FishSpeciesId } from '../../shared/fishConfig.js';
 import type { CatchRecord } from './inventory.js';
 import type { WeatherSnapshot } from '../../shared/weatherConfig.js';
 import type { ChickenAgent, ChickenSnapshot } from '../../shared/chickenConfig.js';
@@ -32,6 +32,7 @@ export interface CatchEntry {
   weightKg: number;
   rarity: FishRarity;
   timestamp: number;
+  kind?: FishKind;
 }
 
 export interface CampfireCooking {
@@ -140,6 +141,8 @@ export interface TheaterRoomState {
 
 export interface JukeboxTrack {
   videoId: string;
+  source?: 'library';
+  libraryId?: string;
   title: string;
   channel: string;
   thumbnail: string;

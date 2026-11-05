@@ -33,10 +33,80 @@ function disposeGroup(group: THREE.Group): void {
 export function createFishModel(speciesId: FishSpeciesId, weightKg: number): THREE.Group {
   const species = fishById.get(speciesId)!;
   const fish = new THREE.Group();
-  const factor = Math.cbrt(Math.max(0.01, weightKg) / species.medianKg);
+  const rawFactor = Math.cbrt(Math.max(0.01, weightKg) / species.medianKg);
+  const factor = speciesId === 'ikan-bulan' ? Math.min(1.4, rawFactor) : rawFactor;
   fish.scale.setScalar(factor);
 
-  if (speciesId === 'bluegill') {
+  if (speciesId === 'kasut-lama') {
+    const sole = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.14, 0.5), mat('#b19a75'));
+    sole.position.set(0.04, -0.3, 0); sole.castShadow = true; fish.add(sole);
+    addSphere(fish, '#70533d', [0.12, -0.13, 0], [0.67, 0.31, 0.29], 7);
+    addSphere(fish, '#805f44', [0.42, -0.12, 0], [0.34, 0.23, 0.28], 7);
+    addSphere(fish, '#604734', [-0.29, 0.19, 0], [0.3, 0.53, 0.27], 7);
+    const laceMaterial = mat('#302f2a');
+    for (let index = 0; index < 3; index++) {
+      const lace = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.035, 0.035), laceMaterial);
+      lace.position.set(-0.2 + index * 0.13, 0.3 - index * 0.13, 0.245);
+      lace.rotation.z = -0.35;
+      fish.add(lace);
+    }
+    addSphere(fish, '#3a3028', [0.57, -0.06, 0.235], [0.11, 0.09, 0.035], 5);
+    addSphere(fish, '#6d4935', [0.52, -0.01, 0.258], [0.075, 0.035, 0.02], 5);
+    for (const [x, y, angle] of [[-0.1, 0.52, -0.25], [0.04, 0.48, 0.16], [0.17, 0.45, 0.42]]) {
+      const weed = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.4, 4), mat('#64885a'));
+      weed.position.set(x, y, 0.02); weed.rotation.z = angle; fish.add(weed);
+    }
+    for (const [x, y, z] of [[-0.55, 0.36, 0.05], [0.62, 0.22, 0.02], [0.5, -0.38, 0.04]]) {
+      addSphere(fish, '#92b8af', [x, y, z], [0.045, 0.07, 0.045], 5);
+    }
+  } else if (speciesId === 'ikan-bulan') {
+    addSphere(fish, '#91a8b7', [0, 0, 0], [0.78, 1, 0.3], 10);
+    addSphere(fish, '#c7d2d3', [0.03, -0.42, 0.15], [0.6, 0.45, 0.18], 9);
+    addFin(fish, '#7f98a6', [0, 1.03, 0], [0.47, 0.95, 0.55]);
+    addFin(fish, '#7f98a6', [0, -1.03, 0], [0.47, 0.95, 0.55], Math.PI);
+    addSphere(fish, '#879ba3', [-0.78, 0.02, 0], [0.2, 0.23, 0.2], 7);
+    addSphere(fish, '#e8e5d7', [0.45, 0.2, 0.26], [0.13, 0.14, 0.07], 8);
+    addSphere(fish, '#32464c', [0.49, 0.19, 0.32], [0.055, 0.075, 0.035], 6);
+    addSphere(fish, '#8298a1', [0.57, 0.27, 0.28], [0.15, 0.045, 0.05], 7);
+    addSphere(fish, '#42545a', [0.78, -0.08, 0.17], [0.06, 0.035, 0.035], 6);
+  } else if (speciesId === 'ikan-naga') {
+    const bodyPoints: THREE.Vector3[] = [];
+    for (let index = 0; index < 9; index++) {
+      const progress = index / 8;
+      const x = 0.58 - progress * 1.95;
+      const y = Math.sin(progress * Math.PI * 2.2) * 0.16;
+      bodyPoints.push(new THREE.Vector3(x, y, 0));
+      const radius = 0.16 - progress * 0.085;
+      addSphere(fish, progress > 0.55 ? '#a48647' : '#167a68', [x, y, 0], [0.2 - progress * 0.08, radius, radius * 0.82], 7, progress < 0.35 ? '#0c554d' : undefined);
+      addSphere(fish, '#d6ad5c', [x, y - radius * 0.42, 0.015], [0.13 - progress * 0.05, radius * 0.42, radius * 0.48], 6);
+      if (index < 7) addFin(fish, '#d9aa4d', [x, y + radius * 0.8, 0], [0.2, 0.32, 0.22]);
+    }
+    addSphere(fish, '#176c5e', [0.68, 0.02, 0], [0.28, 0.23, 0.2], 7);
+    addSphere(fish, '#ffce67', [0.78, 0.11, 0.17], [0.085, 0.09, 0.055], 7, '#c88725');
+    addSphere(fish, '#273b32', [0.81, 0.11, 0.21], [0.035, 0.045, 0.025], 5);
+    for (const y of [-0.08, -0.17]) {
+      const whisker = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.42, 5), mat('#d9b35d'));
+      whisker.position.set(0.83, y, 0.1); whisker.rotation.z = -0.62; fish.add(whisker);
+    }
+    for (const x of [0.54, 0.67]) {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.26, 5), mat('#d8b15c'));
+      horn.position.set(x, 0.24, 0); horn.rotation.z = -0.25; fish.add(horn);
+    }
+    const tailPivot = new THREE.Group();
+    tailPivot.position.copy(bodyPoints[8]);
+    const tailMaterial = new THREE.MeshStandardMaterial({ color: '#e69a4c', roughness: 0.7, flatShading: true, transparent: true, opacity: 0.78, emissive: '#a64b27', emissiveIntensity: 0.2 });
+    const tailFin = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.68, 5), tailMaterial);
+    tailFin.rotation.z = -Math.PI / 2; tailFin.position.x = -0.28; tailPivot.add(tailFin);
+    fish.add(tailPivot);
+    fish.userData.tailPivot = tailPivot;
+    const sparkles: THREE.Mesh[] = [];
+    for (let index = 0; index < 4; index++) {
+      const sparkle = new THREE.Mesh(new THREE.OctahedronGeometry(0.045, 0), new THREE.MeshBasicMaterial({ color: '#f5d477', transparent: true, opacity: 0.55 }));
+      sparkle.position.set(0.1 - index * 0.38, 0.34 + (index % 2) * 0.08, 0.12);
+      fish.add(sparkle); sparkles.push(sparkle);
+    }
+    fish.userData.sparkles = sparkles;
+  } else if (speciesId === 'bluegill') {
     addSphere(fish, '#71834b', [0, 0, 0], [0.51, 0.55, 0.2], 9);
     addSphere(fish, '#e4a64b', [0.04, -0.24, 0.025], [0.39, 0.29, 0.195], 8);
     addSphere(fish, '#273c31', [0.29, 0.04, 0.18], [0.075, 0.085, 0.035], 6);
@@ -133,8 +203,10 @@ export function createFishModel(speciesId: FishSpeciesId, weightKg: number): THR
   }
 
   // Shared eye placement keeps the fish readable in the popup and tiny leaderboard previews.
-  addSphere(fish, '#fff9e9', [0.42, 0.11, 0.175], [0.075, 0.075, 0.04], 7);
-  addSphere(fish, '#1d302c', [0.445, 0.11, 0.21], [0.032, 0.038, 0.02], 6);
+  if (speciesId !== 'kasut-lama' && speciesId !== 'ikan-bulan' && speciesId !== 'ikan-naga') {
+    addSphere(fish, '#fff9e9', [0.42, 0.11, 0.175], [0.075, 0.075, 0.04], 7);
+    addSphere(fish, '#1d302c', [0.445, 0.11, 0.21], [0.032, 0.038, 0.02], 6);
+  }
   return fish;
 }
 

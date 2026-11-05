@@ -1,4 +1,4 @@
-import type { FishRarity, FishSpeciesId } from '../../shared/fishConfig.js';
+import type { FishKind, FishRarity, FishSpeciesId } from '../../shared/fishConfig.js';
 
 export interface CatchRecord {
   catchId: string;
@@ -6,6 +6,7 @@ export interface CatchRecord {
   rarity: FishRarity;
   weightKg: number;
   caughtAt: number;
+  kind?: FishKind;
 }
 
 export interface InventoryStore {
@@ -46,6 +47,7 @@ export class InMemoryInventoryStore implements InventoryStore {
       this.inventories.set(sessionId, inventory);
     }
     inventory.items.set(item.catchId, item);
+    if (item.kind === 'junk') return;
     inventory.totalCaught += 1;
     if (!inventory.personalBest || item.weightKg > inventory.personalBest.weightKg) inventory.personalBest = item;
     const speciesBest = inventory.speciesBest.get(item.species);

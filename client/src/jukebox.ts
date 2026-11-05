@@ -11,12 +11,14 @@ interface JukeboxCallbacks {
   pauseMovement: () => void;
   enqueue: (videoId: string) => boolean;
   skip: () => void;
+  enqueueLibrary: (libraryId: string) => boolean;
   ended: (videoId: string) => void;
   failed: (videoId: string) => void;
   toast: (message: string) => void;
 }
 
 interface SearchResult extends Omit<JukeboxTrack, 'requesterId' | 'requestedBy' | 'status'> {}
+interface LibraryTrack { id: string; title: string; durationSeconds: number }
 
 function decodeHtml(text: string): string {
   const parsed = new DOMParser().parseFromString(text, 'text/html');
@@ -36,6 +38,13 @@ export class Jukebox {
   private readonly clearButton: HTMLButtonElement;
   private readonly results: HTMLElement;
   private readonly resultsHint: HTMLElement;
+  private readonly searchTab: HTMLButtonElement;
+  private readonly libraryTab: HTMLButtonElement;
+  private readonly searchPane: HTMLElement;
+  private readonly libraryPane: HTMLElement;
+  private readonly libraryStatus: HTMLElement;
+  private readonly libraryEmpty: HTMLElement;
+  private readonly libraryResults: HTMLElement;
   private readonly playerSlot: HTMLElement;
   private readonly playerEmpty: HTMLElement;
   private readonly nowThumbnail: HTMLImageElement;
@@ -78,6 +87,9 @@ export class Jukebox {
   private searched = false;
   private lastQuery = '';
   private searchResults: SearchResult[] = [];
+  private libraryTracks: LibraryTrack[] = [];
+  private libraryLoaded = false;
+  private libraryLoading = false;
   private readonly addedFeedback = new Map<string, number>();
   private targetVolume = 0;
   private appliedVolume = 0;
@@ -93,6 +105,13 @@ export class Jukebox {
     this.clearButton = root.querySelector<HTMLButtonElement>('#jukebox-clear')!;
     this.results = root.querySelector<HTMLElement>('#jukebox-results')!;
     this.resultsHint = root.querySelector<HTMLElement>('#jukebox-results-hint')!;
+    this.searchTab = root.querySelector<HTMLButtonElement>('#jukebox-search-tab')!;
+    this.libraryTab = root.querySelector<HTMLButtonElement>('#jukebox-library-tab')!;
+    this.searchPane = root.querySelector<HTMLElement>('#jukebox-search-pane')!;
+    this.libraryPane = root.querySelector<HTMLElement>('#jukebox-library-pane')!;
+    this.libraryStatus = root.querySelector<HTMLElement>('#jukebox-library-status')!;
+    this.libraryEmpty = root.querySelector<HTMLElement>('#jukebox-library-empty')!;
+    this.libraryResults = root.querySelector<HTMLElement>('#jukebox-library-results')!;
     this.playerSlot = root.querySelector<HTMLElement>('#jukebox-player-slot')!;
     this.playerEmpty = root.querySelector<HTMLElement>('#jukebox-player-empty')!;
     this.nowThumbnail = root.querySelector<HTMLImageElement>('#jukebox-now-thumbnail')!;
@@ -134,6 +153,8 @@ export class Jukebox {
     root.querySelector<HTMLButtonElement>('#jukebox-open')!.addEventListener('click', () => this.open());
     root.querySelector<HTMLButtonElement>('#jukebox-close')!.addEventListener('click', () => this.close());
     root.querySelector<HTMLElement>('.jukebox-backdrop')!.addEventListener('click', () => this.close());
+    this.searchTab.addEventListener('click', () => this.selectTab(false));
+    this.libraryTab.addEventListener('click', () => this.selectTab(true));
     this.modal.addEventListener('keydown', (event) => {
       if (event.key !== 'Tab') return;
       const focusable = [...this.modal.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')]
@@ -231,6 +252,7 @@ export class Jukebox {
     this.skipVotes = skipVotes;
     this.renderState();
     this.renderResults(this.searchResults);
+    this.renderLibrary();
     if (current) {
       this.enablePlayback.classList.toggle('hidden', current.status !== 'playing');
       this.playerEmpty.classList.add('hidden');
@@ -395,6 +417,117 @@ export class Jukebox {
     }
   }
 
+  private selectTab(showLibrary: boolean): void {
+    this.searchTab.classList.toggle('is-active', !showLibrary);
+    this.libraryTab.classList.toggle('is-active', showLibrary);
+    this.searchTab.setAttribute('aria-selected', String(!showLibrary));
+    this.libraryTab.setAttribute('aria-selected', String(showLibrary));
+    this.searchPane.classList.toggle('hidden', showLibrary);
+    this.libraryPane.classList.toggle('hidden', !showLibrary);
+    if (showLibrary && !this.libraryLoaded) void this.loadLibrary();
+  }
+
+  private async loadLibrary(): Promise<void> {
+    if (this.libraryLoading) return;
+    this.libraryLoading = true;
+    this.libraryStatus.textContent = 'Loading music library…';
+    this.libraryStatus.classList.remove('hidden', 'is-error');
+    try {
+      const response = await fetch('/api/jukebox/library');
+      const payload = await response.json() as { tracks?: LibraryTrack[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? 'The music library could not be loaded.');
+      this.libraryTracks = payload.tracks ?? [];
+      this.libraryLoaded = true;
+      this.libraryStatus.classList.add('hidden');
+      this.renderLibrary();
+    } catch (error) {
+      this.libraryStatus.textContent = error instanceof Error ? error.message : 'The music library could not be loaded.';
+      this.libraryStatus.classList.remove('hidden');
+      this.libraryStatus.classList.add('is-error');
+    } finally {
+      this.libraryLoading = false;
+    }
+  }
+
+  private renderLibrary(): void {
+    this.libraryResults.replaceChildren();
+    this.libraryEmpty.classList.toggle('hidden', this.libraryTracks.length > 0);
+    this.libraryResults.classList.toggle('hidden', this.libraryTracks.length === 0);
+    for (const track of this.libraryTracks) {
+      const videoId = `library_${track.id}`;
+      const alreadyPlaying = this.current?.videoId === videoId;
+      const alreadyQueued = this.queue.some((queued) => queued.videoId === videoId);
+      const feedbackId = `library:${track.id}`;
+      const row = document.createElement('article');
+      row.className = 'jukebox-result';
+      row.tabIndex = 0;
+      row.setAttribute('aria-label', `${track.title}, ${formatDuration(track.durationSeconds)}`);
+      const icon = document.createElement('span');
+      icon.className = 'jukebox-library-icon';
+      icon.textContent = '♫';
+      const duration = document.createElement('span');
+      duration.className = 'jukebox-duration';
+      duration.textContent = formatDuration(track.durationSeconds);
+      icon.append(duration);
+      const copy = document.createElement('span');
+      copy.className = 'jukebox-result-copy';
+      const title = document.createElement('strong');
+      title.textContent = track.title;
+      title.title = track.title;
+      const source = document.createElement('span');
+      source.textContent = 'In-app music';
+      copy.append(title, source);
+      const action = document.createElement('span');
+      action.className = 'jukebox-result-action';
+      if (alreadyPlaying || alreadyQueued) {
+        action.classList.add('jukebox-track-badge');
+        action.textContent = alreadyPlaying ? 'Playing' : 'In queue';
+      } else if (this.addedFeedback.has(feedbackId)) {
+        const added = document.createElement('button');
+        added.type = 'button';
+        added.className = 'jukebox-add-button is-added';
+        added.textContent = 'Added ✓';
+        added.disabled = true;
+        action.append(added);
+      } else {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'jukebox-add-button';
+        button.textContent = '＋ Add';
+        button.setAttribute('aria-label', `Add ${track.title} to queue`);
+        button.addEventListener('click', () => this.enqueueLibraryTrack(track, button));
+        action.append(button);
+      }
+      row.append(icon, copy, action);
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && event.target === row) {
+          event.preventDefault();
+          row.querySelector<HTMLButtonElement>('.jukebox-add-button')?.click();
+        }
+      });
+      this.libraryResults.append(row);
+    }
+  }
+
+  private enqueueLibraryTrack(track: LibraryTrack, button: HTMLButtonElement): void {
+    if (!this.callbacks.enqueueLibrary(track.id)) {
+      this.showError('The room connection is not ready. Please try adding the song again in a moment.');
+      return;
+    }
+    button.textContent = 'Added ✓';
+    button.disabled = true;
+    button.classList.add('is-added');
+    this.showModalToast('Added to queue');
+    const feedbackId = `library:${track.id}`;
+    const previousTimer = this.addedFeedback.get(feedbackId);
+    if (previousTimer) window.clearTimeout(previousTimer);
+    const timer = window.setTimeout(() => {
+      this.addedFeedback.delete(feedbackId);
+      this.renderLibrary();
+    }, 2200);
+    this.addedFeedback.set(feedbackId, timer);
+  }
+
   private enqueueResult(item: SearchResult, button: HTMLButtonElement): void {
     if (!this.callbacks.enqueue(item.videoId)) {
       this.showError('The room connection is not ready. Please try adding the song again in a moment.');
@@ -420,8 +553,15 @@ export class Jukebox {
       this.nowTitle.textContent = decodeHtml(this.current.title);
       this.nowChannel.textContent = decodeHtml(this.current.channel);
       this.nowRequester.textContent = `Requested by ${this.current.requestedBy}`;
-      this.nowThumbnail.src = `/api/jukebox/thumb/${this.current.videoId}`;
-      this.nowThumbnail.alt = `Thumbnail for ${decodeHtml(this.current.title)}`;
+      const isLibraryTrack = this.current.source === 'library';
+      this.playerSlot.classList.toggle('is-library-track', isLibraryTrack);
+      if (isLibraryTrack) {
+        this.nowThumbnail.removeAttribute('src');
+        this.nowThumbnail.alt = '';
+      } else {
+        this.nowThumbnail.src = `/api/jukebox/thumb/${this.current.videoId}`;
+        this.nowThumbnail.alt = `Thumbnail for ${decodeHtml(this.current.title)}`;
+      }
       this.nowStatus.textContent = this.current.status === 'downloading' ? 'Preparing…'
         : this.current.status === 'ready' ? 'Ready to play…'
           : this.current.status === 'failed' ? 'Unavailable; skipping…' : '';
@@ -430,6 +570,7 @@ export class Jukebox {
       this.totalTime.textContent = formatDuration(this.current.durationSeconds);
       this.playerEmpty.classList.add('hidden');
     } else {
+      this.playerSlot.classList.remove('is-library-track');
       this.nowThumbnail.removeAttribute('src');
       this.nowStatus.textContent = '';
       this.nowStatus.classList.add('hidden');
@@ -446,10 +587,15 @@ export class Jukebox {
     for (const track of this.queue) {
       const row = document.createElement('li');
       row.className = 'jukebox-queue-item';
-      const thumbnail = document.createElement('img');
-      thumbnail.src = `/api/jukebox/thumb/${track.videoId}`;
-      thumbnail.alt = '';
-      thumbnail.loading = 'lazy';
+      const thumbnail = track.source === 'library' ? document.createElement('span') : document.createElement('img');
+      if (track.source === 'library') {
+        thumbnail.className = 'jukebox-queue-library-icon';
+        thumbnail.textContent = '♫';
+      } else {
+        (thumbnail as HTMLImageElement).src = `/api/jukebox/thumb/${track.videoId}`;
+        (thumbnail as HTMLImageElement).alt = '';
+        (thumbnail as HTMLImageElement).loading = 'lazy';
+      }
       const copy = document.createElement('span');
       copy.className = 'jukebox-queue-copy';
       const title = document.createElement('strong');
@@ -475,9 +621,11 @@ export class Jukebox {
       this.currentTime.textContent = '0:00';
       return;
     }
-    const elapsed = this.current.startedAt === null ? 0 : Math.max(0, Math.min(this.current.durationSeconds, (Date.now() + this.serverOffsetMs - this.current.startedAt) / 1000));
-    this.progress.style.width = `${elapsed / this.current.durationSeconds * 100}%`;
-    this.progress.parentElement?.setAttribute('aria-valuenow', String(Math.round(elapsed / this.current.durationSeconds * 100)));
+    const duration = this.current.source === 'library' && Number.isFinite(this.audio.duration) && this.audio.duration > 0
+      ? this.audio.duration : this.current.durationSeconds;
+    const elapsed = this.current.startedAt === null ? 0 : Math.max(0, Math.min(duration, (Date.now() + this.serverOffsetMs - this.current.startedAt) / 1000));
+    this.progress.style.width = `${elapsed / duration * 100}%`;
+    this.progress.parentElement?.setAttribute('aria-valuenow', String(Math.round(elapsed / duration * 100)));
     this.currentTime.textContent = formatDuration(Math.floor(elapsed));
   }
 
@@ -529,7 +677,9 @@ export class Jukebox {
     const current = this.current;
     if (!current || current.status !== 'playing' || current.startedAt === null) return;
     const sequence = ++this.playRequestSequence;
-    const source = `/api/jukebox/stream/${current.videoId}.mp3`;
+    const source = current.source === 'library' && current.libraryId
+      ? `/api/jukebox/library/${current.libraryId}.mp3`
+      : `/api/jukebox/stream/${current.videoId}.mp3`;
     const absoluteSource = new URL(source, location.href).href;
     if (this.audio.src !== absoluteSource) {
       this.audio.src = source;
@@ -575,7 +725,9 @@ export class Jukebox {
 
   private expectedPlaybackTime(current: JukeboxCurrent): number {
     if (current.startedAt === null) return 0;
-    return Math.max(0, Math.min(current.durationSeconds,
+    const duration = current.source === 'library' && Number.isFinite(this.audio.duration) && this.audio.duration > 0
+      ? this.audio.duration : current.durationSeconds;
+    return Math.max(0, Math.min(duration,
       (Date.now() + this.serverOffsetMs - current.startedAt) / 1000));
   }
 

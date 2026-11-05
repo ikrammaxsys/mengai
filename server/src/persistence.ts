@@ -19,6 +19,7 @@ export interface PersistentGameDataStore {
   playerFish(roomId: string, playerName: string): PlayerFishData;
   recordCrocodileKill(roomId: string, playerName: string): Promise<number>;
   recordCatch(roomId: string, playerName: string, entry: CatchEntry, item: CatchRecord): Promise<void>;
+  recordJunk(roomId: string, playerName: string, item: CatchRecord): Promise<void>;
   releaseFish(roomId: string, playerName: string, catchId: string): Promise<boolean>;
   startCooking(roomId: string, playerName: string, catchId: string, cooking: CampfireCooking): Promise<boolean>;
   finishCooking(roomId: string, cookId: string): Promise<boolean>;
@@ -113,6 +114,14 @@ export class JsonGameDataStore implements PersistentGameDataStore {
     const playerKey = normalizePlayerName(playerName);
     const player = room.players[playerKey] ??= { inventory: [] };
     room.catches.push(entry);
+    player.inventory.push(item);
+    return this.queueWrite();
+  }
+
+  recordJunk(roomId: string, playerName: string, item: CatchRecord): Promise<void> {
+    const room = this.room(roomId);
+    const playerKey = normalizePlayerName(playerName);
+    const player = room.players[playerKey] ??= { inventory: [] };
     player.inventory.push(item);
     return this.queueWrite();
   }

@@ -128,11 +128,22 @@
           <div class="jukebox-card">
             <header class="jukebox-header"><div><h2 id="jukebox-title"><span aria-hidden="true">♫</span> Jukebox</h2><p>Pick a song for everyone in the room</p></div><button id="jukebox-close" class="chat-close" type="button" aria-label="Close jukebox">×</button></header>
             <div class="jukebox-columns">
-              <section class="jukebox-search-column" aria-label="Search songs">
-                <form id="jukebox-search-form" class="jukebox-search-form"><label class="jukebox-search-box"><span aria-hidden="true">⌕</span><input id="jukebox-search" type="search" maxlength="80" autocomplete="off" placeholder="Search YouTube for a song or artist…" aria-label="Search YouTube" /><button id="jukebox-clear" class="jukebox-clear hidden" type="button" aria-label="Clear search">×</button></label><button id="jukebox-search-button" class="jukebox-search-button" type="submit"><span>Search</span><i class="jukebox-spinner hidden" aria-hidden="true"></i></button></form>
-                <div id="jukebox-status" class="jukebox-status hidden" aria-live="polite"></div>
-                <div id="jukebox-results-hint" class="jukebox-results-hint"><span aria-hidden="true">♫</span><span>Search for a song to add it to the queue</span></div>
-                <div id="jukebox-results" class="jukebox-results" aria-live="polite"></div>
+              <section class="jukebox-search-column" aria-label="Music sources">
+                <div class="jukebox-tabs" role="tablist" aria-label="Music sources">
+                  <button id="jukebox-search-tab" class="jukebox-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="jukebox-search-pane">Search</button>
+                  <button id="jukebox-library-tab" class="jukebox-tab" type="button" role="tab" aria-selected="false" aria-controls="jukebox-library-pane">In-app music</button>
+                </div>
+                <div id="jukebox-search-pane" class="jukebox-search-pane" role="tabpanel" aria-labelledby="jukebox-search-tab">
+                  <form id="jukebox-search-form" class="jukebox-search-form"><label class="jukebox-search-box"><span aria-hidden="true">⌕</span><input id="jukebox-search" type="search" maxlength="80" autocomplete="off" placeholder="Search YouTube for a song or artist…" aria-label="Search YouTube" /><button id="jukebox-clear" class="jukebox-clear hidden" type="button" aria-label="Clear search">×</button></label><button id="jukebox-search-button" class="jukebox-search-button" type="submit"><span>Search</span><i class="jukebox-spinner hidden" aria-hidden="true"></i></button></form>
+                  <div id="jukebox-status" class="jukebox-status hidden" aria-live="polite"></div>
+                  <div id="jukebox-results-hint" class="jukebox-results-hint"><span aria-hidden="true">♫</span><span>Search for a song to add it to the queue</span></div>
+                  <div id="jukebox-results" class="jukebox-results" aria-live="polite"></div>
+                </div>
+                <div id="jukebox-library-pane" class="jukebox-library-pane hidden" role="tabpanel" aria-labelledby="jukebox-library-tab">
+                  <div id="jukebox-library-status" class="jukebox-status hidden" aria-live="polite"></div>
+                  <div id="jukebox-library-empty" class="jukebox-results-hint hidden"><span aria-hidden="true">♫</span><span>No in-app music found</span></div>
+                  <div id="jukebox-library-results" class="jukebox-results" aria-live="polite"></div>
+                </div>
               </section>
               <section class="jukebox-now-column" aria-label="Room playback">
                   <article class="jukebox-now-card">

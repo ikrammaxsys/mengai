@@ -1,4 +1,4 @@
-import type { FishRarity, FishSpeciesId, ReelParameters } from '../../shared/fishConfig';
+import type { FishKind, FishRarity, FishSpeciesId, ReelParameters } from '../../shared/fishConfig';
 import { FISH_CONFIG } from '../../shared/fishConfig';
 import type { WeatherSnapshot, WeatherType } from '../../shared/weatherConfig';
 import type { ChickenSnapshot } from '../../shared/chickenConfig';
@@ -25,6 +25,7 @@ export interface CatchEntry {
   weightKg: number;
   rarity: FishRarity;
   timestamp: number;
+  kind?: FishKind;
 }
 
 export interface InventoryItem {
@@ -33,6 +34,7 @@ export interface InventoryItem {
   rarity: FishRarity;
   weightKg: number;
   caughtAt: number;
+  kind?: FishKind;
 }
 
 export type HeldFish = InventoryItem;
@@ -55,7 +57,8 @@ export interface CampfireCookedEvent {
 export interface CatchResult {
   entry: CatchEntry;
   flags: { newPersonalBest: boolean; newRoomRecord: boolean };
-  personalBest: CatchEntry;
+  personalBest: CatchEntry | null;
+  message?: string;
 }
 
 export interface BigCatchEvent {
@@ -147,6 +150,8 @@ export interface PlayerSnapshot {
 
 export interface JukeboxTrack {
   videoId: string;
+  source?: 'library';
+  libraryId?: string;
   title: string;
   channel: string;
   thumbnail: string;
@@ -186,7 +191,7 @@ type Handlers = {
   error: (message: string) => void;
   notice: (message: string) => void;
   fishCast: (message: { playerId: string } & FishCast) => void;
-  fishBite: (message: { playerId: string; biteAt: number; deadline: number }) => void;
+  fishBite: (message: { playerId: string; biteAt: number; deadline: number; special?: 'dragon' | null }) => void;
   fishReel: (message: { playerId: string; startTime: number; duration: number; targetX: number; targetZ: number; escaped: boolean }) => void;
   fishEscaped: (playerId: string) => void;
   reelParams: (params: ReelParameters) => void;
@@ -434,6 +439,11 @@ export class Network {
   enqueueJukebox(videoId: string): boolean {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
     this.send({ type: 'jukebox:enqueue', videoId });
+    return true;
+  }
+  enqueueJukeboxLibrary(libraryId: string): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.send({ type: 'jukebox:enqueue-library', libraryId });
     return true;
   }
   skipJukebox(): void { this.send({ type: 'jukebox:skip' }); }

@@ -6,7 +6,7 @@ import { createReadStream } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join, resolve } from 'node:path';
+import { basename, extname, join, resolve } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AccessToken } from 'livekit-server-sdk';
 import { BROADCAST_SCOPE, calculateReelParameters, FISH_CONFIG } from '../../shared/fishConfig.js';
@@ -33,6 +33,7 @@ const JUKEBOX_CACHE_DIR = resolve(process.cwd(), 'cache');
 const THEATER_DIR = join(JUKEBOX_CACHE_DIR, 'theater');
 const THEATER_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const JUKEBOX_MUSIC_DIR = join(JUKEBOX_CACHE_DIR, 'music');
+const JUKEBOX_LIBRARY_DIR = resolve(process.cwd(), 'server', 'data', 'music');
 const JUKEBOX_THUMB_DIR = join(JUKEBOX_CACHE_DIR, 'thumb');
 const configuredCacheLimit = Number(process.env.JUKEBOX_CACHE_MAX_BYTES);
 const JUKEBOX_CACHE_MAX_BYTES = Number.isFinite(configuredCacheLimit) && configuredCacheLimit > 0
@@ -66,6 +67,15 @@ const server = createServer((request, response) => {
     void searchYouTube(request, response, requestUrl);
     return;
   }
+  if (request.method === 'GET' && pathname === '/api/jukebox/library') {
+    void serveJukeboxLibrary(response);
+    return;
+  }
+  const libraryStreamMatch = /^\/api\/jukebox\/library\/([A-Za-z0-9_-]+)\.mp3$/.exec(pathname);
+  if (request.method === 'GET' && libraryStreamMatch) {
+    void streamJukeboxLibraryAudio(request, response, libraryStreamMatch[1]);
+    return;
+  }
   const streamMatch = /^\/api\/jukebox\/stream\/([A-Za-z0-9_-]{11})\.mp3$/.exec(pathname);
   if (request.method === 'GET' && streamMatch) {
     void streamJukeboxAudio(request, response, streamMatch[1]);
@@ -95,6 +105,7 @@ interface ArenaParty {
 }
 const arenaParties = new Map<string, ArenaParty>();
 const playerArenaParties = new Map<string, string>();
+const dragonCatchCooldowns = new Map<string, number>();
 const inventoryStore: InventoryStore = new InMemoryInventoryStore();
 const persistentData: PersistentGameDataStore = new JsonGameDataStore();
 const memberships = new Map<WebSocket, { roomId: string; playerId: string }>();
@@ -205,9 +216,62 @@ function jukeboxFile(videoId: string): string {
   return join(JUKEBOX_MUSIC_DIR, `${videoId}.mp3`);
 }
 
-async function streamJukeboxAudio(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, videoId: string): Promise<void> {
+function libraryFileName(libraryId: string): string | null {
   try {
-    const filePath = jukeboxFile(videoId);
+    const fileName = Buffer.from(libraryId, 'base64url').toString('utf8');
+    if (!fileName || Buffer.from(fileName).toString('base64url') !== libraryId || basename(fileName) !== fileName || extname(fileName).toLowerCase() !== '.mp3') return null;
+    return fileName;
+  } catch {
+    return null;
+  }
+}
+
+async function jukeboxLibraryTrack(libraryId: string): Promise<{ id: string; title: string; durationSeconds: number; filePath: string } | null> {
+  const fileName = libraryFileName(libraryId);
+  if (!fileName) return null;
+  const filePath = join(JUKEBOX_LIBRARY_DIR, fileName);
+  try {
+    const file = await stat(filePath);
+    if (!file.isFile()) return null;
+    const baseTitle = fileName.slice(0, -extname(fileName).length).replace(/[_-]+/g, ' ').trim();
+    const title = baseTitle.replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'Untitled track';
+    return { id: libraryId, title, durationSeconds: Math.max(1, Math.round(file.size * 8 / 128_000)), filePath };
+  } catch {
+    return null;
+  }
+}
+
+async function serveJukeboxLibrary(response: import('node:http').ServerResponse): Promise<void> {
+  try {
+    const entries = await readdir(JUKEBOX_LIBRARY_DIR, { withFileTypes: true });
+    const tracks = await Promise.all(entries
+      .filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === '.mp3')
+      .map((entry) => jukeboxLibraryTrack(Buffer.from(entry.name).toString('base64url'))));
+    jsonResponse(response, 200, { tracks: tracks.filter((track) => track !== null).map(({ id, title, durationSeconds }) => ({ id, title, durationSeconds })) });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      jsonResponse(response, 200, { tracks: [] });
+      return;
+    }
+    jsonResponse(response, 500, { error: 'The music library could not be loaded.' });
+  }
+}
+
+async function streamJukeboxLibraryAudio(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, libraryId: string): Promise<void> {
+  const track = await jukeboxLibraryTrack(libraryId);
+  if (!track) {
+    jsonResponse(response, 404, { error: 'That music file is not available.' });
+    return;
+  }
+  await streamAudioFile(request, response, track.filePath);
+}
+
+async function streamJukeboxAudio(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, videoId: string): Promise<void> {
+  await streamAudioFile(request, response, jukeboxFile(videoId));
+}
+
+async function streamAudioFile(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, filePath: string): Promise<void> {
+  try {
     const file = await stat(filePath);
     const range = request.headers.range;
     const commonHeaders = {
@@ -844,13 +908,28 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   if (!candidate) return;
   const species = FISH_CONFIG.species.find((entry) => entry.id === candidate.species)!;
   const weightKg = candidate.weightKg;
-  const entry: CatchEntry = { id: randomUUID(), playerId: player.id, playerName: player.name, species: species.id, weightKg, rarity: species.rarity, timestamp: now };
-  const inventoryItem: CatchRecord = { catchId: entry.id, species: entry.species, rarity: entry.rarity, weightKg: entry.weightKg, caughtAt: now };
+  const isJunk = species.id === 'kasut-lama';
+  const entry: CatchEntry = { id: randomUUID(), playerId: player.id, playerName: player.name, species: species.id, weightKg, rarity: species.rarity, timestamp: now, ...(isJunk ? { kind: 'junk' as const } : {}) };
+  const inventoryItem: CatchRecord = { catchId: entry.id, species: entry.species, rarity: entry.rarity, weightKg: entry.weightKg, caughtAt: now, ...(isJunk ? { kind: 'junk' as const } : {}) };
   inventoryStore.add(player.id, inventoryItem);
   try {
-    await persistentData.recordCatch(room.id, player.name, entry, inventoryItem);
+    if (isJunk) await persistentData.recordJunk(room.id, player.name, inventoryItem);
+    else await persistentData.recordCatch(room.id, player.name, entry, inventoryItem);
   } catch (error) {
     console.error('[game-data] Failed to persist catch:', error);
+  }
+  if (isJunk) {
+    const messages = [
+      'You caught an old shoe… someone’s having a bad day.',
+      'Kasut Lama! The pond has a footwear section now.',
+      'A shoe? At least it was a sole-ful catch.',
+      'You found a boot. Its owner is probably still looking for it.',
+    ];
+    player.pendingCatch = null;
+    startReel(room, player, now);
+    send(player.socket, { type: 'catch_result', entry, flags: { newPersonalBest: false, newRoomRecord: false }, personalBest: null, message: messages[Math.floor(Math.random() * messages.length)] });
+    send(player.socket, { type: 'inventory_add', item: inventoryItem });
+    return;
   }
   const playerKey = player.name.toLocaleLowerCase();
   const previousBest = room.personalBests.get(playerKey);
@@ -866,11 +945,12 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   else player.pityMisses += 1;
   player.lastSpecies = species.id;
   player.pendingCatch = null;
+  if (species.id === 'ikan-naga') dragonCatchCooldowns.set(player.id, now + 60 * 60 * 1000);
   room.fishingProfiles.set(playerKey, { pityMisses: player.pityMisses, lastSpecies: player.lastSpecies });
   const zScore = Math.log(weightKg / species.medianKg) / species.sigma;
   const heavy = zScore >= FISH_CONFIG.bigCatch.zScoreThreshold;
   const highRarity = (FISH_CONFIG.bigCatch.notableRarities as readonly string[]).includes(species.rarity);
-  const notable = highRarity || heavy || newRoomRecord;
+  const notable = species.id === 'ikan-bulan' ? weightKg > 150 : highRarity || heavy || newRoomRecord;
   startReel(room, player, now);
   send(player.socket, {
     type: 'catch_result', entry,
@@ -879,7 +959,7 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   });
   send(player.socket, { type: 'inventory_add', item: inventoryItem });
   broadcast(room, { type: 'leaderboard_update', entries: room.leaderboard });
-  if (species.rarity === 'epic' || species.rarity === 'legendary' || newRoomRecord) {
+  if (notable && (species.rarity === 'epic' || species.rarity === 'legendary' || newRoomRecord)) {
     const announcement = `${player.name} caught a ${weightKg.toFixed(2)} kg ${species.name}!`;
     broadcast(room, { type: 'room_announcement', message: announcement });
   }
@@ -1251,6 +1331,39 @@ wss.on('connection', (socket) => {
       return;
     }
 
+    if (message.type === 'jukebox:enqueue-library') {
+      const libraryId = typeof message.libraryId === 'string' ? message.libraryId : '';
+      const libraryTrack = await jukeboxLibraryTrack(libraryId);
+      if (!libraryTrack) {
+        send(socket, { type: 'jukebox:error', message: 'That in-app music file is no longer available.' });
+        return;
+      }
+      if (Math.hypot(player.x - WORLD_CONFIG.jukebox.x, player.z - WORLD_CONFIG.jukebox.z) > WORLD_CONFIG.jukebox.interactionRadius + 1) {
+        send(socket, { type: 'jukebox:error', message: 'Walk closer to the jukebox to add a song.' });
+        return;
+      }
+      if (room.jukebox.queue.length >= JUKEBOX_MAX_QUEUE_LENGTH) {
+        send(socket, { type: 'jukebox:error', message: 'The queue is full. Try again after a song finishes.' });
+        return;
+      }
+      const track: JukeboxTrack = {
+        videoId: `library_${libraryId}`,
+        source: 'library',
+        libraryId,
+        title: libraryTrack.title,
+        channel: 'In-app music',
+        thumbnail: '',
+        durationSeconds: libraryTrack.durationSeconds,
+        requesterId: player.id,
+        requestedBy: player.name,
+        status: 'ready',
+      };
+      room.jukebox.queue.push(track);
+      if (!room.jukebox.current) advanceJukebox(room);
+      else broadcast(room, jukeboxState(room));
+      return;
+    }
+
     if (message.type === 'jukebox:skip') {
       if (!room.jukebox.current) return;
       if (room.jukebox.current.requesterId === player.id) {
@@ -1267,7 +1380,7 @@ wss.on('connection', (socket) => {
       const videoId = typeof message.videoId === 'string' ? message.videoId : '';
       const current = room.jukebox.current;
       if (!current || current.videoId !== videoId) return;
-      if (message.type === 'jukebox:ended' && (current.startedAt === null || Date.now() < current.startedAt + current.durationSeconds * 1000 - 3000)) return;
+      if (message.type === 'jukebox:ended' && current.source !== 'library' && (current.startedAt === null || Date.now() < current.startedAt + current.durationSeconds * 1000 - 3000)) return;
       if (message.type === 'jukebox:failed') {
         send(socket, { type: 'jukebox:error', message: `“${current.title}” could not be played. Skipping to the next song.` });
         broadcast(room, { type: 'jukebox:error', message: `“${current.title}” could not be played. Skipping to the next song.` }, socket);
@@ -1559,17 +1672,31 @@ wss.on('connection', (socket) => {
       const candidate = player.reelCandidates?.[quickReaction ? 'quick' : 'normal'];
       if (!candidate) { startReel(room, player, now, true); return; }
       player.pendingCatch = candidate;
+      if (candidate.species === 'kasut-lama') {
+        await recordCatch(room, player, now);
+        return;
+      }
       player.fishing = 'fighting';
       player.reelStartedAt = now;
       player.biteDeadline = null;
       broadcast(room, { type: 'reel_state', playerId: player.id, active: true });
       const params = calculateReelParameters(candidate.species, candidate.weightKg, room.weather.type);
+      if (candidate.species === 'ikan-bulan') {
+        params.greenWidth = 52;
+        params.driftSpeed = 4.5;
+        params.fillRate = 0.16;
+      } else if (candidate.species === 'ikan-naga') {
+        params.greenWidth = 27;
+        params.driftSpeed = 8.5;
+        params.fillRate = 0.15;
+        params.zonePattern = 'serpent';
+      }
       if (isDev) {
         const table = Object.entries(candidate.probabilities).map(([id, probability]) => `${id}: ${(probability * 100).toFixed(2)}%`).join(', ');
         console.info(`[fish-roll] room=${room.id} depth=${candidate.zone} quick=${quickReaction} pity=${player.pityMisses} { ${table} } => ${candidate.species}`);
         console.info(`[reel-difficulty] room=${room.id} difficulty=${params.difficulty.toFixed(3)} greenWidth=${params.greenWidth.toFixed(1)} driftSpeed=${params.driftSpeed.toFixed(1)} fillRate=${params.fillRate.toFixed(3)}`);
       }
-      send(socket, { type: 'reel_params', greenWidth: params.greenWidth, driftSpeed: params.driftSpeed, fillRate: params.fillRate, rarity: params.rarity, rarityColor: params.rarityColor });
+      send(socket, { type: 'reel_params', greenWidth: params.greenWidth, driftSpeed: params.driftSpeed, fillRate: params.fillRate, rarity: params.rarity, rarityColor: params.rarityColor, zonePattern: params.zonePattern });
       return;
     }
 
@@ -1691,14 +1818,18 @@ setInterval(() => {
         player.biteAt = now;
         player.biteDeadline = now + FISH_CONFIG.bite.reactionWindowMs + 100 + Math.min(250, player.latencyRttMs / 2);
         const depthRadius = player.cast ? Math.hypot(player.cast.targetX, player.cast.targetZ) : FISH_CONFIG.pond.waterRadius * 0.5;
+        const cooldownUntil = dragonCatchCooldowns.get(player.id) ?? 0;
+        if (cooldownUntil <= now) dragonCatchCooldowns.delete(player.id);
+        const excludedSpecies = cooldownUntil > now ? ['ikan-naga'] as const : [];
         const rollCandidate = (quick: boolean) => {
-          const result = rollSpecies(depthRadius, { pityMisses: player.pityMisses, lastSpecies: player.lastSpecies }, quick, Math.random(), room.weather.type);
+          const result = rollSpecies(depthRadius, { pityMisses: player.pityMisses, lastSpecies: player.lastSpecies }, quick, Math.random(), room.weather.type, excludedSpecies);
           return { species: result.species.id, weightKg: rollWeight(result.species), probabilities: result.probabilities, zone: result.zone };
         };
         // Both reaction-adjusted outcomes are sampled now; the server picks
         // the quick or normal candidate when reel_start arrives.
         player.reelCandidates = { normal: rollCandidate(false), quick: rollCandidate(true) };
-        broadcast(room, { type: 'fish_bite', playerId: player.id, biteAt: now, deadline: player.biteDeadline });
+        const dragonBite = player.reelCandidates.normal.species === 'ikan-naga' || player.reelCandidates.quick.species === 'ikan-naga';
+        broadcast(room, { type: 'fish_bite', playerId: player.id, biteAt: now, deadline: player.biteDeadline, special: dragonBite ? 'dragon' : null });
         changed = true;
       } else if (player.fishing === 'bite' && player.biteDeadline !== null && player.biteDeadline < now) {
         startReel(room, player, now, true);
@@ -1823,7 +1954,7 @@ setInterval(() => {
   for (const room of rooms.all()) {
     if (!room.players.size) continue;
     const current = room.jukebox.current;
-    if (current?.status === 'playing' && current.startedAt !== null && now >= current.startedAt + current.durationSeconds * 1000) advanceJukebox(room, now);
+    if (current?.source !== 'library' && current?.status === 'playing' && current.startedAt !== null && now >= current.startedAt + current.durationSeconds * 1000) advanceJukebox(room, now);
   }
   rooms.cleanupEmptyRooms(now);
 }, 1000);

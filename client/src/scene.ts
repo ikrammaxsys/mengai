@@ -13,16 +13,19 @@ import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/the
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
+type JukeboxParticle = { object: THREE.Sprite | THREE.Mesh; material: THREE.SpriteMaterial | THREE.MeshStandardMaterial; startedAt: number; duration: number; x: number; y: number; z: number; drift: number; wobble: number; phase: number; spin: number; sparkle: boolean };
+type DanceVisual = { root: THREE.Group; note: THREE.Sprite; moving: boolean; phase: number; speed: number; blend: number };
 
 export class GameScene {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 150);
   readonly renderer: THREE.WebGLRenderer;
   private readonly avatars = new Map<string, Avatar>();
+  private readonly avatarDance = new Map<string, DanceVisual>();
   private readonly crocodileSlainCounts = new Map<string, number>();
   private readonly chatBubbles = new Map<string, ChatBubble[]>();
   private readonly eatBubbles = new Map<string, ChatBubble>();
@@ -33,6 +36,18 @@ export class GameScene {
   private readonly stoneHint: HTMLDivElement;
   private readonly photoboothLabel: HTMLDivElement;
   private readonly jukeboxLabel: HTMLDivElement;
+  private readonly jukeboxRoot = new THREE.Group();
+  private readonly jukeboxModel = new THREE.Group();
+  private readonly jukeboxParticles: JukeboxParticle[] = [];
+  private readonly jukeboxReduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  private jukeboxNoteTexture!: THREE.CanvasTexture;
+  private jukeboxPlaying = false;
+  private localDanceBlocked = false;
+  private jukeboxIntensity = 0;
+  private jukeboxParticleSpawnAt = 0;
+  private jukeboxGlow!: THREE.Mesh;
+  private jukeboxGlowMaterial!: THREE.MeshBasicMaterial;
+  private jukeboxGlowLight!: THREE.PointLight;
   private readonly ray = new THREE.Vector3();
   private readonly cameraOffset = new THREE.Vector3(0, 8.5, -11);
   private readonly crocodilePortal = new THREE.Group();
@@ -503,34 +518,138 @@ export class GameScene {
   }
 
   private buildJukebox(): void {
-    const jukebox = new THREE.Group();
-    jukebox.position.set(WORLD_CONFIG.jukebox.x, 0, WORLD_CONFIG.jukebox.z);
-    this.scene.add(jukebox);
+    this.jukeboxRoot.position.set(WORLD_CONFIG.jukebox.x, 0.14, WORLD_CONFIG.jukebox.z);
+    this.scene.add(this.jukeboxRoot);
+    this.jukeboxModel.position.y = -0.14;
+    this.jukeboxRoot.add(this.jukeboxModel);
     const dark = this.material('#3d5148');
     const body = this.material('#9b5b3e');
     const brass = this.material('#e3bb68');
     const base = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.28, 0.9), dark);
-    base.position.y = 0.14; base.castShadow = true; base.receiveShadow = true; jukebox.add(base);
+    base.position.y = 0.14; base.castShadow = true; base.receiveShadow = true; this.jukeboxModel.add(base);
     const cabinet = new THREE.Mesh(new THREE.BoxGeometry(1.12, 1.65, 0.72), body);
-    cabinet.position.y = 1.08; cabinet.castShadow = true; cabinet.receiveShadow = true; jukebox.add(cabinet);
+    cabinet.position.y = 1.08; cabinet.castShadow = true; cabinet.receiveShadow = true; this.jukeboxModel.add(cabinet);
     const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.72, 0.42, 8), body);
-    crown.position.y = 2.08; crown.scale.z = 0.65; crown.castShadow = true; jukebox.add(crown);
+    crown.position.y = 2.08; crown.scale.z = 0.65; crown.castShadow = true; this.jukeboxModel.add(crown);
     const speaker = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.5, 0.06), dark);
-    speaker.position.set(0, 1.5, 0.39); jukebox.add(speaker);
+    speaker.position.set(0, 1.5, 0.39); this.jukeboxModel.add(speaker);
     const speakerGrill = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.06, 8), brass);
-    speakerGrill.rotation.x = Math.PI / 2; speakerGrill.position.set(0, 1.5, 0.44); jukebox.add(speakerGrill);
+    speakerGrill.rotation.x = Math.PI / 2; speakerGrill.position.set(0, 1.5, 0.44); this.jukeboxModel.add(speakerGrill);
     const screen = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.19, 0.06), brass);
-    screen.position.set(0, 0.94, 0.39); jukebox.add(screen);
+    screen.position.set(0, 0.94, 0.39); this.jukeboxModel.add(screen);
     const dial = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), brass);
-    dial.position.set(0, 0.63, 0.41); jukebox.add(dial);
+    dial.position.set(0, 0.63, 0.41); this.jukeboxModel.add(dial);
     for (const x of [-0.38, 0.38]) {
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.055, 5, 4), brass);
-      knob.position.set(x, 0.63, 0.41); jukebox.add(knob);
+      knob.position.set(x, 0.63, 0.41); this.jukeboxModel.add(knob);
     }
+
+    this.jukeboxGlowMaterial = new THREE.MeshBasicMaterial({ color: '#b8f1d8', transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+    this.jukeboxGlow = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 12), this.jukeboxGlowMaterial);
+    this.jukeboxGlow.rotation.x = -Math.PI / 2;
+    this.jukeboxGlow.position.y = -0.13;
+    this.jukeboxRoot.add(this.jukeboxGlow);
+    this.jukeboxGlowLight = new THREE.PointLight('#b8f1d8', 0, 3.2, 2);
+    this.jukeboxGlowLight.position.set(0, -0.05, 0);
+    this.jukeboxRoot.add(this.jukeboxGlowLight);
+    this.createJukeboxParticles();
   }
 
   setJukeboxPlaying(playing: boolean): void {
+    this.jukeboxPlaying = playing;
     this.jukeboxLabel.textContent = playing ? '♫ Jukebox · now playing' : 'Jukebox';
+  }
+
+  setLocalDanceBlocked(blocked: boolean): void { this.localDanceBlocked = blocked; }
+
+  private createJukeboxParticles(): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext('2d');
+    if (context) {
+      context.fillStyle = '#fff';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.font = 'bold 52px Georgia, serif';
+      context.fillText('♪', 32, 34);
+    }
+    this.jukeboxNoteTexture = new THREE.CanvasTexture(canvas);
+    const colors = ['#a8ead1', '#f4b8cb', '#f4dc8c', '#a8d7f0'];
+    for (let index = 0; index < 20; index++) {
+      const material = new THREE.SpriteMaterial({ map: this.jukeboxNoteTexture, color: colors[index % colors.length], transparent: true, opacity: 0, depthWrite: false });
+      const sprite = new THREE.Sprite(material);
+      sprite.visible = false;
+      this.scene.add(sprite);
+      this.jukeboxParticles.push({ object: sprite, material, startedAt: 0, duration: 2, x: 0, y: 0, z: 0, drift: 0, wobble: 0, phase: 0, spin: 0, sparkle: false });
+    }
+    const sparkleGeometry = new THREE.OctahedronGeometry(0.055, 0);
+    for (let index = 0; index < 6; index++) {
+      const material = new THREE.MeshStandardMaterial({ color: colors[index % colors.length], emissive: colors[index % colors.length], emissiveIntensity: 0.3, transparent: true, opacity: 0, roughness: 0.7, depthWrite: false });
+      const star = new THREE.Mesh(sparkleGeometry, material);
+      star.visible = false;
+      this.scene.add(star);
+      this.jukeboxParticles.push({ object: star, material, startedAt: 0, duration: 0.9, x: 0, y: 0, z: 0, drift: 0, wobble: 0, phase: 0, spin: 0, sparkle: true });
+    }
+  }
+
+  private spawnJukeboxParticle(now: number, sparkle: boolean): void {
+    const particle = this.jukeboxParticles.find((entry) => entry.sparkle === sparkle && !entry.object.visible);
+    if (!particle) return;
+    particle.startedAt = now;
+    particle.duration = sparkle ? 0.75 + Math.random() * 0.5 : 1.8 + Math.random() * 0.4;
+    particle.x = WORLD_CONFIG.jukebox.x + (Math.random() - 0.5) * 0.9;
+    particle.y = 2.45 + Math.random() * 0.28;
+    particle.z = WORLD_CONFIG.jukebox.z + (Math.random() - 0.5) * 0.5;
+    particle.drift = (Math.random() - 0.5) * 0.7;
+    particle.wobble = 0.08 + Math.random() * 0.12;
+    particle.phase = Math.random() * Math.PI * 2;
+    particle.spin = (Math.random() - 0.5) * 1.3;
+    particle.object.visible = true;
+  }
+
+  private updateJukeboxEffect(deltaSeconds: number, now: number): void {
+    const distance = this.camera.position.distanceTo(this.jukeboxRoot.position);
+    const reduced = this.jukeboxReduceMotion.matches;
+    const target = this.jukeboxPlaying && !reduced && distance <= 40 ? 1 : 0;
+    const easingSeconds = target > this.jukeboxIntensity ? 0.18 : 0.1;
+    this.jukeboxIntensity += (target - this.jukeboxIntensity) * (1 - Math.exp(-deltaSeconds / easingSeconds));
+    const phase = now * 0.0065;
+    this.jukeboxRoot.rotation.z = Math.sin(phase) * 0.09 * this.jukeboxIntensity;
+    this.jukeboxRoot.rotation.y = Math.sin(phase * 0.5) * 0.018 * this.jukeboxIntensity;
+    this.jukeboxRoot.position.y = 0.14 + Math.sin(phase * 2) * 0.025 * this.jukeboxIntensity;
+    const squash = Math.sin(phase * 2 + 0.5) * 0.012 * this.jukeboxIntensity;
+    this.jukeboxModel.scale.set(1 + squash * 0.35, 1 + squash, 1 + squash * 0.35);
+    const pulse = (0.5 + 0.5 * Math.sin(now * 0.004)) * this.jukeboxIntensity;
+    this.jukeboxGlowMaterial.opacity = pulse * 0.24;
+    this.jukeboxGlow.scale.setScalar(0.92 + pulse * 0.12);
+    this.jukeboxGlowLight.intensity = pulse * 0.8;
+
+    if (this.jukeboxPlaying && target > 0 && now >= this.jukeboxParticleSpawnAt) {
+      this.spawnJukeboxParticle(now, false);
+      if (Math.random() < 0.45) this.spawnJukeboxParticle(now, true);
+      this.jukeboxParticleSpawnAt = now + 300;
+    }
+    for (const particle of this.jukeboxParticles) {
+      if (!particle.object.visible) continue;
+      const age = Math.max(0, (now - particle.startedAt) / 1000);
+      const progress = age / particle.duration;
+      if (progress >= 1 || this.jukeboxIntensity < 0.01) {
+        particle.object.visible = false;
+        continue;
+      }
+      const envelope = Math.sin(Math.PI * progress);
+      particle.object.position.set(
+        particle.x + particle.drift * progress + Math.sin(progress * 7 + particle.phase) * particle.wobble,
+        particle.y + progress * (particle.sparkle ? 0.55 : 1.35),
+        particle.z + Math.sin(progress * 5 + particle.phase) * 0.09,
+      );
+      particle.object.rotation.z += particle.spin * deltaSeconds;
+      const fade = envelope * this.jukeboxIntensity;
+      particle.material.opacity = fade;
+      const size = particle.sparkle ? 0.55 + envelope * 0.55 : 0.9 - progress * 0.35;
+      particle.object.scale.setScalar(size * this.jukeboxIntensity);
+    }
   }
 
   private buildPhotobooth(): void {
@@ -623,21 +742,29 @@ export class GameScene {
 
   private makeAvatar(player: PlayerSnapshot, local: boolean): Avatar {
     const group = new THREE.Group();
+    const visualRoot = new THREE.Group();
+    group.add(visualRoot);
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.65, 3, 6), this.material(player.color));
-    body.position.y = 0.8; body.castShadow = true; body.visible = !local || !this.firstPersonView; group.add(body);
+    body.position.y = 0.8; body.castShadow = true; body.visible = !local || !this.firstPersonView; visualRoot.add(body);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), this.material('#f2c7a5'));
-    head.position.set(0, 1.55, 0.04); head.castShadow = true; head.visible = !local || !this.firstPersonView; group.add(head);
+    head.position.set(0, 1.55, 0.04); head.castShadow = true; head.visible = !local || !this.firstPersonView; visualRoot.add(head);
     const hat = new THREE.Mesh(new THREE.ConeGeometry(0.37, 0.35, 7), this.material(player.color));
-    hat.position.set(0, 1.86, 0.04); hat.castShadow = true; hat.visible = !local || !this.firstPersonView; group.add(hat);
+    hat.position.set(0, 1.86, 0.04); hat.castShadow = true; hat.visible = !local || !this.firstPersonView; visualRoot.add(hat);
     const crown = this.createCrown();
-    crown.visible = false; group.add(crown);
+    crown.visible = false; visualRoot.add(crown);
     const crocodileRobe = this.createCrocodileRobe();
-    crocodileRobe.visible = false; group.add(crocodileRobe);
+    crocodileRobe.visible = false; visualRoot.add(crocodileRobe);
     const face = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), this.material('#344b45'));
-    face.position.set(0.11, 1.57, 0.31); face.visible = !local || !this.firstPersonView; group.add(face);
+    face.position.set(0.11, 1.57, 0.31); face.visible = !local || !this.firstPersonView; visualRoot.add(face);
 
     const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.25, 5), this.material('#765b40'));
-    rod.position.set(0.48, 1.2, 0.18); rod.rotation.z = -0.42; rod.visible = false; group.add(rod);
+    rod.position.set(0.48, 1.2, 0.18); rod.rotation.z = -0.42; rod.visible = false; visualRoot.add(rod);
+    const noteColors = ['#a8ead1', '#f4b8cb', '#f4dc8c', '#a8d7f0'];
+    const danceNote = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.jukeboxNoteTexture, color: noteColors[Math.floor(Math.random() * noteColors.length)], transparent: true, opacity: 0, depthWrite: false }));
+    danceNote.position.set(0, 2.32, 0);
+    danceNote.scale.set(0.22, 0.22, 1);
+    danceNote.visible = false;
+    visualRoot.add(danceNote);
     const linePoints = Array.from({ length: 7 }, () => new THREE.Vector3());
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(linePoints), new THREE.LineBasicMaterial({ color: '#f8f4dc' }));
     line.visible = false; this.scene.add(line);
@@ -656,7 +783,8 @@ export class GameScene {
     this.labels.appendChild(label);
     const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
     this.crocodileSlainCounts.set(player.id, crocodilesSlain);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null };
+    this.avatarDance.set(player.id, { root: visualRoot, note: danceNote, moving: player.moving, phase: Math.random() * Math.PI * 2, speed: 0.9 + Math.random() * 0.2, blend: 0 });
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
@@ -842,6 +970,8 @@ export class GameScene {
       this.updateCrocodileRobeAppearance();
     }
     avatar.fishing = player.fishing;
+    const dance = this.avatarDance.get(player.id);
+    if (dance) dance.moving = player.moving;
     if (player.seatedSeatId !== undefined && player.seatedSeatId !== avatar.seatedSeatId) this.setAvatarSeat(avatar, player.seatedSeatId);
     this.setPhotoboothState(player.id, player.inPhotobooth ?? false);
     if (player.holdingFish !== undefined) this.setHoldingFish(player.id, player.holdingFish);
@@ -883,7 +1013,7 @@ export class GameScene {
     const avatar = this.avatars.get(id); if (!avatar) return;
     if (avatar.holdingFish?.catchId === fish?.catchId) return;
     if (avatar.heldModel) {
-      avatar.group.remove(avatar.heldModel);
+      this.avatarDance.get(id)?.root.remove(avatar.heldModel);
       this.disposeFishModel(avatar.heldModel);
       avatar.heldModel = null;
     }
@@ -896,7 +1026,7 @@ export class GameScene {
     model.scale.setScalar(Math.max(0.6, Math.min(1.6, 1 + (weightScale - 1) * 1.8)));
     model.position.set(0.34, 1.12, 0.4);
     model.rotation.y = 0.12;
-    avatar.group.add(model);
+    this.avatarDance.get(id)?.root.add(model);
     avatar.heldModel = model;
   }
 
@@ -926,6 +1056,16 @@ export class GameScene {
   }
 
   showBite(id: string): void { const avatar = this.avatars.get(id); if (avatar) avatar.fishing = 'bite'; }
+
+  setDragonBite(id: string, active: boolean): void {
+    const avatar = this.avatars.get(id);
+    if (!avatar) return;
+    avatar.dragonBite = active;
+    const material = avatar.bobber.material as THREE.MeshStandardMaterial;
+    material.emissive.set(active ? '#d9a13b' : '#000000');
+    material.emissiveIntensity = active ? 0.9 : 0;
+    for (const ring of avatar.splash) (ring.material as THREE.MeshBasicMaterial).color.set(active ? '#e5c16c' : '#dffaff');
+  }
 
   setReelActive(id: string, active: boolean): void {
     const avatar = this.avatars.get(id); if (!avatar) return;
@@ -996,6 +1136,7 @@ export class GameScene {
 
   startReel(id: string, startTime: number, duration: number = FISH_CONFIG.cast.reelSeconds): void {
     const avatar = this.avatars.get(id); if (!avatar?.cast) return;
+    this.setDragonBite(id, false);
     avatar.cast.phase = 'reeling'; avatar.cast.reelStartedAt = startTime; avatar.cast.reelSeconds = duration;
     avatar.fishing = 'reeling';
   }
@@ -1066,6 +1207,14 @@ export class GameScene {
     const splashElapsed = (now - landingTime) / 1000;
     for (let i = 0; i < avatar.splash.length; i++) {
       const ring = avatar.splash[i];
+      if (avatar.dragonBite && cast.phase !== 'reeling') {
+        const phase = ((now / 1200 + i / avatar.splash.length) % 1 + 1) % 1;
+        ring.visible = true;
+        ring.position.set(cast.targetX, FISH_CONFIG.pond.waterY + 0.025, cast.targetZ);
+        ring.scale.setScalar(0.45 + phase * 1.65);
+        (ring.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - phase);
+        continue;
+      }
       const phase = Math.max(0, Math.min(1, (splashElapsed - i * 0.12) / FISH_CONFIG.pond.splashSeconds));
       const visible = splashElapsed >= i * 0.12 && phase < 1 && cast.phase !== 'reeling';
       ring.visible = visible;
@@ -1082,6 +1231,8 @@ export class GameScene {
     if (avatar) {
       if (avatar.heldModel) this.disposeFishModel(avatar.heldModel);
       this.scene.remove(avatar.group, avatar.line, avatar.bobber, ...avatar.splash);
+      this.avatarDance.get(id)?.note.material.dispose();
+      this.avatarDance.delete(id);
       avatar.label.remove(); this.avatars.delete(id);
     }
     for (const bubble of this.chatBubbles.get(id) ?? []) bubble.element.remove();
@@ -1097,6 +1248,8 @@ export class GameScene {
   setPosition(x: number, z: number): void { const avatar = this.avatars.get(this.localId); if (avatar) { avatar.group.position.x = x; avatar.group.position.z = z; } }
   setLocalMotion(x: number, z: number, rotY: number): void {
     const avatar = this.avatars.get(this.localId); if (!avatar) return;
+    const dance = this.avatarDance.get(this.localId);
+    if (dance) dance.moving = Math.hypot(x - avatar.group.position.x, z - avatar.group.position.z) > 0.001;
     avatar.group.position.x = x; avatar.group.position.z = z;
     avatar.targetFacing = Math.atan2(Math.sin(rotY), Math.cos(rotY));
     avatar.group.rotation.y = avatar.targetFacing;
@@ -1249,6 +1402,34 @@ export class GameScene {
     this.theaterVisibilityHandler?.(visible);
   }
 
+  private updateAvatarDance(avatar: Avatar, dance: DanceVisual, now: number, deltaSeconds: number): void {
+    const jukeboxDistance = Math.hypot(avatar.group.position.x - WORLD_CONFIG.jukebox.x, avatar.group.position.z - WORLD_CONFIG.jukebox.z);
+    const cameraNear = this.camera.position.distanceToSquared(avatar.group.position) <= 40 * 40;
+    const target = this.jukeboxPlaying && !this.jukeboxReduceMotion.matches && cameraNear && jukeboxDistance <= 7
+      && !dance.moving && avatar.fishing === 'idle' && !avatar.seatedSeatId && !avatar.inPhotobooth
+      && (!avatar.local || !this.localDanceBlocked);
+    dance.blend += ((target ? 1 : 0) - dance.blend) * (1 - Math.exp(-Math.max(0, deltaSeconds) / 0.1));
+    if (!target && dance.blend < 0.002) {
+      dance.blend = 0;
+      dance.root.position.y = 0;
+      dance.root.rotation.set(0, 0, 0);
+      dance.root.scale.set(1, 1, 1);
+      dance.note.visible = false;
+      return;
+    }
+    const beat = now * 0.0065 * dance.speed + dance.phase;
+    dance.root.position.y = Math.sin(beat * 2) * 0.025 * dance.blend;
+    dance.root.rotation.z = Math.sin(beat) * 0.105 * dance.blend;
+    dance.root.rotation.y = Math.sin(beat + 0.8) * 0.035 * dance.blend;
+    const squash = Math.sin(beat * 2 + 0.6) * 0.012 * dance.blend;
+    dance.root.scale.set(1 - squash * 0.35, 1 + squash, 1 - squash * 0.35);
+    const notePhase = ((now / 3200 + dance.phase / (Math.PI * 2)) % 1 + 1) % 1;
+    const notePulse = notePhase < 0.15 ? Math.sin(Math.PI * notePhase / 0.15) : 0;
+    dance.note.position.y = 2.3 + notePhase * 0.12;
+    dance.note.material.opacity = dance.blend * notePulse * 0.75;
+    dance.note.visible = dance.note.material.opacity > 0.01;
+  }
+
   render(deltaSeconds = 1 / 60): void {
     const serverNow = Date.now() + this.serverClockOffset;
     const portalPulse = Math.sin(serverNow * 0.0025);
@@ -1261,6 +1442,7 @@ export class GameScene {
       this.updateTheaterCamera(local, performance.now(), deltaSeconds);
     }
     this.camera.updateMatrixWorld();
+    this.updateJukeboxEffect(deltaSeconds, serverNow);
     this.updateTheaterLabel();
     this.updateTheaterScreenVisibility();
     this.ray.set(PHOTOBOOTH_CONFIG.position.x, 5.1, PHOTOBOOTH_CONFIG.position.z).project(this.camera);
@@ -1280,6 +1462,8 @@ export class GameScene {
         avatar.heldModel.rotation.x = wiggle > 0.94 ? (wiggle - 0.94) * 0.35 : 0;
       }
       if (!avatar.local) this.interpolateRemote(avatar, remoteRenderTime);
+      const dance = this.avatarDance.get(id);
+      if (dance) this.updateAvatarDance(avatar, dance, serverNow, deltaSeconds);
       this.renderCast(avatar, serverNow);
       this.ray.set(avatar.group.position.x, 2.2, avatar.group.position.z).project(this.camera);
       const labelLeft = Math.round((this.ray.x * 0.5 + 0.5) * innerWidth);

@@ -29,13 +29,14 @@ export function getWeightedTable(
   state: CatchRollState,
   quickReaction: boolean,
   weatherType: WeatherType = 'clear',
+  excludedSpecies: readonly FishSpeciesId[] = [],
 ): RollResult['probabilities'] & { zone: RollResult['zone'] } {
   const fraction = depthRadius / FISH_CONFIG.pond.waterRadius;
   const zone: RollResult['zone'] = fraction <= FISH_CONFIG.depth.deepRadiusFraction ? 'deep'
     : fraction >= FISH_CONFIG.depth.shallowStartFraction ? 'shallow' : 'middle';
   const pity = Math.min(state.pityMisses * FISH_CONFIG.modifiers.pityIncreasePerMiss, FISH_CONFIG.modifiers.pityMaximum);
   const adjusted = FISH_CONFIG.species.map((fish) => {
-    let weight = fish.baseWeight * WEATHER_CONFIG.states[weatherType].fishing.speciesAffinity[fish.id];
+    let weight = excludedSpecies.includes(fish.id) ? 0 : fish.baseWeight * WEATHER_CONFIG.states[weatherType].fishing.speciesAffinity[fish.id];
     if (zone === 'shallow') {
       weight *= fish.depthGroup === 'common' ? FISH_CONFIG.depth.shallowCommonMultiplier
         : fish.depthGroup === 'rare' ? FISH_CONFIG.depth.shallowRareMultiplier : 1;
@@ -59,8 +60,9 @@ export function rollSpecies(
   quickReaction: boolean,
   uniformRoll = Math.random(),
   weatherType: WeatherType = 'clear',
+  excludedSpecies: readonly FishSpeciesId[] = [],
 ): RollResult {
-  const table = getWeightedTable(depthRadius, state, quickReaction, weatherType);
+  const table = getWeightedTable(depthRadius, state, quickReaction, weatherType, excludedSpecies);
   let threshold = uniformRoll;
   let selected = FISH_CONFIG.species[FISH_CONFIG.species.length - 1];
   for (const fish of FISH_CONFIG.species) {

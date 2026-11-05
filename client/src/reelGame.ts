@@ -49,8 +49,10 @@ export class ReelGame {
     this.pullRemaining = Math.max(0, this.pullRemaining - dt);
     const pulling = this.pullRemaining > 0;
     const drift = this.params.driftSpeed * (pulling ? config.fishPullDriftMultiplier : 1);
-    const rawCenter = config.greenCenterStart + config.zoneMainAmplitude * Math.sin(this.elapsed * drift * config.zoneSineRate) +
-      config.zoneRippleAmplitude * Math.sin(this.elapsed * drift * config.zoneRippleRate);
+    const rawCenter = this.params.zonePattern === 'serpent'
+      ? config.greenCenterStart + 17 * Math.sin(this.elapsed * drift * 0.045) + 6 * Math.sin(this.elapsed * drift * 0.13 + 0.8) + 2.5 * Math.sin(this.elapsed * drift * 0.24)
+      : config.greenCenterStart + config.zoneMainAmplitude * Math.sin(this.elapsed * drift * config.zoneSineRate) +
+        config.zoneRippleAmplitude * Math.sin(this.elapsed * drift * config.zoneRippleRate);
     const center = Math.max(config.greenCenterMin, Math.min(config.greenCenterMax, rawCenter));
 
     const acceleration = this.held ? config.markerAccelerationHold : -config.markerAccelerationRelease;

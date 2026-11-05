@@ -143,20 +143,24 @@ export const FISH_CONFIG = {
   },
   leaderboard: { maxEntries: 10 },
   species: [
-    { id: 'bluegill', name: 'Ikan Insang Biru', rarity: 'common', rarityColor: '#929d98', medianKg: 0.2, sigma: 0.35, minKg: 0.05, maxKg: 1, baseWeight: 50, depthGroup: 'common', lengthK: 37.6 },
-    { id: 'rainbow-trout', name: 'Ikan Trout Pelangi', rarity: 'uncommon', rarityColor: '#55a66c', medianKg: 0.9, sigma: 0.5, minKg: 0.2, maxKg: 6, baseWeight: 25, depthGroup: 'neutral', lengthK: 51.8 },
-    { id: 'largemouth-bass', name: 'Ikan Bass Mulut Besar', rarity: 'rare', rarityColor: '#4b8bc8', medianKg: 1.2, sigma: 0.5, minKg: 0.3, maxKg: 6, baseWeight: 14, depthGroup: 'rare', lengthK: 42.4 },
-    { id: 'common-carp', name: 'Ikan Kap Biasa', rarity: 'epic', rarityColor: '#a16bc2', medianKg: 3.5, sigma: 0.55, minKg: 0.8, maxKg: 20, baseWeight: 8, depthGroup: 'rare', lengthK: 42 },
-    { id: 'golden-koi', name: 'Ikan Koi Emas', rarity: 'legendary', rarityColor: '#d5a633', medianKg: 3, sigma: 0.45, minKg: 1, maxKg: 12, baseWeight: 3, depthGroup: 'rare', lengthK: 42 },
-    { id: 'todak', name: 'Ikan Todak', rarity: 'epic', rarityColor: '#668fa5', medianKg: 16, sigma: 0.58, minKg: 3, maxKg: 90, baseWeight: 5, depthGroup: 'rare', lengthK: 62 },
-    { id: 'buntal', name: 'Ikan Buntal', rarity: 'uncommon', rarityColor: '#d68a4c', medianKg: 0.6, sigma: 0.4, minKg: 0.15, maxKg: 4, baseWeight: 14, depthGroup: 'neutral', lengthK: 32 },
-    { id: 'pari', name: 'Ikan Pari', rarity: 'rare', rarityColor: '#7f8b6d', medianKg: 5, sigma: 0.55, minKg: 1, maxKg: 32, baseWeight: 7, depthGroup: 'rare', lengthK: 70 },
+    { id: 'bluegill', name: 'Ikan Insang Biru', rarity: 'common', rarityColor: '#929d98', medianKg: 0.2, sigma: 0.35, minKg: 0.05, maxKg: 1, baseWeight: 50, depthGroup: 'common', lengthK: 37.6, kind: 'fish' },
+    { id: 'rainbow-trout', name: 'Ikan Trout Pelangi', rarity: 'uncommon', rarityColor: '#55a66c', medianKg: 0.9, sigma: 0.5, minKg: 0.2, maxKg: 6, baseWeight: 25, depthGroup: 'neutral', lengthK: 51.8, kind: 'fish' },
+    { id: 'largemouth-bass', name: 'Ikan Bass Mulut Besar', rarity: 'rare', rarityColor: '#4b8bc8', medianKg: 1.2, sigma: 0.5, minKg: 0.3, maxKg: 6, baseWeight: 14, depthGroup: 'rare', lengthK: 42.4, kind: 'fish' },
+    { id: 'common-carp', name: 'Ikan Kap Biasa', rarity: 'epic', rarityColor: '#a16bc2', medianKg: 3.5, sigma: 0.55, minKg: 0.8, maxKg: 20, baseWeight: 8, depthGroup: 'rare', lengthK: 42, kind: 'fish' },
+    { id: 'golden-koi', name: 'Ikan Koi Emas', rarity: 'legendary', rarityColor: '#d5a633', medianKg: 3, sigma: 0.45, minKg: 1, maxKg: 12, baseWeight: 3, depthGroup: 'rare', lengthK: 42, kind: 'fish' },
+    { id: 'todak', name: 'Ikan Todak', rarity: 'epic', rarityColor: '#668fa5', medianKg: 16, sigma: 0.58, minKg: 3, maxKg: 90, baseWeight: 5, depthGroup: 'rare', lengthK: 62, kind: 'fish' },
+    { id: 'buntal', name: 'Ikan Buntal', rarity: 'uncommon', rarityColor: '#d68a4c', medianKg: 0.6, sigma: 0.4, minKg: 0.15, maxKg: 4, baseWeight: 14, depthGroup: 'neutral', lengthK: 32, kind: 'fish' },
+    { id: 'pari', name: 'Ikan Pari', rarity: 'rare', rarityColor: '#7f8b6d', medianKg: 5, sigma: 0.55, minKg: 1, maxKg: 32, baseWeight: 7, depthGroup: 'rare', lengthK: 70, kind: 'fish' },
+    { id: 'kasut-lama', name: 'Kasut Lama', rarity: 'common', rarityColor: '#8b6c4a', medianKg: 0.5, sigma: 0.35, minKg: 0.2, maxKg: 0.8, baseWeight: 10, depthGroup: 'neutral', lengthK: 1, kind: 'junk' },
+    { id: 'ikan-bulan', name: 'Ikan Bulan', rarity: 'epic', rarityColor: '#8ea8b8', medianKg: 110, sigma: 0.34, minKg: 80, maxKg: 250, baseWeight: 1.55, depthGroup: 'rare', lengthK: 85 },
+    { id: 'ikan-naga', name: 'Ikan Naga', rarity: 'legendary', rarityColor: '#daa34b', medianKg: 35, sigma: 0.38, minKg: 20, maxKg: 60, baseWeight: 0.4, depthGroup: 'rare', lengthK: 130 },
   ],
 } as const;
 
 export type FishSpecies = (typeof FISH_CONFIG.species)[number];
 export type FishSpeciesId = FishSpecies['id'];
 export type FishRarity = FishSpecies['rarity'];
+export type FishKind = 'fish' | 'junk';
 export const BROADCAST_SCOPE: 'room' | 'server' = 'room';
 
 export interface ReelParameters {
@@ -165,6 +169,7 @@ export interface ReelParameters {
   fillRate: number;
   rarity: FishRarity;
   rarityColor: string;
+  zonePattern?: 'serpent';
 }
 
 export function reelParametersForDifficulty(difficulty: number, rarity: FishRarity, rarityColor: string): ReelParameters {
