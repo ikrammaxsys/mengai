@@ -38,6 +38,10 @@ const JUKEBOX_CACHE_MAX_BYTES = Number.isFinite(configuredCacheLimit) && configu
 const JUKEBOX_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const YT_DLP = process.env.YT_DLP_PATH || 'yt-dlp';
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+const YT_DLP_JS_RUNTIME = process.env.YT_DLP_JS_RUNTIME?.trim();
+const YT_DLP_REMOTE_COMPONENTS = process.env.YT_DLP_REMOTE_COMPONENTS?.trim();
+const YT_DLP_COOKIES_PATH = process.env.YT_DLP_COOKIES_PATH?.trim();
+const YT_DLP_COOKIES_FROM_BROWSER = process.env.YT_DLP_COOKIES_FROM_BROWSER?.trim();
 let audioToolsAvailable = false;
 const jukeboxDownloads = new Map<string, Promise<void>>();
 const server = createServer((request, response) => {
@@ -202,6 +206,10 @@ async function ensureJukeboxAudio(videoId: string): Promise<void> {
   const outputTemplate = `${temporaryPrefix}.%(ext)s`;
   const args = [
     '--no-playlist', '--no-progress', '--no-mtime', '--quiet', '-x', '--audio-format', 'mp3',
+    ...(YT_DLP_JS_RUNTIME ? ['--js-runtimes', YT_DLP_JS_RUNTIME] : []),
+    ...(YT_DLP_REMOTE_COMPONENTS ? ['--remote-components', YT_DLP_REMOTE_COMPONENTS] : []),
+    ...(YT_DLP_COOKIES_PATH ? ['--cookies', resolve(YT_DLP_COOKIES_PATH)] : []),
+    ...(!YT_DLP_COOKIES_PATH && YT_DLP_COOKIES_FROM_BROWSER ? ['--cookies-from-browser', YT_DLP_COOKIES_FROM_BROWSER] : []),
     ...(process.env.FFMPEG_PATH ? ['--ffmpeg-location', FFMPEG] : []),
     '-o', outputTemplate, `https://www.youtube.com/watch?v=${videoId}`,
   ];
@@ -1596,6 +1604,10 @@ if (audioToolsAvailable) {
   if (toolChecks[0].status === 'rejected') console.warn(`[jukebox] yt-dlp check failed (${YT_DLP}):`, toolChecks[0].reason);
   if (toolChecks[1].status === 'rejected') console.warn(`[jukebox] ffmpeg check failed (${FFMPEG}):`, toolChecks[1].reason);
   console.warn('[jukebox] audio preparation is disabled until both media tools are available.');
+}
+console.log(`[jukebox] YouTube JS runtime: ${YT_DLP_JS_RUNTIME || 'yt-dlp default detection'}; cookies: ${YT_DLP_COOKIES_PATH ? 'file configured' : YT_DLP_COOKIES_FROM_BROWSER ? 'browser configured' : 'not configured'}`);
+if (YT_DLP_COOKIES_PATH && YT_DLP_COOKIES_FROM_BROWSER) {
+  console.warn('[jukebox] Both cookie settings are present; YT_DLP_COOKIES_PATH takes precedence.');
 }
 await cleanupJukeboxCache();
 setInterval(() => { void cleanupJukeboxCache().catch((error) => console.error('[jukebox] cache cleanup failed:', error)); }, 60 * 60 * 1000);
