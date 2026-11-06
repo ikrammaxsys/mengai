@@ -121,7 +121,7 @@ export class Theater {
     header.append(heading, this.status, this.menuCloseButton);
 
     this.video.className = 'theater-source-video';
-    this.video.hidden = true;
+    this.video.hidden = false;
     this.video.playsInline = true;
     this.video.autoplay = true;
     this.video.muted = true;

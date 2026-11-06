@@ -432,7 +432,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .theater-page-controls > input { width: 48px; height: 27px; margin: 0; padding: 0 4px; border-radius: 7px; font-size: 10px; text-align: center; }
 .theater-free-browse { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 0 auto; color: #637e70; font-size: 8px; white-space: nowrap; }
 .theater-free-browse input { width: 14px; height: 14px; margin: 0; accent-color: #328c78; }
-.theater-source-video { display: none !important; }
+.theater-source-video { position: fixed; z-index: -1; width: 2px; height: 2px; opacity: 0.01; border: 0; pointer-events: none; }
 .theater-world-label { position: absolute; transform: translate(-50%, -100%); padding: 4px 9px; border: 1px solid rgba(255,255,255,.86); border-radius: 999px; background: rgba(242,248,236,.94); color: #31594a; box-shadow: 0 2px 7px rgba(30,53,42,.22); font-size: 10px; font-weight: 800; white-space: nowrap; }
 @media (max-width: 600px) {
   .theater-proximity-prompt { bottom: max(76px, calc(env(safe-area-inset-bottom) + 72px)); }
