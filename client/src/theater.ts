@@ -480,7 +480,8 @@ export class Theater {
     const peer = this.peers.get(viewerId) ?? this.createPeer(viewerId);
     try {
       for (const track of this.localStream.getTracks()) {
-        const sender = peer.connection.addTrack(track, this.localStream);
+        const sender = peer.connection.getSenders().find((candidate) => candidate.track === track)
+          ?? peer.connection.addTrack(track, this.localStream);
         if (track.kind === 'video') {
           const parameters = sender.getParameters();
           parameters.encodings = (parameters.encodings?.length ? parameters.encodings : [{}]).map((encoding) => ({
@@ -495,8 +496,10 @@ export class Theater {
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
       this.actions.signal(viewerId, 'offer', peer.connection.localDescription?.toJSON());
-    } catch {
-      this.setError('Could not connect a viewer to the shared screen.');
+    } catch (error) {
+      const message = error instanceof DOMException || error instanceof Error ? error.message : String(error);
+      console.error('[theater] Could not connect viewer:', { viewerId, message, connectionState: peer.connection.connectionState, signalingState: peer.connection.signalingState });
+      this.setError(`Could not connect a viewer to the shared screen${message ? `: ${message}` : '.'}`);
       this.closePeer(viewerId);
     }
   }
