@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { Socket as NetSocket } from 'node:net';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { basename, extname, join, resolve } from 'node:path';
@@ -33,6 +33,7 @@ const JUKEBOX_CACHE_DIR = resolve(process.cwd(), 'cache');
 const THEATER_DIR = join(JUKEBOX_CACHE_DIR, 'theater');
 const THEATER_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const JUKEBOX_MUSIC_DIR = join(JUKEBOX_CACHE_DIR, 'music');
+const JUKEBOX_SONG_MAP_FILE = join(JUKEBOX_MUSIC_DIR, 'song-map.json');
 const JUKEBOX_LIBRARY_DIR = resolve(process.cwd(), 'server', 'data', 'music');
 const JUKEBOX_THUMB_DIR = join(JUKEBOX_CACHE_DIR, 'thumb');
 const configuredCacheLimit = Number(process.env.JUKEBOX_CACHE_MAX_BYTES);
@@ -69,6 +70,10 @@ const server = createServer((request, response) => {
   }
   if (request.method === 'GET' && pathname === '/api/jukebox/library') {
     void serveJukeboxLibrary(response);
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/jukebox/song-map') {
+    void serveJukeboxSongMap(response);
     return;
   }
   const libraryStreamMatch = /^\/api\/jukebox\/library\/([A-Za-z0-9_-]+)\.mp3$/.exec(pathname);
@@ -216,6 +221,41 @@ function jukeboxFile(videoId: string): string {
   return join(JUKEBOX_MUSIC_DIR, `${videoId}.mp3`);
 }
 
+interface JukeboxSongMapEntry {
+  id: string;
+  title: string;
+}
+
+async function readJukeboxSongMap(): Promise<JukeboxSongMapEntry[]> {
+  try {
+    const parsed = JSON.parse(await readFile(JUKEBOX_SONG_MAP_FILE, 'utf8')) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is JukeboxSongMapEntry =>
+      typeof entry === 'object' && entry !== null &&
+      typeof (entry as { id?: unknown }).id === 'string' &&
+      typeof (entry as { title?: unknown }).title === 'string',
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+let jukeboxSongMapWrite: Promise<void> = Promise.resolve();
+
+function recordJukeboxSong(videoId: string, title: string): Promise<void> {
+  jukeboxSongMapWrite = jukeboxSongMapWrite.catch(() => undefined).then(async () => {
+    const entries = await readJukeboxSongMap();
+    const next = [...entries.filter((entry) => entry.id !== videoId), { id: videoId, title }];
+    next.sort((a, b) => a.title.localeCompare(b.title));
+    await mkdir(JUKEBOX_MUSIC_DIR, { recursive: true });
+    const temporaryPath = `${JUKEBOX_SONG_MAP_FILE}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { flag: 'wx' });
+    await rename(temporaryPath, JUKEBOX_SONG_MAP_FILE);
+  });
+  return jukeboxSongMapWrite;
+}
+
 function libraryFileName(libraryId: string): string | null {
   try {
     const fileName = Buffer.from(libraryId, 'base64url').toString('utf8');
@@ -252,6 +292,15 @@ async function serveJukeboxLibrary(response: import('node:http').ServerResponse)
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       jsonResponse(response, 200, { tracks: [] });
       return;
+    }
+
+    async function serveJukeboxSongMap(response: import('node:http').ServerResponse): Promise<void> {
+      try {
+        jsonResponse(response, 200, { tracks: await readJukeboxSongMap() });
+      } catch (error) {
+        console.error('[jukebox] song map could not be loaded:', error);
+        jsonResponse(response, 500, { error: 'The downloaded song map could not be loaded.' });
+      }
     }
     jsonResponse(response, 500, { error: 'The music library could not be loaded.' });
   }
@@ -411,7 +460,8 @@ function logJukeboxPreparationError(videoId: string, error: unknown): void {
 function beginJukeboxDownload(track: JukeboxTrack): void {
   if (jukeboxDownloads.has(track.videoId)) return;
   const job = ensureJukeboxAudio(track.videoId)
-    .then(() => {
+    .then(async () => {
+      await recordJukeboxSong(track.videoId, track.title);
       for (const room of rooms.all()) {
         let changed = false;
         if (room.jukebox.current?.videoId === track.videoId && room.jukebox.current.status === 'downloading') {
@@ -469,6 +519,7 @@ async function cleanupJukeboxCache(): Promise<void> {
   for (const directory of [JUKEBOX_MUSIC_DIR, JUKEBOX_THUMB_DIR]) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
+      if (directory === JUKEBOX_MUSIC_DIR && entry.name === 'song-map.json') continue;
       const filePath = join(directory, entry.name);
       const file = await stat(filePath);
       const videoId = /^[A-Za-z0-9_-]{11}/.exec(entry.name)?.[0] ?? '';
