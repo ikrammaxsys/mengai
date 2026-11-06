@@ -688,10 +688,11 @@ function liveKitRoomName(gameRoomId: string): string {
 async function issueVoiceToken(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, url: URL): Promise<void> {
   const roomId = url.searchParams.get('room')?.trim() ?? '';
   const playerId = url.searchParams.get('playerId') ?? '';
+  const purpose = url.searchParams.get('purpose') ?? 'voice';
   const authorization = request.headers.authorization ?? '';
   const resumeToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
   const player = roomId && resumeToken ? rooms.findPlayerByResumeToken(roomId, resumeToken) : undefined;
-  if (!player || !playerId || !safeEqual(player.id, playerId)) {
+  if (!player || !playerId || !safeEqual(player.id, playerId) || !['voice', 'theater'].includes(purpose)) {
     response.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     response.end(JSON.stringify({ error: 'Join the game room before requesting voice access.' }));
     return;
@@ -702,13 +703,14 @@ async function issueVoiceToken(request: import('node:http').IncomingMessage, res
   const apiSecret = process.env.LIVEKIT_API_SECRET;
   if (!liveKitUrl || !apiKey || !apiSecret) {
     response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    response.end(JSON.stringify({ error: 'Voice chat is not configured on this server.' }));
+    response.end(JSON.stringify({ error: 'The LiveKit media service is not configured on this server.' }));
     return;
   }
 
   try {
     const roomName = liveKitRoomName(roomId);
-    const accessToken = new AccessToken(apiKey, apiSecret, { identity: player.id, name: player.name, ttl: '10m' });
+    const identity = purpose === 'theater' ? `${player.id}-theater` : player.id;
+    const accessToken = new AccessToken(apiKey, apiSecret, { identity, name: player.name, ttl: '10m' });
     accessToken.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
     const token = await accessToken.toJwt();
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1196,21 +1198,6 @@ wss.on('connection', (socket) => {
       }
       room.theater.freeBrowse = Boolean(message.freeBrowse);
       broadcast(room, { type: 'theater:state', state: { ...room.theater } });
-      return;
-    }
-
-    if (message.type === 'theater:signal') {
-      const targetId = typeof message.targetId === 'string' ? message.targetId : '';
-      const signalType = message.signalType;
-      const target = room.players.get(targetId);
-      const isPresenter = room.theater.currentPresenterId === player.id;
-      const directionIsValid = (signalType === 'viewer' && !isPresenter && targetId === room.theater.currentPresenterId)
-        || (signalType === 'offer' && isPresenter)
-        || (signalType === 'answer' && !isPresenter && targetId === room.theater.currentPresenterId)
-        || (signalType === 'ice' && (isPresenter ? targetId !== player.id : targetId === room.theater.currentPresenterId));
-      if (room.theater.mode !== 'screen' || !target || target.disconnectedAt !== null || !directionIsValid) return;
-      if (signalType === 'offer' && targetId === room.theater.currentPresenterId) return;
-      send(target.socket, { type: 'theater:signal', fromId: player.id, signalType, payload: message.payload });
       return;
     }
 

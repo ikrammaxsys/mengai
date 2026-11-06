@@ -1,28 +1,17 @@
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
-import type { TheaterSignal, TheaterState } from './network';
+import { Room, RoomEvent, Track, type RemoteParticipant } from 'livekit-client';
+import type { TheaterState } from './network';
 
-type SignalType = 'viewer' | 'offer' | 'answer' | 'ice';
 interface TheaterActions {
   start: (mode: 'screen' | 'pdf') => void;
   stop: () => void;
   page: (page: number) => void;
   freeBrowse: (enabled: boolean) => void;
   setPdf: (url: string) => void;
-  signal: (targetId: string, type: SignalType, payload?: RTCSessionDescriptionInit | RTCIceCandidateInit) => void;
   upload: (room: string, resumeToken: string, file: File) => Promise<string>;
   display: (video: HTMLVideoElement | null, canvas: HTMLCanvasElement | null, refreshCanvas?: boolean) => void;
   focus: (focused: boolean) => void;
   presenter: (name: string | null) => void;
-}
-
-interface PeerConnection {
-  connection: RTCPeerConnection;
-  pendingIce: RTCIceCandidateInit[];
-  offerInProgress: boolean;
-  answerInProgress: boolean;
-  offerSent: boolean;
-  restartRequested: boolean;
-  disconnectTimer: number;
 }
 
 const IDLE_STATE: TheaterState = {
@@ -64,13 +53,14 @@ export class Theater {
   private readonly muteButton = document.createElement('button');
   private readonly volumeInput = document.createElement('input');
   private readonly fileInput = document.createElement('input');
-  private readonly peers = new Map<string, PeerConnection>();
   private readonly actions: TheaterActions;
   private state: TheaterState = IDLE_STATE;
   private localId = '';
   private room = '';
   private resumeToken = '';
   private localStream: MediaStream | null = null;
+  private mediaRoom: Room | null = null;
+  private mediaRoomGeneration = 0;
   private pdfDocument: PDFDocumentProxy | null = null;
   private pdfLoadingUrl = '';
   private renderedPage = 0;
@@ -289,11 +279,13 @@ export class Theater {
     this.actions.presenter(this.state.presenterName);
     if (changedPresenter) {
       this.errorMessage = '';
-      this.closePeers();
+      this.closeMediaRoom();
       const keepLocalPreview = next.mode === 'screen' && next.currentPresenterId === this.localId && Boolean(this.localStream);
       if (!keepLocalPreview) { this.video.pause(); this.video.srcObject = null; }
       this.localBrowsePage = null;
-      if (this.state.mode === 'screen' && this.state.currentPresenterId !== this.localId && this.state.currentPresenterId) this.connectToPresenter();
+      if (this.state.mode === 'screen' && this.state.currentPresenterId) {
+        void this.connectMediaRoom(this.state.currentPresenterId === this.localId);
+      }
       if (this.state.mode === 'none' && this.localStream) this.stopLocalTracks();
     }
     if (this.pendingStart && this.state.currentPresenterId === this.localId && this.state.mode === this.pendingStart.mode) {
@@ -306,38 +298,26 @@ export class Theater {
     this.render();
   }
 
-  handleSignal(signal: TheaterSignal): void {
-    if (signal.signalType === 'viewer' && this.state.currentPresenterId === this.localId && this.state.mode === 'screen') {
-      const existingPeer = this.peers.get(signal.fromId);
-      void this.offerToViewer(signal.fromId, Boolean(existingPeer?.offerSent));
-      return;
-    }
-    const peer = this.peers.get(signal.fromId);
-    if (!peer) return;
-    if (signal.signalType === 'offer' && this.state.currentPresenterId === signal.fromId) {
-      void this.answerPresenterOffer(peer, signal.payload as RTCSessionDescriptionInit);
-    } else if (signal.signalType === 'answer' && this.state.currentPresenterId === this.localId) {
-      const description = signal.payload as RTCSessionDescriptionInit;
-      void peer.connection.setRemoteDescription(description).then(() => this.flushIce(peer)).catch(() => this.setError('The screen-share connection could not be completed.'));
-    } else if (signal.signalType === 'ice') {
-      const candidate = signal.payload as RTCIceCandidateInit;
-      if (!peer.connection.remoteDescription) peer.pendingIce.push(candidate);
-      else void peer.connection.addIceCandidate(candidate).catch(() => undefined);
-    }
-  }
-
   handleError(message: string): void {
     if (this.pendingStart) {
       window.clearTimeout(this.pendingStart.timer);
       this.pendingStart.reject(new Error(message));
       this.pendingStart = null;
     }
-    if (this.localStream) this.stopLocalTracks();
+    if (this.localStream) {
+      this.closeMediaRoom();
+      this.stopLocalTracks();
+    }
     this.setError(message);
   }
 
   playerLeft(playerId: string): void {
-    this.closePeer(playerId);
+    if (playerId === this.state.currentPresenterId) {
+      this.closeMediaRoom();
+      this.video.pause();
+      this.video.srcObject = null;
+      this.updateSceneDisplay();
+    }
   }
 
   setOccluded(occluded: boolean): void {
@@ -359,7 +339,7 @@ export class Theater {
       this.pendingStart.reject(new Error('The room connection was lost.'));
       this.pendingStart = null;
     }
-    this.closePeers();
+    this.closeMediaRoom();
     this.stopLocalTracks();
     this.resetPdf();
     this.state = IDLE_STATE;
@@ -446,8 +426,8 @@ export class Theater {
   private stopPresentation(): void {
     if (this.state.currentPresenterId !== this.localId) return;
     this.actions.stop();
+    this.closeMediaRoom();
     this.stopLocalTracks();
-    this.closePeers();
   }
 
   private stopLocalTracks(): void {
@@ -460,191 +440,95 @@ export class Theater {
     this.updateSceneDisplay();
   }
 
-  private connectToPresenter(): void {
+  private async connectMediaRoom(publishScreen: boolean): Promise<void> {
     const presenterId = this.state.currentPresenterId;
-    if (!presenterId) return;
-    const peer = this.createPeer(presenterId);
-    // Keep a receive transceiver open for screen video and optional shared audio.
-    const videoTransceiver = peer.connection.addTransceiver('video', { direction: 'recvonly' });
-    const capabilities = RTCRtpReceiver.getCapabilities('video');
-    if (capabilities?.codecs.length && 'setCodecPreferences' in videoTransceiver) {
-      const preferredCodecs = [...capabilities.codecs].sort((a, b) => {
-        const preferred = (codec: typeof capabilities.codecs[number]): number => {
-          const mimeType = codec.mimeType.toLowerCase();
-          return mimeType === 'video/vp8' ? 0 : mimeType === 'video/h264' ? 1 : 2;
-        };
-        return preferred(a) - preferred(b);
+    if (!presenterId || !this.room || !this.localId || !this.resumeToken) return;
+    const generation = this.mediaRoomGeneration;
+    try {
+      const query = new URLSearchParams({ room: this.room, playerId: this.localId, purpose: 'theater' });
+      const response = await fetch(`/voice-token?${query}`, {
+        headers: { Authorization: `Bearer ${this.resumeToken}` },
+        cache: 'no-store',
       });
-      videoTransceiver.setCodecPreferences(preferredCodecs);
-    }
-    peer.connection.addTransceiver('audio', { direction: 'recvonly' });
-    this.actions.signal(presenterId, 'viewer');
-  }
-
-  private async offerToViewer(viewerId: string, iceRestart = false): Promise<void> {
-    if (!this.localStream) return;
-    const peer = this.peers.get(viewerId) ?? this.createPeer(viewerId);
-    if (peer.offerInProgress || peer.connection.signalingState !== 'stable') return;
-    if (peer.offerSent && !iceRestart) return;
-    if (peer.offerSent && iceRestart && peer.restartRequested) return;
-    peer.offerInProgress = true;
-    if (iceRestart) peer.restartRequested = true;
-    try {
-      for (const track of this.localStream.getTracks()) {
-        const sender = peer.connection.getSenders().find((candidate) => candidate.track === track)
-          ?? peer.connection.addTrack(track, this.localStream);
-        if (track.kind === 'video') {
-          const transceiver = peer.connection.getTransceivers().find((candidate) => candidate.sender === sender);
-          const capabilities = RTCRtpSender.getCapabilities('video');
-          if (transceiver && capabilities?.codecs.length && 'setCodecPreferences' in transceiver) {
-            const preferredCodecs = capabilities.codecs.filter((codec) => {
-              const mimeType = codec.mimeType.toLowerCase();
-              return mimeType === 'video/vp8' || mimeType === 'video/h264' || mimeType === 'video/rtx' || mimeType === 'video/red' || mimeType === 'video/ulpfec';
-            });
-            if (preferredCodecs.length) transceiver.setCodecPreferences(preferredCodecs);
-          }
-          const parameters = sender.getParameters();
-          parameters.encodings = (parameters.encodings?.length ? parameters.encodings : [{}]).map((encoding) => ({
-            ...encoding,
-            maxBitrate: 8_000_000,
-            maxFramerate: 60,
-            scaleResolutionDownBy: 1,
-          }));
-          await sender.setParameters(parameters).catch(() => undefined);
-        }
+      const credentials = await response.json() as { token?: string; url?: string; error?: string };
+      if (!response.ok || !credentials.token || !credentials.url) {
+        throw new Error(credentials.error ?? 'The screen-share relay could not be reached.');
       }
-      const offer = await peer.connection.createOffer(iceRestart ? { iceRestart: true } : undefined);
-      await peer.connection.setLocalDescription(offer);
-      this.actions.signal(viewerId, 'offer', peer.connection.localDescription?.toJSON());
-      peer.offerSent = true;
-    } catch (error) {
-      const message = error instanceof DOMException || error instanceof Error ? error.message : String(error);
-      console.error('[theater] Could not connect viewer:', { viewerId, message, connectionState: peer.connection.connectionState, signalingState: peer.connection.signalingState });
-      this.setError(`Could not connect a viewer to the shared screen${message ? `: ${message}` : '.'}`);
-      this.closePeer(viewerId);
-    } finally {
-      peer.offerInProgress = false;
-    }
-  }
+      if (generation !== this.mediaRoomGeneration || this.state.currentPresenterId !== presenterId) return;
 
-  private async answerPresenterOffer(peer: PeerConnection, offer: RTCSessionDescriptionInit): Promise<void> {
-    if (peer.answerInProgress || peer.connection.signalingState !== 'stable') return;
-    peer.answerInProgress = true;
-    try {
-      await peer.connection.setRemoteDescription(offer);
-      await this.flushIce(peer);
-      const answer = await peer.connection.createAnswer();
-      await peer.connection.setLocalDescription(answer);
-      this.actions.signal(this.state.currentPresenterId!, 'answer', peer.connection.localDescription?.toJSON());
-    } catch (error) {
-      const message = error instanceof DOMException || error instanceof Error ? error.message : String(error);
-      console.error('[theater] Could not answer presenter offer:', { message, connectionState: peer.connection.connectionState, signalingState: peer.connection.signalingState });
-      this.setError(`Could not connect to the presenter’s screen${message ? `: ${message}` : '.'}`);
-      this.closePeer(this.state.currentPresenterId ?? '');
-    } finally {
-      peer.answerInProgress = false;
-    }
-  }
+      const mediaRoom = new Room({ adaptiveStream: false, dynacast: false });
+      this.mediaRoom = mediaRoom;
+      const theaterIdentity = `${presenterId}-theater`;
+      const subscribePresentationTracks = (participant: RemoteParticipant): void => {
+        if (participant.identity !== theaterIdentity) return;
+        for (const publication of participant.trackPublications.values()) publication.setSubscribed(true);
+      };
+      mediaRoom.on(RoomEvent.TrackPublished, (publication, participant) => {
+        if (this.mediaRoom === mediaRoom && participant.identity === theaterIdentity) publication.setSubscribed(true);
+      });
+      mediaRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
+        if (this.mediaRoom !== mediaRoom || participant.identity !== theaterIdentity || this.state.mode !== 'screen') return;
+        if (track.kind === Track.Kind.Audio) {
+          this.audio.srcObject = new MediaStream([track.mediaStreamTrack]);
+          this.audio.volume = this.volume;
+          this.audio.muted = this.muted;
+          void this.audio.play().catch(() => this.setError('Click the volume control to enable shared audio.'));
+        } else if (track.kind === Track.Kind.Video) {
+          this.video.srcObject = new MediaStream([track.mediaStreamTrack]);
+          this.updateSceneDisplay();
+          this.setDisplayVisible(this.sceneVisible);
+          void this.video.play().catch(() => this.setError('Click Focus to enable shared screen playback.'));
+        }
+      });
+      mediaRoom.on(RoomEvent.TrackUnsubscribed, (track, _publication, participant) => {
+        if (this.mediaRoom !== mediaRoom || participant.identity !== theaterIdentity) return;
+        if (track.kind === Track.Kind.Video) {
+          this.video.pause();
+          this.video.srcObject = null;
+          this.updateSceneDisplay();
+        } else if (track.kind === Track.Kind.Audio) {
+          this.clearRemoteAudio();
+        }
+      });
+      mediaRoom.on(RoomEvent.Disconnected, () => {
+        if (this.mediaRoom !== mediaRoom) return;
+        console.error('[theater] LiveKit screen-share room disconnected.');
+        this.setError('The screen-share connection was lost. Rejoin the room and try again.');
+      });
 
-  private createPeer(playerId: string): PeerConnection {
-    const existing = this.peers.get(playerId);
-    if (existing) return existing;
-    const connection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    const peer: PeerConnection = {
-      connection,
-      pendingIce: [],
-      offerInProgress: false,
-      answerInProgress: false,
-      offerSent: false,
-      restartRequested: false,
-      disconnectTimer: 0,
-    };
-    this.peers.set(playerId, peer);
-    connection.onicecandidate = ({ candidate }) => {
-      if (candidate) this.actions.signal(playerId, 'ice', candidate.toJSON());
-    };
-    connection.ontrack = (event) => {
-      if (this.state.mode !== 'screen') return;
-      if (event.track.kind === 'audio') {
-        this.audio.srcObject = new MediaStream([event.track]);
-        this.audio.volume = this.volume;
-        this.audio.muted = this.muted;
-        void this.audio.play().catch(() => this.setError('Click the volume control to enable shared audio.'));
-        event.track.addEventListener('ended', () => this.clearRemoteAudio(), { once: true });
+      await mediaRoom.connect(credentials.url, credentials.token, { autoSubscribe: false });
+      if (generation !== this.mediaRoomGeneration || this.mediaRoom !== mediaRoom) {
+        await mediaRoom.disconnect();
         return;
       }
-      this.video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
-      this.updateSceneDisplay();
-      this.setDisplayVisible(this.sceneVisible);
-      void this.video.play().catch(() => this.setError('Click Focus to enable shared screen playback.'));
-    };
-    connection.onconnectionstatechange = () => {
-      if (connection.connectionState === 'connected') {
-        window.clearTimeout(peer.disconnectTimer);
-        peer.disconnectTimer = 0;
-        peer.restartRequested = false;
-        if (this.errorMessage === 'Screen-share connection dropped. Rejoin the room or ask the presenter to restart.') this.setError('');
-      } else if (connection.connectionState === 'connecting') {
-        window.clearTimeout(peer.disconnectTimer);
-        peer.disconnectTimer = 0;
-      } else if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
-        this.scheduleDisconnectWarning(peer);
-      }
-    };
-    connection.oniceconnectionstatechange = () => {
-      if (connection.iceConnectionState === 'failed') {
-        console.warn('[theater] ICE connection failed:', {
-          playerId,
-          iceConnectionState: connection.iceConnectionState,
-          connectionState: connection.connectionState,
-          signalingState: connection.signalingState,
-        });
-        if (!peer.restartRequested) {
-          if (this.state.currentPresenterId === this.localId && this.localStream) {
-            void this.offerToViewer(playerId, true);
-          } else if (this.state.currentPresenterId === playerId) {
-            peer.restartRequested = true;
-            this.actions.signal(playerId, 'viewer');
-          }
+
+      for (const participant of mediaRoom.remoteParticipants.values()) subscribePresentationTracks(participant);
+
+      if (publishScreen) {
+        const stream = this.localStream;
+        const videoTrack = stream?.getVideoTracks()[0];
+        if (!videoTrack) throw new Error('The shared screen has no video track. Stop sharing and try again.');
+        for (const track of stream?.getTracks() ?? []) {
+          if (generation !== this.mediaRoomGeneration || this.mediaRoom !== mediaRoom) return;
+          await mediaRoom.localParticipant.publishTrack(track, {
+            source: track.kind === 'video' ? Track.Source.ScreenShare : Track.Source.ScreenShareAudio,
+          });
         }
       }
-    };
-    return peer;
-  }
-
-  private scheduleDisconnectWarning(peer: PeerConnection): void {
-    if (peer.disconnectTimer) return;
-    peer.disconnectTimer = window.setTimeout(() => {
-      peer.disconnectTimer = 0;
-      const state = peer.connection.connectionState;
-      if (state === 'failed' || state === 'disconnected') {
-        this.setError('Screen-share connection dropped. Rejoin the room or ask the presenter to restart.');
-      }
-    }, 8000);
-  }
-
-  private async flushIce(peer: PeerConnection): Promise<void> {
-    const candidates = peer.pendingIce.splice(0);
-    for (const candidate of candidates) await peer.connection.addIceCandidate(candidate).catch(() => undefined);
-  }
-
-  private closePeer(playerId: string): void {
-    const peer = this.peers.get(playerId);
-    if (!peer) return;
-    window.clearTimeout(peer.disconnectTimer);
-    peer.connection.onicecandidate = null;
-    peer.connection.ontrack = null;
-    peer.connection.close();
-    this.peers.delete(playerId);
-    if (this.state.currentPresenterId === playerId) {
-      this.video.pause();
-      this.video.srcObject = null;
-      this.clearRemoteAudio();
+    } catch (error) {
+      if (generation !== this.mediaRoomGeneration) return;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[theater] Could not connect screen share through LiveKit:', message);
+      this.setError(`Could not connect the shared screen${message ? `: ${message}` : '.'}`);
+      this.closeMediaRoom();
     }
   }
 
-  private closePeers(): void {
-    for (const id of this.peers.keys()) this.closePeer(id);
+  private closeMediaRoom(): void {
+    this.mediaRoomGeneration += 1;
+    const mediaRoom = this.mediaRoom;
+    this.mediaRoom = null;
+    if (mediaRoom) void mediaRoom.disconnect();
     this.clearRemoteAudio();
   }
 

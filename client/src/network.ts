@@ -178,12 +178,6 @@ export interface TheaterState {
   freeBrowse: boolean;
 }
 
-export interface TheaterSignal {
-  fromId: string;
-  signalType: 'viewer' | 'offer' | 'answer' | 'ice';
-  payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
-}
-
 type Handlers = {
   joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
@@ -233,7 +227,6 @@ type Handlers = {
   jukeboxState: (current: JukeboxCurrent | null, queue: JukeboxTrack[], skipVotes: number) => void;
   jukeboxError: (message: string) => void;
   theaterState: (state: TheaterState) => void;
-  theaterSignal: (signal: TheaterSignal) => void;
   theaterError: (message: string) => void;
   seatState: (occupancy: Record<string, string>) => void;
   disconnected: (details: { code: number; reason: string; wasClean: boolean }) => void;
@@ -322,7 +315,6 @@ export class Network {
         case 'jukebox:state': this.handlers.jukeboxState((message.current as JukeboxCurrent | null) ?? null, Array.isArray(message.queue) ? message.queue as JukeboxTrack[] : [], Number(message.skipVotes) || 0); break;
         case 'jukebox:error': this.handlers.jukeboxError(String(message.message ?? 'The jukebox could not complete that action.')); break;
         case 'theater:state': this.handlers.theaterState(message.state as TheaterState); break;
-        case 'theater:signal': this.handlers.theaterSignal(message as unknown as TheaterSignal); break;
         case 'theater:error': this.handlers.theaterError(String(message.message ?? 'The theater action failed.')); break;
         case 'seat:state': this.handlers.seatState((message.occupancy as Record<string, string>) ?? {}); break;
         case 'speaking': this.handlers.speaking(String(message.playerId), Boolean(message.speaking)); break;
@@ -458,9 +450,6 @@ export class Network {
   setTheaterPage(currentPage: number): void { this.send({ type: 'theater:page', currentPage }); }
   setTheaterFreeBrowse(freeBrowse: boolean): void { this.send({ type: 'theater:freeBrowse', freeBrowse }); }
   setTheaterPdf(pdfUrl: string): void { this.send({ type: 'theater:file', pdfUrl }); }
-  theaterSignal(targetId: string, signalType: 'viewer' | 'offer' | 'answer' | 'ice', payload?: RTCSessionDescriptionInit | RTCIceCandidateInit): void {
-    this.send({ type: 'theater:signal', targetId, signalType, payload });
-  }
   sitAtSeat(seatId: string): void { this.send({ type: 'seat:sit', seatId }); }
   standFromSeat(): void { this.send({ type: 'seat:stand' }); }
   boardFerrisWheel(): void { this.send({ type: 'ferris:board' }); }

@@ -148,7 +148,6 @@ const theater = new Theater(appRoot, {
   page: (page) => network.setTheaterPage(page),
   freeBrowse: (enabled) => network.setTheaterFreeBrowse(enabled),
   setPdf: (url) => network.setTheaterPdf(url),
-  signal: (targetId, type, payload) => network.theaterSignal(targetId, type, payload),
   upload: (room, token, file) => network.uploadTheaterPdf(room, token, file),
   display: (video, canvas, refreshCanvas) => scene.setTheaterDisplay(video, canvas, refreshCanvas),
   focus: (focused) => {
@@ -1634,7 +1633,6 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     },
     weatherChanged: (weather) => applyWeather(weather, true),
     theaterState: (state) => theater.applyState(state),
-    theaterSignal: (signal) => theater.handleSignal(signal),
     theaterError: (message) => theater.handleError(message),
     seatState: (occupancy) => {
       scene.setSeatOccupancy(occupancy);
