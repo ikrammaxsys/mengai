@@ -294,14 +294,6 @@ async function serveJukeboxLibrary(response: import('node:http').ServerResponse)
       return;
     }
 
-    async function serveJukeboxSongMap(response: import('node:http').ServerResponse): Promise<void> {
-      try {
-        jsonResponse(response, 200, { tracks: await readJukeboxSongMap() });
-      } catch (error) {
-        console.error('[jukebox] song map could not be loaded:', error);
-        jsonResponse(response, 500, { error: 'The downloaded song map could not be loaded.' });
-      }
-    }
     jsonResponse(response, 500, { error: 'The music library could not be loaded.' });
   }
 }

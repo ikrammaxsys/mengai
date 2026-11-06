@@ -123,7 +123,7 @@ export class Theater {
     this.video.className = 'theater-source-video';
     this.video.hidden = true;
     this.video.playsInline = true;
-    this.video.autoplay = false;
+    this.video.autoplay = true;
     this.video.muted = true;
     this.video.addEventListener('volumechange', () => this.updateMuteLabel());
     this.video.addEventListener('loadedmetadata', () => this.updateSceneDisplay());
@@ -460,7 +460,18 @@ export class Theater {
     const peer = this.createPeer(presenterId);
     this.actions.signal(presenterId, 'viewer');
     // Keep a receive transceiver open for screen video and optional shared audio.
-    peer.connection.addTransceiver('video', { direction: 'recvonly' });
+    const videoTransceiver = peer.connection.addTransceiver('video', { direction: 'recvonly' });
+    const capabilities = RTCRtpReceiver.getCapabilities('video');
+    if (capabilities?.codecs.length && 'setCodecPreferences' in videoTransceiver) {
+      const preferredCodecs = [...capabilities.codecs].sort((a, b) => {
+        const preferred = (codec: typeof capabilities.codecs[number]): number => {
+          const mimeType = codec.mimeType.toLowerCase();
+          return mimeType === 'video/vp8' ? 0 : mimeType === 'video/h264' ? 1 : 2;
+        };
+        return preferred(a) - preferred(b);
+      });
+      videoTransceiver.setCodecPreferences(preferredCodecs);
+    }
     peer.connection.addTransceiver('audio', { direction: 'recvonly' });
   }
 
@@ -525,6 +536,7 @@ export class Theater {
       this.video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
       this.updateSceneDisplay();
       this.setDisplayVisible(this.sceneVisible);
+      void this.video.play().catch(() => this.setError('Click Focus to enable shared screen playback.'));
     };
     connection.onconnectionstatechange = () => {
       if (connection.connectionState === 'failed' || connection.connectionState === 'disconnected') this.setError('Screen-share connection dropped. Rejoin the room or ask the presenter to restart.');
