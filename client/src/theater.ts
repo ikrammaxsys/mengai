@@ -18,6 +18,11 @@ interface TheaterActions {
 interface PeerConnection {
   connection: RTCPeerConnection;
   pendingIce: RTCIceCandidateInit[];
+  offerInProgress: boolean;
+  answerInProgress: boolean;
+  offerSent: boolean;
+  restartRequested: boolean;
+  disconnectTimer: number;
 }
 
 const IDLE_STATE: TheaterState = {
@@ -303,7 +308,8 @@ export class Theater {
 
   handleSignal(signal: TheaterSignal): void {
     if (signal.signalType === 'viewer' && this.state.currentPresenterId === this.localId && this.state.mode === 'screen') {
-      void this.offerToViewer(signal.fromId);
+      const existingPeer = this.peers.get(signal.fromId);
+      void this.offerToViewer(signal.fromId, Boolean(existingPeer?.offerSent));
       return;
     }
     const peer = this.peers.get(signal.fromId);
@@ -458,7 +464,6 @@ export class Theater {
     const presenterId = this.state.currentPresenterId;
     if (!presenterId) return;
     const peer = this.createPeer(presenterId);
-    this.actions.signal(presenterId, 'viewer');
     // Keep a receive transceiver open for screen video and optional shared audio.
     const videoTransceiver = peer.connection.addTransceiver('video', { direction: 'recvonly' });
     const capabilities = RTCRtpReceiver.getCapabilities('video');
@@ -473,16 +478,31 @@ export class Theater {
       videoTransceiver.setCodecPreferences(preferredCodecs);
     }
     peer.connection.addTransceiver('audio', { direction: 'recvonly' });
+    this.actions.signal(presenterId, 'viewer');
   }
 
-  private async offerToViewer(viewerId: string): Promise<void> {
+  private async offerToViewer(viewerId: string, iceRestart = false): Promise<void> {
     if (!this.localStream) return;
     const peer = this.peers.get(viewerId) ?? this.createPeer(viewerId);
+    if (peer.offerInProgress || peer.connection.signalingState !== 'stable') return;
+    if (peer.offerSent && !iceRestart) return;
+    if (peer.offerSent && iceRestart && peer.restartRequested) return;
+    peer.offerInProgress = true;
+    if (iceRestart) peer.restartRequested = true;
     try {
       for (const track of this.localStream.getTracks()) {
         const sender = peer.connection.getSenders().find((candidate) => candidate.track === track)
           ?? peer.connection.addTrack(track, this.localStream);
         if (track.kind === 'video') {
+          const transceiver = peer.connection.getTransceivers().find((candidate) => candidate.sender === sender);
+          const capabilities = RTCRtpSender.getCapabilities('video');
+          if (transceiver && capabilities?.codecs.length && 'setCodecPreferences' in transceiver) {
+            const preferredCodecs = capabilities.codecs.filter((codec) => {
+              const mimeType = codec.mimeType.toLowerCase();
+              return mimeType === 'video/vp8' || mimeType === 'video/h264' || mimeType === 'video/rtx' || mimeType === 'video/red' || mimeType === 'video/ulpfec';
+            });
+            if (preferredCodecs.length) transceiver.setCodecPreferences(preferredCodecs);
+          }
           const parameters = sender.getParameters();
           parameters.encodings = (parameters.encodings?.length ? parameters.encodings : [{}]).map((encoding) => ({
             ...encoding,
@@ -493,27 +513,36 @@ export class Theater {
           await sender.setParameters(parameters).catch(() => undefined);
         }
       }
-      const offer = await peer.connection.createOffer();
+      const offer = await peer.connection.createOffer(iceRestart ? { iceRestart: true } : undefined);
       await peer.connection.setLocalDescription(offer);
       this.actions.signal(viewerId, 'offer', peer.connection.localDescription?.toJSON());
+      peer.offerSent = true;
     } catch (error) {
       const message = error instanceof DOMException || error instanceof Error ? error.message : String(error);
       console.error('[theater] Could not connect viewer:', { viewerId, message, connectionState: peer.connection.connectionState, signalingState: peer.connection.signalingState });
       this.setError(`Could not connect a viewer to the shared screen${message ? `: ${message}` : '.'}`);
       this.closePeer(viewerId);
+    } finally {
+      peer.offerInProgress = false;
     }
   }
 
   private async answerPresenterOffer(peer: PeerConnection, offer: RTCSessionDescriptionInit): Promise<void> {
+    if (peer.answerInProgress || peer.connection.signalingState !== 'stable') return;
+    peer.answerInProgress = true;
     try {
       await peer.connection.setRemoteDescription(offer);
       await this.flushIce(peer);
       const answer = await peer.connection.createAnswer();
       await peer.connection.setLocalDescription(answer);
       this.actions.signal(this.state.currentPresenterId!, 'answer', peer.connection.localDescription?.toJSON());
-    } catch {
-      this.setError('Could not connect to the presenter’s screen.');
+    } catch (error) {
+      const message = error instanceof DOMException || error instanceof Error ? error.message : String(error);
+      console.error('[theater] Could not answer presenter offer:', { message, connectionState: peer.connection.connectionState, signalingState: peer.connection.signalingState });
+      this.setError(`Could not connect to the presenter’s screen${message ? `: ${message}` : '.'}`);
       this.closePeer(this.state.currentPresenterId ?? '');
+    } finally {
+      peer.answerInProgress = false;
     }
   }
 
@@ -521,7 +550,15 @@ export class Theater {
     const existing = this.peers.get(playerId);
     if (existing) return existing;
     const connection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    const peer: PeerConnection = { connection, pendingIce: [] };
+    const peer: PeerConnection = {
+      connection,
+      pendingIce: [],
+      offerInProgress: false,
+      answerInProgress: false,
+      offerSent: false,
+      restartRequested: false,
+      disconnectTimer: 0,
+    };
     this.peers.set(playerId, peer);
     connection.onicecandidate = ({ candidate }) => {
       if (candidate) this.actions.signal(playerId, 'ice', candidate.toJSON());
@@ -542,10 +579,48 @@ export class Theater {
       void this.video.play().catch(() => this.setError('Click Focus to enable shared screen playback.'));
     };
     connection.onconnectionstatechange = () => {
-      if (connection.connectionState === 'failed' || connection.connectionState === 'disconnected') this.setError('Screen-share connection dropped. Rejoin the room or ask the presenter to restart.');
-      else if (connection.connectionState === 'connected') this.setError('');
+      if (connection.connectionState === 'connected') {
+        window.clearTimeout(peer.disconnectTimer);
+        peer.disconnectTimer = 0;
+        peer.restartRequested = false;
+        if (this.errorMessage === 'Screen-share connection dropped. Rejoin the room or ask the presenter to restart.') this.setError('');
+      } else if (connection.connectionState === 'connecting') {
+        window.clearTimeout(peer.disconnectTimer);
+        peer.disconnectTimer = 0;
+      } else if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
+        this.scheduleDisconnectWarning(peer);
+      }
+    };
+    connection.oniceconnectionstatechange = () => {
+      if (connection.iceConnectionState === 'failed') {
+        console.warn('[theater] ICE connection failed:', {
+          playerId,
+          iceConnectionState: connection.iceConnectionState,
+          connectionState: connection.connectionState,
+          signalingState: connection.signalingState,
+        });
+        if (!peer.restartRequested) {
+          if (this.state.currentPresenterId === this.localId && this.localStream) {
+            void this.offerToViewer(playerId, true);
+          } else if (this.state.currentPresenterId === playerId) {
+            peer.restartRequested = true;
+            this.actions.signal(playerId, 'viewer');
+          }
+        }
+      }
     };
     return peer;
+  }
+
+  private scheduleDisconnectWarning(peer: PeerConnection): void {
+    if (peer.disconnectTimer) return;
+    peer.disconnectTimer = window.setTimeout(() => {
+      peer.disconnectTimer = 0;
+      const state = peer.connection.connectionState;
+      if (state === 'failed' || state === 'disconnected') {
+        this.setError('Screen-share connection dropped. Rejoin the room or ask the presenter to restart.');
+      }
+    }, 8000);
   }
 
   private async flushIce(peer: PeerConnection): Promise<void> {
@@ -556,6 +631,7 @@ export class Theater {
   private closePeer(playerId: string): void {
     const peer = this.peers.get(playerId);
     if (!peer) return;
+    window.clearTimeout(peer.disconnectTimer);
     peer.connection.onicecandidate = null;
     peer.connection.ontrack = null;
     peer.connection.close();
