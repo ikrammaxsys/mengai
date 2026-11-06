@@ -306,6 +306,15 @@ async function serveJukeboxLibrary(response: import('node:http').ServerResponse)
   }
 }
 
+async function serveJukeboxSongMap(response: import('node:http').ServerResponse): Promise<void> {
+  try {
+    jsonResponse(response, 200, { tracks: await readJukeboxSongMap() });
+  } catch (error) {
+    console.error('[jukebox] song map could not be loaded:', error);
+    jsonResponse(response, 500, { error: 'The downloaded song map could not be loaded.' });
+  }
+}
+
 async function streamJukeboxLibraryAudio(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, libraryId: string): Promise<void> {
   const track = await jukeboxLibraryTrack(libraryId);
   if (!track) {

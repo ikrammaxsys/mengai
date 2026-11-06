@@ -382,7 +382,6 @@ export class Theater {
           width: { ideal: 1920, max: 2560 },
           height: { ideal: 1080, max: 1440 },
           frameRate: { ideal: 30, max: 60 },
-          resizeMode: 'none',
         },
         audio: true,
       });

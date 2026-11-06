@@ -6,3 +6,4 @@ dist
 cache/
 logs/
 cookies*.txt
+server/data/*
