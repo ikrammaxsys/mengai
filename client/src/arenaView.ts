@@ -267,6 +267,8 @@ export class ArenaView {
       const turn = Math.sin(Math.min(1, attackElapsed / ARENA_CONFIG.attacks.tailSweep.warningMs) * Math.PI) * Math.PI;
       this.monsterGroup.rotation.y = monsterPose.facing + turn;
     }
+    const enraged = this.snapshot.monster.hp <= ARENA_CONFIG.monsterEnrageThreshold && this.snapshot.monster.hp > 0;
+    this.monsterMaterials[0].color.set(enraged ? '#c8783e' : '#547b45');
     this.monsterMaterials[0].emissive.setHex(performance.now() < this.monsterHitUntil ? 0x8d3421 : 0x000000);
     this.renderAttackTelegraph(monsterPose.x, monsterPose.z);
     this.renderProjectiles(serverNow);
@@ -469,6 +471,7 @@ export class ArenaView {
     const green = new THREE.MeshStandardMaterial({ color: '#547b45', roughness: 1, flatShading: true });
     const belly = new THREE.MeshStandardMaterial({ color: '#c2aa70', roughness: 1, flatShading: true });
     const darkGreen = new THREE.MeshStandardMaterial({ color: '#385c37', roughness: 1, flatShading: true });
+    const armor = new THREE.MeshStandardMaterial({ color: '#596875', metalness: 0.8, roughness: 0.28, flatShading: true });
     this.monsterMaterials.push(green);
     const torso = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.9, 1.45, 3, 1, 2), green);
     torso.position.y = 0.72; this.monsterGroup.add(torso);
@@ -487,6 +490,18 @@ export class ArenaView {
         const leg = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.38, 0.7), green);
         leg.position.set(side * 1.56, 0.34, z); this.monsterGroup.add(leg);
       }
+    }
+    for (let index = 0; index < 3; index++) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.14, 1.05), armor);
+      plate.position.set(0, 1.2 + index * 0.04, -0.85 + index * 0.72);
+      plate.rotation.x = -0.16;
+      this.monsterGroup.add(plate);
+    }
+    for (const side of [-1, 1]) {
+      const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 0.18, 8), armor);
+      shoulder.rotation.z = Math.PI / 2;
+      shoulder.position.set(side * 1.55, 0.95, 0.05);
+      this.monsterGroup.add(shoulder);
     }
     this.monsterTail.position.set(0, 0.64, -1.85);
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.73, 3.0, 5), green);
