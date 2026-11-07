@@ -148,7 +148,6 @@ const theater = new Theater(appRoot, {
   page: (page) => network.setTheaterPage(page),
   freeBrowse: (enabled) => network.setTheaterFreeBrowse(enabled),
   setPdf: (url) => network.setTheaterPdf(url),
-  signal: (targetId, type, payload) => network.theaterSignal(targetId, type, payload),
   upload: (room, token, file) => network.uploadTheaterPdf(room, token, file),
   display: (video, canvas, refreshCanvas) => scene.setTheaterDisplay(video, canvas, refreshCanvas),
   focus: (focused) => {
@@ -318,15 +317,18 @@ const forcedWeather = (() => {
   return isWeatherType(value) ? value : null;
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
-type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'jukebox' | 'catch' | 'progress' };
-const whatsNewVersion = '1.1.1'; // Bump when shipping a new What's New update.
+type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'jukebox' | 'catch' | 'progress' | 'theater' };
+const whatsNewVersion = '1.2.1'; // Bump when shipping a new What's New update.
 const whatsNewReleaseDate = 'Nov 2026';
 const whatsNewSeenKey = 'mengai:whats-new:last-seen-version';
 let whatsNewReturnFocus: HTMLElement | null = null;
 const whatsNewItems: WhatsNewItem[] = [
-  { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Crocodile arena', description: 'Team up with friends to battle the crocodile.' },
-  { tier: 'highlight', tone: 'voice', icon: '🎙️', title: 'Proximity voice', description: 'Talk with nearby fishers as you explore.' },
-  { tier: 'highlight', tone: 'jukebox', icon: '🎵', title: 'Shared jukebox', description: 'Search songs and play them together around the island.' },
+  { tier: 'highlight', tone: 'theater', icon: '📺', title: 'Share the screen at Theater', description: 'Present your screen to the whole room and watch together.' },
+  { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Upgraded Crocodile', description: 'The arena boss is tougher, faster, and more dangerous than before.' },
+  { tier: 'highlight', tone: 'catch', icon: '🐠', title: 'New fish species', description: 'Discover the massive Ikan Bulan and legendary Ikan Naga.' },
+  { tier: 'also', icon: '🎙️', title: 'Proximity voice', description: 'Talk with nearby fishers as you explore.' },
+  { tier: 'also', icon: '🎵', title: 'Shared jukebox', description: 'Search songs and play them together around the island.' },
+  { tier: 'also', icon: '✨', title: 'Smoother pond UX', description: 'Clearer prompts, stronger focus states, and easier keyboard controls.' },
   { tier: 'also', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
   { tier: 'also', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
   { tier: 'also', icon: '💾', title: 'Progress that saves', description: 'Catch records save; crowns mark the room leader.' },
@@ -1631,7 +1633,6 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     },
     weatherChanged: (weather) => applyWeather(weather, true),
     theaterState: (state) => theater.applyState(state),
-    theaterSignal: (signal) => theater.handleSignal(signal),
     theaterError: (message) => theater.handleError(message),
     seatState: (occupancy) => {
       scene.setSeatOccupancy(occupancy);
@@ -1950,6 +1951,11 @@ window.addEventListener('keydown', (event) => {
   if (key === 'j' && joined && !event.repeat && isNearJukebox()) {
     event.preventDefault();
     openJukebox();
+    return;
+  }
+  if (key === 't' && joined && !event.repeat && theater.isNearby) {
+    event.preventDefault();
+    theater.openMenu();
     return;
   }
   if (key === 'v' && joined && voice.isPushToTalk) {

@@ -13,17 +13,19 @@ export const ARENA_CONFIG = {
   stoneFlightMs: 900,
   stoneHitRadius: 1.7,
   stoneDamage: 20,
-  monsterMaxHp: 500,
+  monsterMaxHp: 1000,
+  monsterEnrageThreshold: 500,
+  monsterEnrageMultiplier: 1.125,
   monsterRadius: 1.8,
-  monsterMoveSpeed: 1.45,
+  monsterMoveSpeed: 1.65,
   monsterAttackCooldownMs: 850,
   newSkills: {
     tailSmash: {
-      damage: 18, radius: 3.8, warningMs: 1200, recoveryMs: 1500, cooldownMs: 12000,
+      damage: 23, radius: 3.8, warningMs: 1200, recoveryMs: 1500, cooldownMs: 12000,
       knockback: 3.2, stoneFlightMs: 700, scatterRadiusMin: 5, scatterRadiusMax: 10,
     },
     burrow: {
-      damage: 20, radius: 3.2, diveMs: 800, undergroundMs: 3200, emergeWarningMs: 1000,
+      damage: 25, radius: 3.2, diveMs: 800, undergroundMs: 3200, emergeWarningMs: 1000,
       recoveryMs: 2000, cooldownMs: 15000, speed: 2.4, knockback: 3.8, bonusStoneDamage: 1.5,
     },
   },
@@ -31,11 +33,11 @@ export const ARENA_CONFIG = {
   monsterDeathDurationMs: 1400,
   tickIntervalMs: 100,
   attacks: {
-    bite: { damage: 15, range: 2, windupMs: 550, cooldownMs: 2400 },
-    tailSweep: { damage: 20, range: 4.1, warningMs: 1000, cooldownMs: 5600 },
-    lunge: { damage: 25, range: 12, windupMs: 1000, chargeMs: 650, speed: 11, hitRadius: 1.25, cooldownMs: 7600 },
-    tailSmash: { damage: 18, range: 0, warningMs: 1200, cooldownMs: 12000 },
-    burrow: { damage: 20, range: 0, windupMs: 800, cooldownMs: 15000 },
+    bite: { damage: 18, range: 2, windupMs: 550, cooldownMs: 2400 },
+    tailSweep: { damage: 24, range: 4.1, warningMs: 1000, cooldownMs: 5600 },
+    lunge: { damage: 29, range: 12, windupMs: 1000, chargeMs: 650, speed: 11, hitRadius: 1.25, cooldownMs: 7600 },
+    tailSmash: { damage: 23, range: 0, warningMs: 1200, cooldownMs: 12000 },
+    burrow: { damage: 25, range: 0, windupMs: 800, cooldownMs: 15000 },
   },
 } as const;
 
@@ -80,7 +82,7 @@ export interface ArenaStoneSnapshot {
 export interface ArenaMonsterSnapshot {
   id: string;
   kind: 'crocodile';
-  name: 'Crocodile';
+  name: 'Mecha Crocodile';
   x: number;
   z: number;
   facing: number;

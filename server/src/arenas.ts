@@ -9,7 +9,7 @@ interface ArenaParticipant extends ArenaParticipantSnapshot {
 interface Crocodile {
   id: string;
   kind: 'crocodile';
-  name: 'Crocodile';
+  name: 'Mecha Crocodile';
   x: number;
   z: number;
   facing: number;
@@ -52,7 +52,7 @@ export function createCrocodileArena(player: Player, now: number): ArenaInstance
     id: randomUUID(),
     players: [createParticipant(player, 0, now)],
     monster: {
-      id: 'crocodile', kind: 'crocodile', name: 'Crocodile',
+      id: 'crocodile', kind: 'crocodile', name: 'Mecha Crocodile',
       x: 7, z: 0, facing: -Math.PI / 2,
       hp: ARENA_CONFIG.monsterMaxHp, maxHp: ARENA_CONFIG.monsterMaxHp,
       state: 'chase', attack: null, cooldownUntil: 0,
@@ -220,7 +220,27 @@ function finishMonsterAttack(monster: Crocodile, now: number): void {
   monster.attack = null;
   monster.chargeHitIds.clear();
   monster.state = 'cooldown';
-  monster.cooldownUntil = now + ARENA_CONFIG.monsterAttackCooldownMs;
+  monster.cooldownUntil = now + combatCooldown(ARENA_CONFIG.monsterAttackCooldownMs, monster);
+}
+
+function isEnraged(monster: Crocodile): boolean {
+  return monster.hp <= ARENA_CONFIG.monsterEnrageThreshold && monster.hp > 0;
+}
+
+function combatBoost(monster: Crocodile): number {
+  return isEnraged(monster) ? ARENA_CONFIG.monsterEnrageMultiplier : 1;
+}
+
+function combatDamage(value: number, monster: Crocodile): number {
+  return Math.round(value * combatBoost(monster));
+}
+
+function combatRange(value: number, monster: Crocodile): number {
+  return value * combatBoost(monster);
+}
+
+function combatCooldown(value: number, monster: Crocodile): number {
+  return value / combatBoost(monster);
 }
 
 function beginMonsterAttack(arena: ArenaInstance, player: ArenaParticipant, skill: MonsterSkill, now: number): void {
@@ -234,15 +254,15 @@ function beginMonsterAttack(arena: ArenaInstance, player: ArenaParticipant, skil
       : skill === 'lunge' ? ARENA_CONFIG.attacks.lunge.windupMs
         : skill === 'tailSmash' ? ARENA_CONFIG.newSkills.tailSmash.warningMs
           : ARENA_CONFIG.newSkills.burrow.diveMs;
-  const cooldownMs = ARENA_CONFIG.attacks[skill].cooldownMs;
+  const cooldownMs = combatCooldown(ARENA_CONFIG.attacks[skill].cooldownMs, monster);
   monster.attack = {
     skill, phase: skill === 'burrow' ? 'dive' : 'windup', startedAt: now, resolveAt: now + windupMs,
     endsAt: now + windupMs + (skill === 'lunge' ? ARENA_CONFIG.attacks.lunge.chargeMs : 0),
     originX: monster.x, originZ: monster.z, directionX, directionZ,
-    radius: skill === 'bite' ? ARENA_CONFIG.attacks.bite.range
-      : skill === 'tailSweep' ? ARENA_CONFIG.attacks.tailSweep.range
-        : skill === 'lunge' ? ARENA_CONFIG.attacks.lunge.hitRadius
-          : skill === 'tailSmash' ? ARENA_CONFIG.newSkills.tailSmash.radius : ARENA_CONFIG.newSkills.burrow.radius,
+    radius: skill === 'bite' ? combatRange(ARENA_CONFIG.attacks.bite.range, monster)
+      : skill === 'tailSweep' ? combatRange(ARENA_CONFIG.attacks.tailSweep.range, monster)
+        : skill === 'lunge' ? combatRange(ARENA_CONFIG.attacks.lunge.hitRadius, monster)
+          : skill === 'tailSmash' ? combatRange(ARENA_CONFIG.newSkills.tailSmash.radius, monster) : combatRange(ARENA_CONFIG.newSkills.burrow.radius, monster),
     targetX: skill === 'tailSmash' ? ARENA_CONFIG.stonePile.x : undefined,
     targetZ: skill === 'tailSmash' ? ARENA_CONFIG.stonePile.z : undefined,
   };
@@ -283,7 +303,7 @@ function chooseSkill(arena: ArenaInstance, player: ArenaParticipant, now: number
   const distance = Math.hypot(player.x - arena.monster.x, player.z - arena.monster.z);
   const available: MonsterSkill[] = [];
   if (arena.stonePileCount >= 2 && arena.monster.lastSkill !== 'tailSmash' && now >= arena.monster.skillReadyAt.tailSmash) available.push('tailSmash');
-  if (arena.monster.lastSkill !== 'burrow' && now >= arena.monster.skillReadyAt.burrow && (distance > 6 || Math.random() < 0.3)) available.push('burrow');
+  if (arena.monster.lastSkill !== 'burrow' && now >= arena.monster.skillReadyAt.burrow && (distance > combatRange(6, arena.monster) || Math.random() < 0.3)) available.push('burrow');
   return available[Math.floor(Math.random() * available.length)] ?? null;
 }
 
@@ -339,7 +359,7 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
         scatterPile(arena, now);
         for (const target of arena.players) {
           if (target.hp > 0 && Math.hypot(target.x - ARENA_CONFIG.stonePile.x, target.z - ARENA_CONFIG.stonePile.z) <= attack.radius + ARENA_CONFIG.playerCollisionRadius) {
-            damagePlayer(arena, target, ARENA_CONFIG.newSkills.tailSmash.damage, 'tailSmash', now, events);
+            damagePlayer(arena, target, combatDamage(ARENA_CONFIG.newSkills.tailSmash.damage, monster), 'tailSmash', now, events);
             knockback(target, ARENA_CONFIG.stonePile.x, ARENA_CONFIG.stonePile.z, ARENA_CONFIG.newSkills.tailSmash.knockback);
           }
         }
@@ -383,7 +403,7 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
         monster.z = attack.targetZ ?? monster.z;
         for (const target of arena.players) {
           if (target.hp > 0 && Math.hypot(target.x - monster.x, target.z - monster.z) <= attack.radius + ARENA_CONFIG.playerCollisionRadius) {
-            damagePlayer(arena, target, ARENA_CONFIG.newSkills.burrow.damage, 'burrow', now, events);
+            damagePlayer(arena, target, combatDamage(ARENA_CONFIG.newSkills.burrow.damage, monster), 'burrow', now, events);
             knockback(target, monster.x, monster.z, ARENA_CONFIG.newSkills.burrow.knockback);
           }
         }
@@ -400,7 +420,7 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
     }
     if (attack.skill === 'lunge' && attack.phase === 'charge') {
       const remaining = Math.max(0, attack.endsAt - now);
-      const movement = Math.min(ARENA_CONFIG.attacks.lunge.speed * deltaSeconds, Math.hypot(
+      const movement = Math.min(combatRange(ARENA_CONFIG.attacks.lunge.speed, monster) * deltaSeconds, Math.hypot(
         monster.x + attack.directionX - player.x,
         monster.z + attack.directionZ - player.z,
       ));
@@ -408,9 +428,9 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
       monster.z += attack.directionZ * movement;
       monster.facing = Math.atan2(attack.directionX, attack.directionZ);
       for (const target of arena.players) {
-        if (target.hp > 0 && !monster.chargeHitIds.has(target.playerId) && Math.hypot(monster.x - target.x, monster.z - target.z) <= ARENA_CONFIG.attacks.lunge.hitRadius + ARENA_CONFIG.playerCollisionRadius) {
+        if (target.hp > 0 && !monster.chargeHitIds.has(target.playerId) && Math.hypot(monster.x - target.x, monster.z - target.z) <= combatRange(ARENA_CONFIG.attacks.lunge.hitRadius, monster) + ARENA_CONFIG.playerCollisionRadius) {
           monster.chargeHitIds.add(target.playerId);
-          damagePlayer(arena, target, ARENA_CONFIG.attacks.lunge.damage, 'lunge', now, events);
+          damagePlayer(arena, target, combatDamage(ARENA_CONFIG.attacks.lunge.damage, monster), 'lunge', now, events);
         }
       }
       if (arena.state !== 'active') return events;
@@ -421,7 +441,7 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
       for (const target of arena.players) {
         const distance = Math.hypot(target.x - attack.originX, target.z - attack.originZ);
         if (target.hp > 0 && distance <= attack.radius + ARENA_CONFIG.playerCollisionRadius) {
-          damagePlayer(arena, target, ARENA_CONFIG.attacks[attack.skill].damage, attack.skill, now, events);
+          damagePlayer(arena, target, combatDamage(ARENA_CONFIG.attacks[attack.skill].damage, monster), attack.skill, now, events);
         }
       }
       if (arena.state !== 'active') return events;
@@ -441,18 +461,18 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
   const distance = Math.hypot(dx, dz);
   monster.state = 'chase';
   monster.facing = Math.atan2(dx, dz);
-  const moveStep = Math.min(ARENA_CONFIG.monsterMoveSpeed * deltaSeconds, Math.max(0, distance - 1.65));
+  const moveStep = Math.min(combatRange(ARENA_CONFIG.monsterMoveSpeed, monster) * deltaSeconds, Math.max(0, distance - 1.65));
   if (distance > 1.65 && moveStep > 0) {
     monster.x += dx / (distance || 1) * moveStep;
     monster.z += dz / (distance || 1) * moveStep;
   }
-  if (distance <= ARENA_CONFIG.attacks.bite.range && now >= monster.skillReadyAt.bite)   beginMonsterAttack(arena, player, 'bite', now);
-  else if (distance <= ARENA_CONFIG.attacks.tailSweep.range && now >= monster.skillReadyAt.tailSweep) beginMonsterAttack(arena, player, 'tailSweep', now);
-  else if (distance <= ARENA_CONFIG.attacks.lunge.range && distance > ARENA_CONFIG.attacks.bite.range && now >= monster.skillReadyAt.lunge) beginMonsterAttack(arena, player, 'lunge', now);
+  if (distance <= combatRange(ARENA_CONFIG.attacks.bite.range, monster) && now >= monster.skillReadyAt.bite)   beginMonsterAttack(arena, player, 'bite', now);
+  else if (distance <= combatRange(ARENA_CONFIG.attacks.tailSweep.range, monster) && now >= monster.skillReadyAt.tailSweep) beginMonsterAttack(arena, player, 'tailSweep', now);
+  else if (distance <= combatRange(ARENA_CONFIG.attacks.lunge.range, monster) && distance > combatRange(ARENA_CONFIG.attacks.bite.range, monster) && now >= monster.skillReadyAt.lunge) beginMonsterAttack(arena, player, 'lunge', now);
   else if (now >= Math.min(monster.skillReadyAt.tailSmash, monster.skillReadyAt.burrow)) {
     const skill = chooseSkill(arena, player, now);
     if (skill) beginMonsterAttack(arena, player, skill, now);
   }
-  else if (distance <= ARENA_CONFIG.attacks.bite.range && now < monster.skillReadyAt.bite) monster.state = 'cooldown';
+  else if (distance <= combatRange(ARENA_CONFIG.attacks.bite.range, monster) && now < monster.skillReadyAt.bite) monster.state = 'cooldown';
   return events;
 }
