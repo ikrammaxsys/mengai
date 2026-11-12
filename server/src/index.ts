@@ -13,7 +13,7 @@ import { BROADCAST_SCOPE, calculateReelParameters, FISH_CONFIG } from '../../sha
 import { isSafeMovementPosition, movementViolation, MOVEMENT_RULES, normalizeRotation } from '../../shared/movement.js';
 import { RESUME_GRACE_MS, Rooms } from './rooms.js';
 import { rollSpecies, rollWeight } from './fishing.js';
-import type { CatchEntry, JukeboxTrack, Player, Room } from './types.js';
+import type { CatchEntry, FastestSlayerRecord, JukeboxTrack, Player, PlayerSnapshot, Room } from './types.js';
 import { InMemoryInventoryStore, type CatchRecord, type InventoryStore } from './inventory.js';
 import { awardChickenScore, chickenSnapshots, hitChickenAt, updateChickenFlock } from './chickens.js';
 import { CHICKEN_CONFIG } from '../../shared/chickenConfig.js';
@@ -813,8 +813,10 @@ function roomSnapshot(room: Room, player: Player) {
     weather: room.weather,
     theater: { ...room.theater },
     seatOccupancy: Object.fromEntries(room.seatOccupancy),
+    ferrisWheelStartedAt: room.ferrisWheelStartedAt,
     chickens: chickenSnapshots(room.chickens),
     crocodileScores: [...room.crocodileScores.values()].sort((a, b) => b.count - a.count),
+    fastestSlayer: room.fastestSlayer,
     resumeToken: player.resumeToken,
   };
 }
@@ -943,6 +945,21 @@ function publishArenaEvents(room: Room, arena: ArenaInstance, events: ArenaEvent
         void persistentData.recordCrocodileKill(room.id, owner.name).catch((error: unknown) => {
           console.error('[game-data] Failed to save crocodile kill:', error);
         });
+      }
+      const killer = room.players.get(event.playerId);
+      if (killer && killer.disconnectedAt === null && (!room.fastestSlayer || event.timeMs < room.fastestSlayer.timeMs)) {
+        const previousHolder = room.fastestSlayer ? room.players.get(room.fastestSlayer.playerId) : undefined;
+        if (previousHolder) previousHolder.hasPet = false;
+        const record: FastestSlayerRecord = { playerId: killer.id, name: killer.name, timeMs: event.timeMs };
+        room.fastestSlayer = record;
+        killer.hasPet = true;
+        for (const reference of arenaInstances.values()) {
+          if (reference.roomId !== room.id) continue;
+          for (const participant of reference.arena.players) {
+            participant.hasPet = participant.playerId === killer.id;
+          }
+        }
+        broadcast(room, { type: 'fastest_slayer', fastestSlayer: record });
       }
       for (const participant of participants) send(participant.socket, event);
     } else for (const participant of participants) send(participant.socket, event);

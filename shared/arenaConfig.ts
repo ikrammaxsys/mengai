@@ -56,6 +56,7 @@ export interface ArenaParticipantSnapshot {
   hp: number;
   maxHp: number;
   stones: number;
+  hasPet: boolean;
 }
 
 export interface ArenaAttackSnapshot {

@@ -87,6 +87,12 @@ export interface CrocodileScore {
   count: number;
 }
 
+export interface FastestSlayerRecord {
+  playerId: string;
+  name: string;
+  timeMs: number;
+}
+
 export interface ArenaPartyMember {
   playerId: string;
   name: string;
@@ -145,6 +151,7 @@ export interface PlayerSnapshot {
   speaking?: boolean;
   chickenScore: number;
   crocodilesSlain: number;
+  hasPet: boolean;
   seatedSeatId?: string | null;
   ferrisSeatIndex?: number | null;
   ferrisSlot?: number | null;
@@ -185,7 +192,7 @@ export interface TheaterSignal {
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; fastestSlayer: FastestSlayerRecord | null; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -203,6 +210,7 @@ type Handlers = {
   catchResult: (result: CatchResult) => void;
   leaderboard: (entries: CatchEntry[]) => void;
   crocodileScore: (score: CrocodileScore) => void;
+  fastestSlayer: (record: FastestSlayerRecord | null) => void;
   portalEntered: (arena: ArenaSnapshot) => void;
   arenaState: (arena: ArenaSnapshot) => void;
   arenaPartyState: (party: ArenaPartyState) => void;
@@ -360,6 +368,7 @@ export class Network {
         case 'catch_result': this.handlers.catchResult(message as unknown as CatchResult); break;
         case 'leaderboard_update': this.handlers.leaderboard(message.entries as CatchEntry[]); break;
         case 'crocodile_score': this.handlers.crocodileScore(message as unknown as CrocodileScore); break;
+        case 'fastest_slayer': this.handlers.fastestSlayer((message.fastestSlayer as FastestSlayerRecord | null) ?? null); break;
         case 'portalEnter': this.handlers.portalEntered(message.arena as ArenaSnapshot); break;
         case 'arenaState': this.handlers.arenaState(message.arena as ArenaSnapshot); break;
         case 'arenaPartyState': this.handlers.arenaPartyState(message as unknown as ArenaPartyState); break;

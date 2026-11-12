@@ -49,6 +49,12 @@ export interface FishingProfile {
   lastSpecies: FishSpeciesId | null;
 }
 
+export interface FastestSlayerRecord {
+  playerId: string;
+  name: string;
+  timeMs: number;
+}
+
 export type StoneState = 'ground' | 'carried' | 'flying' | 'respawning';
 
 export interface StoneFlight {
@@ -101,6 +107,7 @@ export interface Player {
   carryingStoneId: string | null;
   chickenScore: number;
   crocodilesSlain: number;
+  hasPet: boolean;
   arenaInstanceId: string | null;
   inPhotobooth: boolean;
   seatedSeatId: string | null;
@@ -125,6 +132,7 @@ export interface Room {
   weather: WeatherSnapshot;
   chickens: Map<string, ChickenAgent>;
   crocodileScores: Map<string, { playerId: string; playerName: string; count: number }>;
+  fastestSlayer: FastestSlayerRecord | null;
   jukebox: JukeboxRoomState;
   theater: TheaterRoomState;
   seatOccupancy: Map<string, string>;
@@ -175,6 +183,7 @@ export interface PlayerSnapshot {
   seatedSeatId?: string | null;
   chickenScore: number;
   crocodilesSlain: number;
+  hasPet: boolean;
   speaking?: boolean;
 }
 

@@ -39,12 +39,13 @@ export interface ArenaInstance {
   respawnAt: number | null;
   lastUpdatedAt: number;
   nextStateAt: number;
+  firstHitAt: number | null;
 }
 
 export type ArenaEvent =
   | { type: 'monsterHit'; damage: number; hp: number; maxHp: number }
   | { type: 'playerDamaged'; playerId: string; damage: number; hp: number; maxHp: number; skill: MonsterSkill }
-  | { type: 'monsterDied'; hp: 0 }
+  | { type: 'monsterDied'; hp: 0; playerId: string; timeMs: number }
   | { type: 'playerDied'; hp: 0; respawnAt: number };
 
 export function createCrocodileArena(player: Player, now: number): ArenaInstance {
@@ -66,6 +67,7 @@ export function createCrocodileArena(player: Player, now: number): ArenaInstance
     respawnAt: null,
     lastUpdatedAt: now,
     nextStateAt: now,
+    firstHitAt: null,
   };
 }
 
@@ -82,6 +84,7 @@ function createParticipant(player: Player, index: number, now: number): ArenaPar
     hp: ARENA_CONFIG.playerMaxHp,
     maxHp: ARENA_CONFIG.playerMaxHp,
     stones: 0,
+    hasPet: player.hasPet,
     lastMoveAt: now,
   };
 }
@@ -117,6 +120,7 @@ export function restartCrocodileArena(arena: ArenaInstance, now: number): void {
   arena.respawnAt = null;
   arena.lastUpdatedAt = now;
   arena.nextStateAt = now;
+  arena.firstHitAt = null;
   arena.players.forEach((player, index) => {
     const angle = index * 2.399;
     const radius = index === 0 ? 0 : Math.min(3.5, 1.5 + Math.sqrt(index) * 0.7);
@@ -135,7 +139,7 @@ export function arenaSnapshot(arena: ArenaInstance, serverTime: number): ArenaSn
     instanceId: arena.id,
     state: arena.state,
     serverTime,
-    players: arena.players.map(({ playerId, name, color, x, z, facing, hp, maxHp, stones }) => ({ playerId, name, color, x, z, facing, hp, maxHp, stones })),
+    players: arena.players.map(({ playerId, name, color, x, z, facing, hp, maxHp, stones, hasPet }) => ({ playerId, name, color, x, z, facing, hp, maxHp, stones, hasPet })),
     monster: { id, kind, name, x, z, facing, hp, maxHp, state, attack: attack ? { ...attack } : null },
     stonePile: { x: ARENA_CONFIG.stonePile.x, z: ARENA_CONFIG.stonePile.z, count: arena.stonePileCount, maxCount: ARENA_CONFIG.stonePile.maxCount, nextRefillAt: arena.nextStoneRefillAt },
     scatteredStones: arena.scatteredStones.map((stone) => ({ ...stone })),
@@ -339,6 +343,8 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
     if (!burrowed && monster.state !== 'dead' && Math.hypot(x - monster.x, z - monster.z) <= ARENA_CONFIG.stoneHitRadius) {
       const damage = monster.attack?.skill === 'burrow' && monster.attack.phase === 'recovery'
         ? ARENA_CONFIG.stoneDamage * ARENA_CONFIG.newSkills.burrow.bonusStoneDamage : ARENA_CONFIG.stoneDamage;
+      const firstHitAt = arena.firstHitAt ?? now;
+      arena.firstHitAt = firstHitAt;
       monster.hp = Math.max(0, monster.hp - damage);
       events.push({ type: 'monsterHit', damage, hp: monster.hp, maxHp: monster.maxHp });
       arena.projectiles.splice(index, 1);
@@ -346,7 +352,7 @@ export function updateArena(arena: ArenaInstance, now: number): ArenaEvent[] {
         monster.state = 'dead';
         monster.attack = null;
         arena.state = 'victory';
-        events.push({ type: 'monsterDied', hp: 0 });
+        events.push({ type: 'monsterDied', hp: 0, playerId: projectile.throwerId, timeMs: Math.max(0, now - firstHitAt) });
       }
     } else if (now >= projectile.startedAt + projectile.durationMs) arena.projectiles.splice(index, 1);
   }

@@ -1,5 +1,5 @@
 import './style.css';
-import { Network, type ArenaPartyState, type BigCatchEvent, type CatchEntry, type CatchResult, type CrocodileScore, type HeldFish, type InventoryItem, type PlayerSnapshot } from './network';
+import { Network, type ArenaPartyState, type BigCatchEvent, type CatchEntry, type CatchResult, type CrocodileScore, type FastestSlayerRecord, type HeldFish, type InventoryItem, type PlayerSnapshot } from './network';
 import { GameScene } from './scene';
 import { FishArt } from './fishModels';
 import { FishViewer } from './fishViewer';
@@ -81,6 +81,7 @@ const leaderboardPanel = document.querySelector<HTMLElement>('#leaderboard-panel
 const leaderboardClose = document.querySelector<HTMLButtonElement>('#leaderboard-close')!;
 const leaderboardList = document.querySelector<HTMLOListElement>('#leaderboard-list')!;
 const crocodileScoreList = document.querySelector<HTMLOListElement>('#crocodile-score-list')!;
+const fastestSlayerValue = document.querySelector<HTMLElement>('#fastest-slayer-value')!;
 const backpackUi = document.querySelector<HTMLElement>('#backpack-ui')!;
 const backpackToggle = document.querySelector<HTMLButtonElement>('#backpack-toggle')!;
 const backpackPanel = document.querySelector<HTMLElement>('#backpack-panel')!;
@@ -1428,6 +1429,18 @@ function updateCrocodileScores(scores: CrocodileScore[]): void {
   }
 }
 
+function updateFastestSlayer(record: FastestSlayerRecord | null): void {
+  scene.setFastestSlayer(record?.playerId ?? null);
+  arenaView.setFastestSlayer(record?.playerId ?? null);
+  if (!record) {
+    fastestSlayerValue.textContent = 'No record yet';
+    return;
+  }
+  const seconds = Math.floor(Math.max(0, record.timeMs) / 1000);
+  const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  fastestSlayerValue.textContent = `${record.name} · ${time}`;
+}
+
 function showCatch(result: CatchResult): void {
   currentCatch = result.entry;
   cacheCatch(result.entry);
@@ -1520,6 +1533,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       roomHud.textContent = `Room ${message.room}`;
       updateLeaderboard(message.leaderboard ?? []);
       updateCrocodileScores(message.crocodileScores ?? []);
+      updateFastestSlayer(message.fastestSlayer ?? null);
       chatMessages.replaceChildren();
       const emptyHint = document.createElement('p');
       emptyHint.className = 'chat-empty';
@@ -1608,9 +1622,10 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     },
     reelParams: updateServerReelParams,
     reelState: (id, active) => scene.setReelActive(id, active),
-    catchResult: (result) => { pendingReelSuccess = null; showCatch(result); },
+    catchResult: (result) => { pendingReelSuccess = null; scene.petHop(result.entry.playerId); showCatch(result); },
     leaderboard: updateLeaderboard,
     crocodileScore: (score) => updateCrocodileScores([...currentCrocodileScores.filter((entry) => entry.playerId !== score.playerId), score]),
+    fastestSlayer: updateFastestSlayer,
     inventorySync: syncInventory,
     inventoryAdd: addInventoryItem,
     inventoryRemove: (catchId) => {

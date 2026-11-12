@@ -12,21 +12,24 @@ import { PHOTOBOOTH_CONFIG } from './photobooth';
 import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/theaterSeats';
 import { ferrisBottomSeat, ferrisSeatBottomDistance, ferrisSeatPose, FERRIS_BOTTOM_TOLERANCE, FERRIS_SEAT_CAPACITY } from '../../shared/playground';
 import { Playground } from './playground';
+import { animateCrocodileWalk, populateCrocodileModel } from './crocodileModel';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null; hasPet: boolean };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
 type JukeboxParticle = { object: THREE.Sprite | THREE.Mesh; material: THREE.SpriteMaterial | THREE.MeshStandardMaterial; startedAt: number; duration: number; x: number; y: number; z: number; drift: number; wobble: number; phase: number; spin: number; sparkle: boolean };
 type DanceVisual = { root: THREE.Group; note: THREE.Sprite; moving: boolean; phase: number; speed: number; blend: number };
+type PetVisual = { group: THREE.Group; tail: THREE.Group; legs: THREE.Mesh[]; hopStartedAt: number | null; initialized: boolean };
 
 export class GameScene {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 150);
   readonly renderer: THREE.WebGLRenderer;
   private readonly avatars = new Map<string, Avatar>();
+  private readonly pets = new Map<string, PetVisual>();
   private readonly avatarDance = new Map<string, DanceVisual>();
   private readonly crocodileSlainCounts = new Map<string, number>();
   private readonly chatBubbles = new Map<string, ChatBubble[]>();
@@ -796,12 +799,13 @@ export class GameScene {
     this.labels.appendChild(label);
     const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
     this.crocodileSlainCounts.set(player.id, crocodilesSlain);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null };
+    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null, hasPet: player.hasPet };
     this.avatarDance.set(player.id, { root: visualRoot, note: danceNote, moving: player.moving, phase: Math.random() * Math.PI * 2, speed: 0.9 + Math.random() * 0.2, blend: 0 });
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
     this.updateCrocodileRobeAppearance();
+    this.syncPet(player.id, player.hasPet);
     if (player.holdingFish) this.setHoldingFish(player.id, player.holdingFish);
     return avatar;
   }
@@ -816,6 +820,92 @@ export class GameScene {
       this.updateLeaderAppearance(local);
     }
     this.updateCrocodileRobeAppearance();
+  }
+
+  private syncPet(ownerId: string, hasPet: boolean): void {
+    if (!hasPet) {
+      this.removePet(ownerId);
+      return;
+    }
+    if (this.pets.has(ownerId)) return;
+    const group = new THREE.Group();
+    const tail = new THREE.Group();
+    const model = populateCrocodileModel(group, tail);
+    const collar = new THREE.Mesh(
+      new THREE.TorusGeometry(0.5, 0.1, 5, 12),
+      this.material('#e5b13a', 0.72),
+    );
+    collar.rotation.x = Math.PI / 2;
+    collar.position.set(0, 0.64, 1.28);
+    group.add(collar);
+    group.scale.setScalar(0.2);
+    this.scene.add(group);
+    this.pets.set(ownerId, { group, tail, legs: model.legs, hopStartedAt: null, initialized: false });
+  }
+
+  private removePet(ownerId: string): void {
+    const pet = this.pets.get(ownerId);
+    if (!pet) return;
+    this.scene.remove(pet.group);
+    pet.group.traverse((part) => {
+      if (!(part instanceof THREE.Mesh)) return;
+      part.geometry.dispose();
+      const materials = Array.isArray(part.material) ? part.material : [part.material];
+      for (const material of materials) material.dispose();
+    });
+    this.pets.delete(ownerId);
+  }
+
+  private updatePet(ownerId: string, owner: Avatar, now: number, deltaSeconds: number): void {
+    if (!owner.hasPet) return;
+    const pet = this.pets.get(ownerId);
+    if (!pet) return;
+    const facing = owner.group.rotation.y;
+    const targetX = owner.group.position.x - Math.sin(facing) * 1.5;
+    const targetZ = owner.group.position.z - Math.cos(facing) * 1.5;
+    if (!pet.initialized) {
+      pet.group.position.set(targetX, 0, targetZ);
+      pet.group.rotation.y = facing;
+      pet.initialized = true;
+    }
+    const dx = targetX - pet.group.position.x;
+    const dz = targetZ - pet.group.position.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance > 15) {
+      pet.group.position.set(targetX, 0, targetZ);
+      pet.group.rotation.y = facing;
+    } else {
+      const pondX = owner.cast?.targetX ?? owner.group.position.x + Math.sin(facing);
+      const pondZ = owner.cast?.targetZ ?? owner.group.position.z + Math.cos(facing);
+      if (distance > 1.5) {
+        const step = Math.min(distance, FISH_CONFIG.movement.maxSpeed * 0.82 * Math.max(0, deltaSeconds));
+        pet.group.position.lerp(new THREE.Vector3(targetX, pet.group.position.y, targetZ), step / distance);
+        const faceAngle = owner.fishing === 'idle' ? Math.atan2(dx, dz) : Math.atan2(pondX - pet.group.position.x, pondZ - pet.group.position.z);
+        pet.group.rotation.y += this.angleDelta(pet.group.rotation.y, faceAngle) * Math.min(1, deltaSeconds * 8);
+        animateCrocodileWalk(pet.legs, now, true);
+      } else {
+        animateCrocodileWalk(pet.legs, now, false);
+        if (owner.fishing !== 'idle') pet.group.rotation.y += this.angleDelta(
+          pet.group.rotation.y,
+          Math.atan2(pondX - pet.group.position.x, pondZ - pet.group.position.z),
+        ) * Math.min(1, deltaSeconds * 5);
+        else pet.group.rotation.y += this.angleDelta(pet.group.rotation.y, facing) * Math.min(1, deltaSeconds * 3);
+      }
+    }
+    const idleBob = Math.sin(now * 0.004 + owner.group.position.x) * 0.025;
+    let hop = 0;
+    if (pet.hopStartedAt !== null) {
+      const progress = (performance.now() - pet.hopStartedAt) / 420;
+      if (progress >= 1) pet.hopStartedAt = null;
+      else hop = Math.sin(progress * Math.PI) * 0.38;
+    }
+    pet.group.position.y = idleBob + hop;
+    pet.tail.rotation.x = Math.sin(now * 0.0025) * 0.09;
+  }
+
+  petHop(ownerId: string): void {
+    const pet = this.pets.get(ownerId);
+    if (pet) pet.hopStartedAt = performance.now();
   }
 
   setPhotoboothMode(active: boolean): void {
@@ -845,6 +935,16 @@ export class GameScene {
       avatar.renderedLabelMarkup = '';
     }
     this.updateCrocodileRobeAppearance();
+  }
+
+  setFastestSlayer(playerId: string | null): void {
+    for (const [id, avatar] of this.avatars) {
+      const hasPet = id === playerId;
+      if (avatar.hasPet === hasPet) continue;
+      avatar.hasPet = hasPet;
+      avatar.renderedLabelMarkup = '';
+      this.syncPet(id, hasPet);
+    }
   }
 
   photoboothNamePoint(id: string): { x: number; y: number } | null {
@@ -1004,6 +1104,8 @@ export class GameScene {
       this.updateCrocodileRobeAppearance();
     }
     avatar.fishing = player.fishing;
+    avatar.hasPet = player.hasPet;
+    this.syncPet(player.id, player.hasPet);
     avatar.ferrisSeatIndex = player.ferrisSeatIndex ?? null;
     avatar.ferrisSlot = player.ferrisSlot ?? null;
     avatar.ferrisRideStartedAt = player.ferrisRideStartedAt ?? null;
@@ -1273,6 +1375,7 @@ export class GameScene {
       this.avatarDance.delete(id);
       avatar.label.remove(); this.avatars.delete(id);
     }
+    this.removePet(id);
     for (const bubble of this.chatBubbles.get(id) ?? []) bubble.element.remove();
     this.chatBubbles.delete(id);
     this.eatBubbles.get(id)?.element.remove();
@@ -1506,6 +1609,7 @@ export class GameScene {
       const dance = this.avatarDance.get(id);
       if (dance) this.updateAvatarDance(avatar, dance, serverNow, deltaSeconds);
       this.renderCast(avatar, serverNow);
+      this.updatePet(id, avatar, serverNow, deltaSeconds);
       const labelHeight = avatar.ferrisSeatIndex === null ? 2.2 : avatar.group.position.y + 2.2;
       this.ray.set(avatar.group.position.x, labelHeight, avatar.group.position.z).project(this.camera);
       const labelLeft = Math.round((this.ray.x * 0.5 + 0.5) * innerWidth);
@@ -1537,7 +1641,8 @@ export class GameScene {
         : '';
       const photoMark = avatar.inPhotobooth ? '<span class="photo-camera-mark" aria-label="In photobooth">📸</span>' : '';
       const voiceMark = '<span class="voice-speaking-mark" title="Speaking" aria-label="Speaking">🎙</span>';
-      const labelMarkup = `${leaderTitle}${crocodileSlayerTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
+      const petMark = avatar.hasPet ? '<span class="pet-name-icon" title="Baby croc companion" aria-label="Baby croc companion">🐊</span>' : '';
+      const labelMarkup = `${leaderTitle}${crocodileSlayerTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${petMark}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
       if (avatar.renderedLabelMarkup !== labelMarkup) {
         avatar.label.innerHTML = labelMarkup;
         avatar.renderedLabelMarkup = labelMarkup;

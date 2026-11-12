@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ARENA_CONFIG, type ArenaSnapshot } from '../../shared/arenaConfig';
+import { animateCrocodileWalk, populateCrocodileModel } from './crocodileModel';
 
 export interface ArenaViewCallbacks {
   leave(): void;
@@ -15,6 +16,13 @@ interface PartyHealthRow {
   row: HTMLElement;
   fill: HTMLElement;
   label: HTMLElement;
+}
+
+interface ArenaPet {
+  group: THREE.Group;
+  tail: THREE.Group;
+  legs: THREE.Mesh[];
+  initialized: boolean;
 }
 
 export class ArenaView {
@@ -33,6 +41,7 @@ export class ArenaView {
   private readonly victoryPanel: HTMLElement;
   private readonly monsterGroup = new THREE.Group();
   private readonly monsterTail = new THREE.Group();
+  private monsterLegs: THREE.Mesh[] = [];
   private attackRing!: THREE.Mesh;
   private lungeWarning!: THREE.Mesh;
   private readonly stonePile = new THREE.Group();
@@ -41,6 +50,7 @@ export class ArenaView {
   private readonly projectileMeshes = new Map<string, THREE.Mesh>();
   private readonly playerAvatars = new Map<string, ArenaAvatar>();
   private readonly partyHealthRows = new Map<string, PartyHealthRow>();
+  private readonly pets = new Map<string, ArenaPet>();
   private readonly monsterMaterials: THREE.MeshStandardMaterial[] = [];
   private snapshots: ArenaSnapshot[] = [];
   private snapshot: ArenaSnapshot | null = null;
@@ -102,6 +112,16 @@ export class ArenaView {
     this.playerAvatars.clear();
     this.partyHealthRows.clear();
     this.partyHealth.replaceChildren();
+    for (const pet of this.pets.values()) {
+      this.scene.remove(pet.group);
+      pet.group.traverse((part) => {
+        if (!(part instanceof THREE.Mesh)) return;
+        part.geometry.dispose();
+        const materials = Array.isArray(part.material) ? part.material : [part.material];
+        for (const material of materials) material.dispose();
+      });
+    }
+    this.pets.clear();
     this.deathStartedAt = null;
   }
 
@@ -136,6 +156,11 @@ export class ArenaView {
     this.snapshots.push(snapshot);
     while (this.snapshots.length > 5) this.snapshots.shift();
     this.updateHud(snapshot);
+  }
+
+  setFastestSlayer(playerId: string | null): void {
+    if (!this.snapshot) return;
+    for (const participant of this.snapshot.players) participant.hasPet = participant.playerId === playerId;
   }
 
   move(forward: number, turn: number, deltaSeconds: number): { x: number; z: number; facing: number } | null {
@@ -214,6 +239,51 @@ export class ArenaView {
       avatar.group.scale.y = participant.hp > 0 ? 1 : 0.55;
       avatar.bodyMaterial.color.set(participant.hp > 0 ? participant.color : '#595c54');
       avatar.bodyMaterial.emissive.setHex(participant.playerId === this.localPlayerId && performance.now() < this.localHitUntil ? 0x8d3421 : 0x000000);
+      if (participant.hasPet) {
+        let pet = this.pets.get(participant.playerId);
+        if (!pet) {
+          const group = new THREE.Group();
+          const tail = new THREE.Group();
+          const model = populateCrocodileModel(group, tail);
+          const collar = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.1, 5, 12), new THREE.MeshStandardMaterial({ color: '#e5b13a', metalness: 0.72, roughness: 0.3 }));
+          collar.rotation.x = Math.PI / 2;
+          collar.position.set(0, 0.64, 1.28);
+          group.add(collar);
+          group.scale.setScalar(0.2);
+          this.scene.add(group);
+          pet = { group, tail, legs: model.legs, initialized: false };
+          this.pets.set(participant.playerId, pet);
+        }
+        const targetX = pose.x - Math.sin(pose.facing) * 1.5;
+        const targetZ = pose.z - Math.cos(pose.facing) * 1.5;
+        const dx = targetX - pet.group.position.x, dz = targetZ - pet.group.position.z;
+        const distance = Math.hypot(dx, dz);
+        if (!pet.initialized || distance > 15) {
+          pet.group.position.set(targetX, 0, targetZ);
+          pet.group.rotation.y = pose.facing;
+          pet.initialized = true;
+        } else if (distance > 1.5) {
+          const step = Math.min(distance, ARENA_CONFIG.playerMoveSpeed * 0.82 * Math.max(0, deltaSeconds));
+          pet.group.position.lerp(new THREE.Vector3(targetX, pet.group.position.y, targetZ), step / distance);
+          pet.group.rotation.y = Math.atan2(dx, dz);
+        } else pet.group.rotation.y += Math.atan2(Math.sin(pose.facing - pet.group.rotation.y), Math.cos(pose.facing - pet.group.rotation.y)) * Math.min(1, deltaSeconds * 3);
+        pet.group.visible = this.snapshot.monster.state === 'dead';
+        pet.group.position.y = Math.sin(serverNow * 0.004 + pose.x) * 0.025;
+        pet.tail.rotation.x = Math.sin(serverNow * 0.0025) * 0.09;
+        animateCrocodileWalk(pet.legs, serverNow, distance > 1.5);
+      }
+    }
+    const activePetOwners = new Set(this.snapshot.players.filter((player) => player.hasPet).map((player) => player.playerId));
+    for (const [id, pet] of this.pets) {
+      if (activePetOwners.has(id)) continue;
+      this.scene.remove(pet.group);
+      pet.group.traverse((part) => {
+        if (!(part instanceof THREE.Mesh)) return;
+        part.geometry.dispose();
+        const materials = Array.isArray(part.material) ? part.material : [part.material];
+        for (const material of materials) material.dispose();
+      });
+      this.pets.delete(id);
     }
     const currentPlayerIds = new Set(this.snapshot.players.map((entry) => entry.playerId));
     for (const [id, avatar] of this.playerAvatars) {
@@ -223,6 +293,7 @@ export class ArenaView {
     }
     this.monsterGroup.position.set(monsterPose.x, 0, monsterPose.z);
     this.monsterGroup.rotation.y = monsterPose.facing;
+    animateCrocodileWalk(this.monsterLegs, serverNow, this.snapshot.monster.state === 'chase' && this.snapshot.state === 'active');
     const burrowPhase = attack?.skill === 'burrow' ? attack.phase : null;
     const attackElapsed = attack ? Math.max(0, serverNow - attack.startedAt) : 0;
     const diveProgress = attack?.skill === 'burrow' && attack.phase === 'dive'
@@ -468,49 +539,9 @@ export class ArenaView {
   }
 
   private buildCrocodile(): void {
-    const green = new THREE.MeshStandardMaterial({ color: '#547b45', roughness: 1, flatShading: true });
-    const belly = new THREE.MeshStandardMaterial({ color: '#c2aa70', roughness: 1, flatShading: true });
-    const darkGreen = new THREE.MeshStandardMaterial({ color: '#385c37', roughness: 1, flatShading: true });
-    const armor = new THREE.MeshStandardMaterial({ color: '#596875', metalness: 0.8, roughness: 0.28, flatShading: true });
-    this.monsterMaterials.push(green);
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.9, 1.45, 3, 1, 2), green);
-    torso.position.y = 0.72; this.monsterGroup.add(torso);
-    const bellyPlate = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.22, 1.15, 3, 1, 2), belly);
-    bellyPlate.position.set(0, 0.29, 0.15); this.monsterGroup.add(bellyPlate);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.82, 1.35, 2, 1, 2), green);
-    head.position.set(0, 0.82, 1.85); this.monsterGroup.add(head);
-    const snout = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.44, 1.2, 3, 1, 2), green);
-    snout.position.set(0, 0.58, 2.65); this.monsterGroup.add(snout);
-    for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 4), new THREE.MeshStandardMaterial({ color: '#efc64d', emissive: '#4d3910', flatShading: true }));
-      eye.position.set(side * 0.57, 1.24, 2.02); this.monsterGroup.add(eye);
-      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.065, 5, 4), darkGreen);
-      pupil.position.set(side * 0.6, 1.25, 2.14); this.monsterGroup.add(pupil);
-      for (const z of [-0.48, 1.12]) {
-        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.38, 0.7), green);
-        leg.position.set(side * 1.56, 0.34, z); this.monsterGroup.add(leg);
-      }
-    }
-    for (let index = 0; index < 3; index++) {
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.14, 1.05), armor);
-      plate.position.set(0, 1.2 + index * 0.04, -0.85 + index * 0.72);
-      plate.rotation.x = -0.16;
-      this.monsterGroup.add(plate);
-    }
-    for (const side of [-1, 1]) {
-      const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 0.18, 8), armor);
-      shoulder.rotation.z = Math.PI / 2;
-      shoulder.position.set(side * 1.55, 0.95, 0.05);
-      this.monsterGroup.add(shoulder);
-    }
-    this.monsterTail.position.set(0, 0.64, -1.85);
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.73, 3.0, 5), green);
-    tail.rotation.x = -Math.PI / 2; tail.position.z = -1.25; this.monsterTail.add(tail);
-    this.monsterGroup.add(this.monsterTail);
-    for (let index = 0; index < 5; index++) {
-      const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.105, 0.25, 4), belly);
-      tooth.rotation.x = Math.PI; tooth.position.set(-0.52 + index * 0.26, 0.35, 2.7); this.monsterGroup.add(tooth);
-    }
+    const model = populateCrocodileModel(this.monsterGroup, this.monsterTail);
+    this.monsterMaterials.push(model.bodyMaterial);
+    this.monsterLegs = model.legs;
     this.scene.add(this.monsterGroup);
   }
 
