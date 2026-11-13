@@ -333,17 +333,17 @@ const forcedWeather = (() => {
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
 type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'jukebox' | 'catch' | 'progress' | 'theater' };
-const whatsNewVersion = '1.2.1'; // Bump when shipping a new What's New update.
+const whatsNewVersion = '1.2.2'; // Bump when shipping a new What's New update.
 const whatsNewReleaseDate = 'Nov 2026';
 const whatsNewSeenKey = 'mengai:whats-new:last-seen-version';
 let whatsNewReturnFocus: HTMLElement | null = null;
 const whatsNewItems: WhatsNewItem[] = [
   { tier: 'highlight', tone: 'theater', icon: '📺', title: 'Share the screen at Theater', description: 'Present your screen to the whole room and watch together.' },
-  { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Upgraded Crocodile', description: 'The arena boss is tougher, faster, and more dangerous than before.' },
+  { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Crocodile companion', description: 'Beat the crocodile in record time to claim the room’s Fastest Slayer title and earn a pet croc.' },
   { tier: 'highlight', tone: 'catch', icon: '🐠', title: 'New fish species', description: 'Discover the massive Ikan Bulan and legendary Ikan Naga.' },
   { tier: 'also', icon: '🎙️', title: 'Proximity voice', description: 'Talk with nearby fishers as you explore.' },
   { tier: 'also', icon: '🎵', title: 'Shared jukebox', description: 'Search songs and play them together around the island.' },
-  { tier: 'also', icon: '✨', title: 'Smoother pond UX', description: 'Clearer prompts, stronger focus states, and easier keyboard controls.' },
+  { tier: 'also', icon: '😀', title: 'Emoji reactions', description: 'Send a quick emoji reaction for everyone nearby to see.' },
   { tier: 'also', icon: '🎒', title: 'Your Backpack', description: 'Browse, sort, and release your catches.' },
   { tier: 'also', icon: '🐟', title: 'Hold your catch', description: 'Show off your catch; heavier fish look bigger.' },
   { tier: 'also', icon: '💾', title: 'Progress that saves', description: 'Catch records save; crowns mark the room leader.' },

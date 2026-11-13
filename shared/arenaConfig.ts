@@ -107,6 +107,7 @@ export interface ArenaSnapshot {
   instanceId: string;
   state: ArenaState;
   serverTime: number;
+  startedAt: number;
   players: ArenaParticipantSnapshot[];
   monster: ArenaMonsterSnapshot;
   stonePile: { x: number; z: number; count: number; maxCount: number; nextRefillAt: number };

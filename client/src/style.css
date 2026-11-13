@@ -153,7 +153,8 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .arena-boss-health > strong { color: #fff0d4; font: 800 15px 'Trebuchet MS', 'Segoe UI', sans-serif; letter-spacing: .12em; text-transform: uppercase; }
 .arena-boss-health > span { color: #f5e9d1; font-size: 9px; }
 .arena-boss-health .arena-health-track { height: 14px; border-color: rgba(255,241,220,.72); }
-.arena-stone-count { position: absolute; top: 22px; right: 22px; padding: 9px 12px; border: 1px solid rgba(255,255,255,.6); border-radius: 10px; background: rgba(34,51,43,.84); color: #f3eddb; font-size: 11px; font-weight: 800; }
+.arena-timer { position: absolute; top: 22px; right: 22px; padding: 9px 13px; border: 1px solid rgba(255,231,173,.85); border-radius: 10px; background: rgba(34,51,43,.92); box-shadow: 0 4px 16px rgba(23,36,29,.28); color: #ffe598; font: 800 15px 'Trebuchet MS', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.arena-stone-count { position: absolute; top: 70px; right: 22px; padding: 9px 12px; border: 1px solid rgba(255,255,255,.6); border-radius: 10px; background: rgba(34,51,43,.84); color: #f3eddb; font-size: 11px; font-weight: 800; }
 .arena-pile-count { margin-left: 8px; color: #bbc9bb; font-size: 9px; font-weight: 600; }
 .arena-controls { position: absolute; bottom: 18px; left: 50%; margin: 0; padding: 8px 12px; border-radius: 9px; background: rgba(34,51,43,.78); color: #e9efdf; font-size: 10px; transform: translateX(-50%); white-space: nowrap; }
 .arena-exit-prompt { position: absolute; bottom: 64px; left: 50%; padding: 8px 12px; border: 1px solid rgba(180,255,206,.55); border-radius: 9px; background: rgba(35,96,69,.9); font-size: 10px; transform: translateX(-50%); white-space: nowrap; }
@@ -162,6 +163,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .arena-result > strong { font: 900 34px 'Trebuchet MS', 'Segoe UI', sans-serif; }
 .arena-result > span { color: #d4dfce; font-size: 13px; }
 .arena-victory > strong { color: #ffe598; }
+.arena-victory-time { font-variant-numeric: tabular-nums; font-weight: 800; }
 .arena-result-emoji { font-size: 42px !important; }
 .arena-result > div { display: flex; gap: 10px; margin-top: 10px; }
 .arena-result button { min-width: 112px; height: 40px; text-align: center; }

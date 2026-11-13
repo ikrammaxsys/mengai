@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#c9e8e5" />
     <title>Mengai — a little fishing getaway</title>
-    <script type="module" crossorigin src="/assets/index-BxLMG1uK.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BY7HnREO.css">
+    <script type="module" crossorigin src="/assets/index-vZliVHbz.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DW69V8Mj.css">
   </head>
   <body>
     <main id="app">
@@ -186,6 +186,10 @@
         </div>
       </section>
       <div id="chat-ui" class="chat-ui hidden">
+        <div class="emoji-dock">
+          <button id="emoji-toggle" class="emoji-toggle" type="button" aria-label="Open emoji reactions" aria-expanded="false" aria-controls="emoji-picker" title="Send a reaction">😀</button>
+          <div id="emoji-picker" class="emoji-picker hidden" role="group" aria-label="Emoji reactions"></div>
+        </div>
         <button id="chat-toggle" class="chat-toggle" type="button" aria-expanded="false" aria-controls="chat-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5Zm4 5h8m-8 4h5"/></svg> Room chat <span id="chat-unread" class="chat-unread hidden">0</span></button>
         <section id="chat-panel" class="chat-panel hidden" aria-label="Room chat">
           <header class="chat-header"><div><strong>Pond chat</strong><span>Only players in this room</span></div><button id="chat-close" class="chat-close" type="button" aria-label="Close chat">×</button></header>

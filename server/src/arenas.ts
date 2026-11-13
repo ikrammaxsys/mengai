@@ -29,6 +29,7 @@ interface ArenaProjectile extends ArenaProjectileSnapshot {
 
 export interface ArenaInstance {
   id: string;
+  startedAt: number;
   players: ArenaParticipant[];
   monster: Crocodile;
   state: ArenaSnapshot['state'];
@@ -51,6 +52,7 @@ export type ArenaEvent =
 export function createCrocodileArena(player: Player, now: number): ArenaInstance {
   return {
     id: randomUUID(),
+    startedAt: now,
     players: [createParticipant(player, 0, now)],
     monster: {
       id: 'crocodile', kind: 'crocodile', name: 'Mecha Crocodile',
@@ -102,6 +104,7 @@ export function removeArenaPlayer(arena: ArenaInstance, playerId: string): void 
 }
 
 export function restartCrocodileArena(arena: ArenaInstance, now: number): void {
+  arena.startedAt = now;
   arena.monster.x = 7;
   arena.monster.z = 0;
   arena.monster.facing = -Math.PI / 2;
@@ -139,6 +142,7 @@ export function arenaSnapshot(arena: ArenaInstance, serverTime: number): ArenaSn
     instanceId: arena.id,
     state: arena.state,
     serverTime,
+    startedAt: arena.startedAt,
     players: arena.players.map(({ playerId, name, color, x, z, facing, hp, maxHp, stones, hasPet }) => ({ playerId, name, color, x, z, facing, hp, maxHp, stones, hasPet })),
     monster: { id, kind, name, x, z, facing, hp, maxHp, state, attack: attack ? { ...attack } : null },
     stonePile: { x: ARENA_CONFIG.stonePile.x, z: ARENA_CONFIG.stonePile.z, count: arena.stonePileCount, maxCount: ARENA_CONFIG.stonePile.maxCount, nextRefillAt: arena.nextStoneRefillAt },
