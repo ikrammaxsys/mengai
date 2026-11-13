@@ -109,8 +109,14 @@ export interface Player {
   crocodilesSlain: number;
   hasPet: boolean;
   arenaInstanceId: string | null;
+  islandOwnerName: string | null;
+  islandReturnPosition: { x: number; z: number } | null;
   inPhotobooth: boolean;
   seatedSeatId: string | null;
+  ferrisSeatIndex: number | null;
+  ferrisSlot: number | null;
+  ferrisRideStartedAt: number | null;
+  ferrisExitQueued: boolean;
   speaking: boolean;
   lastStoneThrowAt: number;
   pityMisses: number;
@@ -136,6 +142,8 @@ export interface Room {
   jukebox: JukeboxRoomState;
   theater: TheaterRoomState;
   seatOccupancy: Map<string, string>;
+  ferrisWheelStartedAt: number;
+  islandVisitorSettings: Map<string, unknown>;
 }
 
 export interface TheaterRoomState {
@@ -185,6 +193,10 @@ export interface PlayerSnapshot {
   crocodilesSlain: number;
   hasPet: boolean;
   speaking?: boolean;
+  ferrisSeatIndex?: number | null;
+  ferrisSlot?: number | null;
+  ferrisRideStartedAt?: number | null;
+  ferrisExitQueued?: boolean;
 }
 
 export type { ChickenSnapshot };
