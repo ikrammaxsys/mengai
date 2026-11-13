@@ -231,6 +231,7 @@ type Handlers = {
   chickenHit: (message: { chickenId: string; playerId: string; newScore: number; startTime: number }) => void;
   chickenState: (chickens: ChickenSnapshot[], serverTime: number) => void;
   chat: (message: { playerId: string; name: string; text: string; at: number; catch?: CatchEntry }) => void;
+  playerEmoji: (playerId: string, emoji: string) => void;
   inventorySync: (items: InventoryItem[], totalCaught: number, personalBest: InventoryItem | null, collection: InventoryItem[]) => void;
   inventoryAdd: (item: InventoryItem) => void;
   inventoryRemove: (catchId: string) => void;
@@ -334,6 +335,7 @@ export class Network {
         case 'theater:error': this.handlers.theaterError(String(message.message ?? 'The theater action failed.')); break;
         case 'seat:state': this.handlers.seatState((message.occupancy as Record<string, string>) ?? {}); break;
         case 'speaking': this.handlers.speaking(String(message.playerId), Boolean(message.speaking)); break;
+        case 'player_emoji': this.handlers.playerEmoji(String(message.playerId), String(message.emoji)); break;
         case 'correction': this.handlers.correction(message as unknown as Parameters<Handlers['correction']>[0]); break;
         case 'error': this.handlers.error(String(message.message)); break;
         case 'notice': this.handlers.notice(String(message.message)); break;
@@ -449,6 +451,7 @@ export class Network {
   endReel(success: boolean): void { this.send({ type: 'reel_end', success }); }
   cancelFishing(): void { this.send({ type: 'fish_cancel' }); }
   sendChat(text: string): void { this.send({ type: 'chat', text }); }
+  sendPlayerEmoji(emoji: string): void { this.send({ type: 'player_emoji', emoji }); }
   enqueueJukebox(videoId: string): boolean {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
     this.send({ type: 'jukebox:enqueue', videoId });

@@ -16,6 +16,7 @@ import { VoiceClient, type VoiceConnectionStatus } from './voice';
 import { MusicManager, type MusicTrackId } from './music';
 import { Jukebox } from './jukebox';
 import { Theater } from './theater';
+import { PLAYER_EMOJIS } from '../../shared/emojiReactions';
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const appRoot = document.querySelector<HTMLElement>('#app')!;
@@ -75,6 +76,9 @@ const chatMessages = document.querySelector<HTMLElement>('#chat-messages')!;
 const chatForm = document.querySelector<HTMLFormElement>('#chat-form')!;
 const chatInput = document.querySelector<HTMLInputElement>('#chat-input')!;
 const chatUnread = document.querySelector<HTMLElement>('#chat-unread')!;
+const emojiDock = document.querySelector<HTMLElement>('.emoji-dock')!;
+const emojiToggle = document.querySelector<HTMLButtonElement>('#emoji-toggle')!;
+const emojiPicker = document.querySelector<HTMLElement>('#emoji-picker')!;
 const leaderboardUi = document.querySelector<HTMLElement>('#leaderboard-ui')!;
 const leaderboardToggle = document.querySelector<HTMLButtonElement>('#leaderboard-toggle')!;
 const leaderboardPanel = document.querySelector<HTMLElement>('#leaderboard-panel')!;
@@ -139,6 +143,15 @@ const netDebugEnabled = import.meta.env.DEV && new URLSearchParams(location.sear
 if (netDebugEnabled) netDebug.classList.remove('hidden');
 
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
+for (const emoji of PLAYER_EMOJIS) {
+  const button = document.createElement('button');
+  button.className = 'emoji-reaction';
+  button.type = 'button';
+  button.dataset.emoji = emoji;
+  button.textContent = emoji;
+  button.setAttribute('aria-label', `Send ${emoji} reaction`);
+  emojiPicker.appendChild(button);
+}
 const music = new MusicManager();
 const speakingPlayers = new Set<string>();
 let keys = new Set<string>();
@@ -1043,6 +1056,11 @@ function setChatOpen(open: boolean): void {
   } else if (chatPanel.contains(document.activeElement)) chatInput.blur();
 }
 
+function setEmojiPickerOpen(open: boolean): void {
+  emojiPicker.classList.toggle('hidden', !open);
+  emojiToggle.setAttribute('aria-expanded', String(open));
+}
+
 function cacheCatch(entry: CatchEntry): void {
   catchCache.delete(entry.id);
   catchCache.set(entry.id, entry);
@@ -1543,6 +1561,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       chatUnread.classList.add('hidden');
       chatUi.classList.remove('hidden');
       setChatOpen(false);
+      setEmojiPickerOpen(false);
       leaderboardUi.classList.remove('hidden');
       backpackUi.classList.remove('hidden');
       setOpenSidePanel(null);
@@ -1666,6 +1685,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       scene.showChatBubble(message.playerId, message.text);
       appendChat(message);
     },
+    playerEmoji: (playerId, emoji) => scene.showEmojiPopup(playerId, emoji),
     bigCatch: enqueueBigCatch,
     stonePicked: (stoneId, playerId) => scene.pickStone(stoneId, playerId),
     stoneThrown: (message) => scene.throwStone(message),
@@ -1716,6 +1736,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       seatPrompt.classList.add('hidden');
       chatUi.classList.add('hidden');
       setChatOpen(false);
+      setEmojiPickerOpen(false);
       leaderboardUi.classList.add('hidden');
       backpackUi.classList.add('hidden');
       setOpenSidePanel(null);
@@ -1785,10 +1806,18 @@ document.addEventListener('click', (event) => {
     if (document.activeElement instanceof HTMLElement && weatherControl.contains(document.activeElement)) document.activeElement.blur();
   }
   if (!musicControl.contains(target)) setMusicPanel(false);
+  if (!emojiDock.contains(target) && !emojiPicker.classList.contains('hidden')) setEmojiPickerOpen(false);
 });
 
 chatToggle.addEventListener('click', () => setChatOpen(chatPanel.classList.contains('hidden')));
 chatClose.addEventListener('click', () => setChatOpen(false));
+emojiToggle.addEventListener('click', () => setEmojiPickerOpen(emojiPicker.classList.contains('hidden')));
+emojiPicker.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-emoji]');
+  const emoji = button?.dataset.emoji;
+  if (!joined || !emoji) return;
+  network.sendPlayerEmoji(emoji);
+});
 whatsNewClose.addEventListener('click', closeWhatsNew);
 whatsNewDismiss.addEventListener('click', closeWhatsNew);
 whatsNew.querySelector<HTMLElement>('.whats-new-backdrop')!.addEventListener('click', closeWhatsNew);

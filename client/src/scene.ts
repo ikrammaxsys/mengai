@@ -18,6 +18,7 @@ type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSe
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
 type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null; hasPet: boolean };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
+type EmojiPopup = { element: HTMLDivElement; expiresAt: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
 type BonkFx = { element: HTMLDivElement; startedAt: number };
 type JukeboxParticle = { object: THREE.Sprite | THREE.Mesh; material: THREE.SpriteMaterial | THREE.MeshStandardMaterial; startedAt: number; duration: number; x: number; y: number; z: number; drift: number; wobble: number; phase: number; spin: number; sparkle: boolean };
@@ -33,6 +34,7 @@ export class GameScene {
   private readonly avatarDance = new Map<string, DanceVisual>();
   private readonly crocodileSlainCounts = new Map<string, number>();
   private readonly chatBubbles = new Map<string, ChatBubble[]>();
+  private readonly emojiPopups = new Map<string, EmojiPopup>();
   private readonly eatBubbles = new Map<string, ChatBubble>();
   private readonly stones = new Map<string, StoneVisual>();
   private readonly theaterSeats = new Map<string, { group: THREE.Group; cushionMaterial: THREE.MeshStandardMaterial; marker: THREE.Mesh; occupiedBy: string | null }>();
@@ -1378,6 +1380,8 @@ export class GameScene {
     this.removePet(id);
     for (const bubble of this.chatBubbles.get(id) ?? []) bubble.element.remove();
     this.chatBubbles.delete(id);
+    this.emojiPopups.get(id)?.element.remove();
+    this.emojiPopups.delete(id);
     this.eatBubbles.get(id)?.element.remove();
     this.eatBubbles.delete(id);
     this.bonks.get(id)?.element.remove();
@@ -1508,6 +1512,16 @@ export class GameScene {
     bubbles.push({ element, expiresAt: now + duration, fadeMs: 650 });
     while (bubbles.length > 3) bubbles.shift()!.element.remove();
     this.chatBubbles.set(id, bubbles);
+  }
+
+  showEmojiPopup(id: string, emoji: string): void {
+    if (!this.avatars.has(id)) return;
+    this.emojiPopups.get(id)?.element.remove();
+    const element = document.createElement('div');
+    element.className = 'player-emoji-popup';
+    element.textContent = emoji;
+    this.labels.appendChild(element);
+    this.emojiPopups.set(id, { element, expiresAt: performance.now() + 1500 });
   }
 
   showEatBubble(id: string, speciesName: string): void {
@@ -1670,6 +1684,19 @@ export class GameScene {
           bubbleAnchor -= bubble.element.offsetHeight + 6;
         }
         if (!bubbles.length) this.chatBubbles.delete(id);
+      }
+      const emojiPopup = this.emojiPopups.get(id);
+      if (emojiPopup) {
+        if (emojiPopup.expiresAt <= performance.now()) {
+          emojiPopup.element.remove();
+          this.emojiPopups.delete(id);
+        } else {
+          const firstPersonLocal = avatar.local && this.firstPersonView;
+          emojiPopup.element.style.left = `${firstPersonLocal ? innerWidth / 2 : labelLeft}px`;
+          emojiPopup.element.style.top = `${firstPersonLocal ? innerHeight * 0.38 : labelTop - avatar.label.offsetHeight - 38}px`;
+          emojiPopup.element.style.zIndex = String(Math.round((1 - this.ray.z) * 1000) + 2);
+          emojiPopup.element.style.display = firstPersonLocal ? 'block' : avatar.label.style.display;
+        }
       }
       const eatBubble = this.eatBubbles.get(id);
       if (eatBubble) {

@@ -41,6 +41,15 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .hud { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 #name-labels { position: absolute; inset: 0; z-index: 12; pointer-events: none; }
 .chat-ui { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+.emoji-dock { pointer-events: auto; position: absolute; right: 180px; bottom: 22px; }
+.emoji-toggle { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; padding: 0; border: 1px solid rgba(255,255,255,.9); border-radius: 13px; background: #fff; box-shadow: 0 5px 20px rgba(47,86,81,.18); font-size: 21px; }
+.emoji-toggle:hover { background: #f3fbf7; }
+.emoji-picker { position: absolute; right: 0; bottom: calc(100% + 10px); display: grid; grid-template-columns: repeat(3, 42px); gap: 5px; padding: 8px; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; background: rgba(255,255,255,.97); box-shadow: 0 8px 26px rgba(34,76,68,.22); }
+.emoji-reaction { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; padding: 0; border-radius: 10px; background: #f5faf7; box-shadow: none; font-size: 21px; }
+.emoji-reaction:hover, .emoji-reaction:focus-visible { background: #e7f4ed; transform: scale(1.08); }
+.player-emoji-popup { position: absolute; transform: translate(-50%, -100%); pointer-events: none; font-size: 36px; line-height: 1; filter: drop-shadow(0 3px 5px rgba(30,55,47,.28)); animation: player-emoji-float 1.5s ease-out both; }
+@keyframes player-emoji-float { 0% { opacity: 0; transform: translate(-50%, -75%) scale(.55); } 14% { opacity: 1; transform: translate(-50%, -100%) scale(1.2); } 25% { transform: translate(-50%, -100%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -145%) scale(.92); } }
+@media (prefers-reduced-motion: reduce) { .player-emoji-popup { animation: none; } }
 .leaderboard-ui, .backpack-ui { position: absolute; inset: 0; z-index: 19; pointer-events: none; }
 .hud-card { position: absolute; top: 22px; background: rgba(255,255,255,.91); border: 1px solid rgba(255,255,255,.8); border-radius: 13px; box-shadow: 0 5px 20px rgba(47,86,81,.08); backdrop-filter: blur(8px); }
 .room-card { left: 22px; padding: 10px 15px; }
@@ -577,6 +586,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
   .dock-button { width: 42px; height: 42px; }
   .toast { top: 188px; max-width: calc(100vw - 28px); white-space: normal; text-align: center; }
   .chat-panel { top: 144px; right: 12px; bottom: 64px; left: auto; width: min(320px, calc(100vw - 24px)); height: auto; min-height: 0; }
+  .emoji-dock { right: 132px; bottom: 12px; }
   .leaderboard-panel, .backpack-panel { right: 50%; left: auto; top: 50%; width: min(430px, calc(100vw - 24px)); max-height: min(78vh, 680px); transform: translate(50%, 10px); }
   .leaderboard-panel:not(.hidden), .backpack-panel:not(.hidden) { transform: translate(50%, 0); }
   #app.has-big-catch .leaderboard-panel, #app.has-big-catch .backpack-panel { top: 50%; max-height: min(76vh, 620px); }

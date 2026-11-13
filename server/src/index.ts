@@ -24,6 +24,7 @@ import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shar
 import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
 import { initializeFileLogging } from './logger.js';
+import { isPlayerEmoji } from '../../shared/emojiReactions.js';
 
 await initializeFileLogging();
 
@@ -1801,6 +1802,10 @@ wss.on('connection', (socket) => {
         return;
       }
       broadcast(room, { type: 'chat', message: { playerId: player.id, name: player.name, text, at: Date.now() } });
+    }
+
+    if (message.type === 'player_emoji' && isPlayerEmoji(message.emoji)) {
+      broadcast(room, { type: 'player_emoji', playerId: player.id, emoji: message.emoji });
     }
   });
 
