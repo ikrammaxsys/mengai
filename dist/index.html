@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#c9e8e5" />
     <title>Mengai — a little fishing getaway</title>
-    <script type="module" crossorigin src="/assets/index-vZliVHbz.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DW69V8Mj.css">
+    <script type="module" crossorigin src="/assets/index-DIjnQCrX.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Be7ValvQ.css">
   </head>
   <body>
     <main id="app">
@@ -113,13 +113,14 @@
         <div class="arena-hud">
           <div id="arena-party-health" class="arena-party-health" aria-label="Party health"></div>
           <div class="arena-boss-health"><strong id="arena-boss-name">Crocodile</strong><div class="arena-health-track"><div id="arena-boss-hp" class="arena-health-fill boss-health-fill"></div></div><span id="arena-boss-hp-label">500 / 500</span></div>
+          <div id="arena-timer" class="arena-timer" role="timer" aria-label="Fight time">Time 00:00</div>
           <div class="arena-stone-count">🪨 <span id="arena-stones-held">0</span> / 5 <span class="arena-pile-count">Pile <span id="arena-pile-count">8</span></span></div>
           <p class="arena-controls">WASD move · E pick up / throw · Reach the exit portal to leave</p>
           <div id="arena-exit-prompt" class="arena-exit-prompt hidden">Enter the glowing portal and press <kbd>Enter</kbd> to leave</div>
         </div>
         <div id="arena-defeated" class="arena-result hidden" role="alert"><strong>Defeated</strong><span>Returning to the island…</span></div>
         <div id="arena-victory" class="arena-result arena-victory hidden" role="dialog" aria-modal="true" aria-labelledby="arena-victory-title">
-          <span class="arena-result-emoji" aria-hidden="true">🐊</span><strong id="arena-victory-title">Crocodile Slain!</strong><span>You earned a Crocodile Slain.</span>
+          <span class="arena-result-emoji" aria-hidden="true">🐊</span><strong id="arena-victory-title">Crocodile Slain!</strong><span>You earned a Crocodile Slain.</span><span id="arena-victory-time" class="arena-victory-time">Fight time: 00:00</span>
           <div><button id="arena-leave-button" type="button">Leave</button><button id="arena-retry-button" type="button">Fight again</button></div>
         </div>
       </section>

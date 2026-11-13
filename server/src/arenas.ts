@@ -30,6 +30,7 @@ interface ArenaProjectile extends ArenaProjectileSnapshot {
 export interface ArenaInstance {
   id: string;
   startedAt: number;
+  isSolo: boolean;
   players: ArenaParticipant[];
   monster: Crocodile;
   state: ArenaSnapshot['state'];
@@ -53,6 +54,7 @@ export function createCrocodileArena(player: Player, now: number): ArenaInstance
   return {
     id: randomUUID(),
     startedAt: now,
+    isSolo: true,
     players: [createParticipant(player, 0, now)],
     monster: {
       id: 'crocodile', kind: 'crocodile', name: 'Mecha Crocodile',
@@ -93,6 +95,7 @@ function createParticipant(player: Player, index: number, now: number): ArenaPar
 
 export function addArenaPlayer(arena: ArenaInstance, player: Player, now: number): void {
   if (arena.players.some((entry) => entry.playerId === player.id)) return;
+  arena.isSolo = false;
   arena.players.push(createParticipant(player, arena.players.length, now));
 }
 

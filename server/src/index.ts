@@ -948,7 +948,8 @@ function publishArenaEvents(room: Room, arena: ArenaInstance, events: ArenaEvent
         });
       }
       const killer = room.players.get(event.playerId);
-      if (killer && killer.disconnectedAt === null && (!room.fastestSlayer || event.timeMs < room.fastestSlayer.timeMs)) {
+      if (arena.isSolo && arena.players.length === 1 && arena.players[0].playerId === event.playerId &&
+          killer && killer.disconnectedAt === null && (!room.fastestSlayer || event.timeMs < room.fastestSlayer.timeMs)) {
         const previousHolder = room.fastestSlayer ? room.players.get(room.fastestSlayer.playerId) : undefined;
         if (previousHolder) previousHolder.hasPet = false;
         const record: FastestSlayerRecord = { playerId: killer.id, name: killer.name, timeMs: event.timeMs };

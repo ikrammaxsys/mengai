@@ -1647,6 +1647,7 @@ export class GameScene {
       // Rebuild label contents only when the player's visible state changes, not on every animation frame.
       const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
       const leaderTitle = isLeader ? '<span class="leader-title"><span aria-hidden="true">👑</span><strong>Kapla Mengai</strong></span>' : '';
+      const fastestSlayerTitle = avatar.hasPet ? '<span class="fastest-slayer-title" title="Fastest crocodile slayer"><span aria-hidden="true">🐊</span><strong>Penjinak boya</strong></span>' : '';
       const crocodileSlayerTitle = avatar.crocodilesSlain > 0 ? `<span class="crocodile-slayer-title" title="Crocodile slayer"><span aria-hidden="true">🐊</span><strong>Penghantam Boya x${avatar.crocodilesSlain}</strong></span>` : '';
       const fish = avatar.holdingFish;
       const fishSpecies = fish ? FISH_CONFIG.species.find((entry) => entry.id === fish.species) : undefined;
@@ -1656,7 +1657,7 @@ export class GameScene {
       const photoMark = avatar.inPhotobooth ? '<span class="photo-camera-mark" aria-label="In photobooth">📸</span>' : '';
       const voiceMark = '<span class="voice-speaking-mark" title="Speaking" aria-label="Speaking">🎙</span>';
       const petMark = avatar.hasPet ? '<span class="pet-name-icon" title="Baby croc companion" aria-label="Baby croc companion">🐊</span>' : '';
-      const labelMarkup = `${leaderTitle}${crocodileSlayerTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${petMark}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
+      const labelMarkup = `${leaderTitle}${fastestSlayerTitle}${crocodileSlayerTitle}<span class="name-label-row"><span class="player-name-box"><span class="player-name">${this.escape(avatar.label.dataset.name ?? '')}${petMark}${avatar.fishing === 'bite' ? '<span class="fishing-mark">!</span>' : avatar.fishing === 'waiting' ? '<span class="fishing-mark">🎣</span>' : ''}${photoMark}</span></span>${voiceMark}</span>${fishChip}`;
       if (avatar.renderedLabelMarkup !== labelMarkup) {
         avatar.label.innerHTML = labelMarkup;
         avatar.renderedLabelMarkup = labelMarkup;

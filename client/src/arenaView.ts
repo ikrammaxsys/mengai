@@ -36,8 +36,6 @@ export class ArenaView {
   private readonly bossName: HTMLElement;
   private readonly stonesHeld: HTMLElement;
   private readonly pileCount: HTMLElement;
-  private readonly timer: HTMLElement;
-  private readonly victoryTime: HTMLElement;
   private readonly exitPrompt: HTMLElement;
   private readonly defeatedPanel: HTMLElement;
   private readonly victoryPanel: HTMLElement;
@@ -73,8 +71,6 @@ export class ArenaView {
     this.bossName = root.querySelector<HTMLElement>('#arena-boss-name')!;
     this.stonesHeld = root.querySelector<HTMLElement>('#arena-stones-held')!;
     this.pileCount = root.querySelector<HTMLElement>('#arena-pile-count')!;
-    this.timer = root.querySelector<HTMLElement>('#arena-timer')!;
-    this.victoryTime = root.querySelector<HTMLElement>('#arena-victory-time')!;
     this.exitPrompt = root.querySelector<HTMLElement>('#arena-exit-prompt')!;
     this.defeatedPanel = root.querySelector<HTMLElement>('#arena-defeated')!;
     this.victoryPanel = root.querySelector<HTMLElement>('#arena-victory')!;
@@ -212,7 +208,6 @@ export class ArenaView {
 
   render(serverNow: number, deltaSeconds: number): void {
     if (!this.snapshot) return;
-    this.updateTimer(serverNow);
     const viewTime = serverNow - 120;
     const monsterPose = this.interpolateMonster(viewTime);
     const localParticipant = this.snapshot.players.find((entry) => entry.playerId === this.localPlayerId);
@@ -363,19 +358,8 @@ export class ArenaView {
     this.bossHp.style.width = `${Math.max(0, Math.min(100, snapshot.monster.hp / snapshot.monster.maxHp * 100))}%`;
     this.bossHpLabel.textContent = `${snapshot.monster.hp} / ${snapshot.monster.maxHp}`;
     this.pileCount.textContent = String(snapshot.stonePile.count);
-    this.updateTimer(snapshot.serverTime);
     if (snapshot.state === 'victory') this.deathStartedAt ??= performance.now();
     else if (snapshot.state === 'defeat') this.playerDied();
-  }
-
-  private updateTimer(serverNow: number): void {
-    if (!this.snapshot) return;
-    const finishedAt = this.snapshot.state === 'active' ? serverNow : this.snapshot.serverTime;
-    const elapsedSeconds = Math.max(0, Math.floor((finishedAt - this.snapshot.startedAt) / 1000));
-    const time = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
-    this.timer.textContent = `Time ${time}`;
-    this.timer.classList.toggle('hidden', this.snapshot.state !== 'active');
-    this.victoryTime.textContent = `Fight time: ${time}`;
   }
 
   private updatePartyHealth(players: ArenaSnapshot['players']): void {

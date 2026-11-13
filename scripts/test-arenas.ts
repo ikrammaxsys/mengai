@@ -12,8 +12,10 @@ const firstPlayer = player('player-one', 'Pond One', '#458a72');
 const secondPlayer = player('player-two', 'Pond Two', '#5278bd');
 const arena = createCrocodileArena(firstPlayer, now);
 const instanceId = arena.id;
+assert.equal(arena.isSolo, true, 'a one-player arena starts as a solo run');
 
 addArenaPlayer(arena, secondPlayer, now + 100);
+assert.equal(arena.isSolo, false, 'adding a teammate makes the run ineligible for solo records');
 assert.equal(arena.players.length, 2, 'a second player can join the active arena');
 assert.notDeepEqual(
   { x: arena.players[0].x, z: arena.players[0].z },
@@ -29,6 +31,7 @@ arena.state = 'victory';
 restartCrocodileArena(arena, now + 200);
 assert.equal(arena.id, instanceId, 'restarting keeps the shared arena instance');
 assert.equal(arena.players.length, 2, 'restarting preserves every party member');
+assert.equal(arena.isSolo, false, 'restarting a party arena does not make it eligible for solo records');
 assert.ok(arena.players.every(({ hp, maxHp, stones }) => hp === maxHp && stones === 0),
   'restarting restores every party member and resets their stones');
 assert.equal(arena.monster.hp, ARENA_CONFIG.monsterMaxHp, 'restarting restores the shared crocodile health');

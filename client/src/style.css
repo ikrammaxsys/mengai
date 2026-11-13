@@ -153,8 +153,7 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .arena-boss-health > strong { color: #fff0d4; font: 800 15px 'Trebuchet MS', 'Segoe UI', sans-serif; letter-spacing: .12em; text-transform: uppercase; }
 .arena-boss-health > span { color: #f5e9d1; font-size: 9px; }
 .arena-boss-health .arena-health-track { height: 14px; border-color: rgba(255,241,220,.72); }
-.arena-timer { position: absolute; top: 22px; right: 22px; padding: 9px 13px; border: 1px solid rgba(255,231,173,.85); border-radius: 10px; background: rgba(34,51,43,.92); box-shadow: 0 4px 16px rgba(23,36,29,.28); color: #ffe598; font: 800 15px 'Trebuchet MS', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
-.arena-stone-count { position: absolute; top: 70px; right: 22px; padding: 9px 12px; border: 1px solid rgba(255,255,255,.6); border-radius: 10px; background: rgba(34,51,43,.84); color: #f3eddb; font-size: 11px; font-weight: 800; }
+.arena-stone-count { position: absolute; top: 22px; right: 22px; padding: 9px 12px; border: 1px solid rgba(255,255,255,.6); border-radius: 10px; background: rgba(34,51,43,.84); color: #f3eddb; font-size: 11px; font-weight: 800; }
 .arena-pile-count { margin-left: 8px; color: #bbc9bb; font-size: 9px; font-weight: 600; }
 .arena-controls { position: absolute; bottom: 18px; left: 50%; margin: 0; padding: 8px 12px; border-radius: 9px; background: rgba(34,51,43,.78); color: #e9efdf; font-size: 10px; transform: translateX(-50%); white-space: nowrap; }
 .arena-exit-prompt { position: absolute; bottom: 64px; left: 50%; padding: 8px 12px; border: 1px solid rgba(180,255,206,.55); border-radius: 9px; background: rgba(35,96,69,.9); font-size: 10px; transform: translateX(-50%); white-space: nowrap; }
@@ -163,7 +162,6 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .arena-result > strong { font: 900 34px 'Trebuchet MS', 'Segoe UI', sans-serif; }
 .arena-result > span { color: #d4dfce; font-size: 13px; }
 .arena-victory > strong { color: #ffe598; }
-.arena-victory-time { font-variant-numeric: tabular-nums; font-weight: 800; }
 .arena-result-emoji { font-size: 42px !important; }
 .arena-result > div { display: flex; gap: 10px; margin-top: 10px; }
 .arena-result button { min-width: 112px; height: 40px; text-align: center; }
@@ -176,6 +174,9 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .player-name-box { display: inline-flex; align-items: center; justify-content: center; padding: 3px 8px; border: 1px solid rgba(255,255,255,.82); border-radius: 99px; background: rgba(239,242,236,.96); box-shadow: 0 2px 7px rgba(29,59,54,.16); text-align: center; }
 .player-name { text-align: center; }
 .leader-title { display: flex; align-items: center; align-self: center; justify-content: center; gap: 4px; width: max-content; margin: 0 auto 3px; padding: 3px 7px; border: 1px solid rgba(207,161,61,.42); border-radius: 99px; background: linear-gradient(110deg, #fff8df, #fffdf4); color: #9c7424; box-shadow: 0 2px 7px rgba(133,100,34,.16); font-size: 9px; text-align: center; }
+.fastest-slayer-title { display: flex; align-items: center; align-self: center; justify-content: center; gap: 4px; width: max-content; margin: 0 auto 3px; padding: 3px 7px; border: 1px solid rgba(84,127,91,.34); border-radius: 99px; background: linear-gradient(110deg, #e8f2dc, #f6f5df); color: #42634a; box-shadow: 0 2px 7px rgba(38,75,49,.14); font-size: 9px; text-align: center; }
+.fastest-slayer-title > span { font-size: 11px; line-height: 1; }
+.fastest-slayer-title strong { font-size: 9px; letter-spacing: .015em; }
 .crocodile-slayer-title { display: flex; align-items: center; align-self: center; justify-content: center; gap: 4px; width: max-content; margin: 0 auto 3px; padding: 3px 7px; border: 1px solid rgba(84,127,91,.34); border-radius: 99px; background: linear-gradient(110deg, #e8f2dc, #f6f5df); color: #42634a; box-shadow: 0 2px 7px rgba(38,75,49,.14); font-size: 9px; text-align: center; }
 .crocodile-slayer-title > span { font-size: 11px; line-height: 1; }
 .crocodile-slayer-title strong { font-size: 9px; letter-spacing: .015em; }
