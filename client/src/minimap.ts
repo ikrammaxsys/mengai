@@ -124,6 +124,11 @@ export class Minimap {
       context.fillRect(p.x - 1.4, p.y - 0.9, 2.8, 1.8);
     }
 
+    const bowling = point(WORLD_CONFIG.bowlingAlley.x, WORLD_CONFIG.bowlingAlley.z);
+    context.fillStyle = '#223b3c'; context.fillRect(bowling.x - 5, bowling.y - 3.5, 10, 7);
+    context.strokeStyle = '#70e8df'; context.lineWidth = 1.5; context.strokeRect(bowling.x - 5, bowling.y - 3.5, 10, 7);
+    context.beginPath(); context.arc(bowling.x, bowling.y, 1.8, 0, Math.PI * 2); context.fillStyle = '#f5f1e2'; context.fill();
+
     const campfire = point(WORLD_CONFIG.campfire.x, WORLD_CONFIG.campfire.z);
     context.beginPath(); context.arc(campfire.x, campfire.y, 12, 0, Math.PI * 2);
     context.fillStyle = 'rgba(232, 137, 74, .22)'; context.fill();

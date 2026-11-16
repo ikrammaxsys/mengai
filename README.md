@@ -78,6 +78,21 @@ World/audio tuning is in `shared/worldConfig.ts` (`jukebox` position, interactio
 - Your room, player count, and connection status are shown at the top of the screen.
 - Movement is predicted locally for immediate controls. Position snapshots are buffered and interpolated for other players, while the server validates movement and sends corrections for invalid transforms.
 
+### Bowling alley
+
+Walk to the glowing **Mengai Lanes** sign on the south-west side of the island (near `-24, -20`) and use the mode select:
+
+- **Play Solo** starts a five-row game immediately.
+- **Create / Join Party** opens a lobby. The leader invites room members, up to `BOWLING_CONFIG.maxPlayers` (default 4). Invitees accept from the invite card. The leader starts once at least two players are in the party.
+
+Each row gives every player up to two throws with the pins reset for each player's row. A strike ends the row early and adds `scoring.strikeBonus`; a spare adds `scoring.spareBonus`. Knock down a row with the ball and the remaining pins are swept for the second throw. Scores are shown per player (throw 1, throw 2, row total, running total); the active player is highlighted. A 20-second turn timer auto-throws a weak ball if a player does not act. Players can leave at any time and are returned to their pre-entry world position. Late joins are not allowed after the game starts; leavers keep their visible score but are skipped.
+
+Controls on desktop: **A/D** or the arrow keys aim, hold **Space** to charge, release to throw. Touch devices can drag horizontally to aim and hold/release the lane to charge and throw. **Escape** or **Leave lane** exits.
+
+Config lives in `shared/bowlingConfig.ts` (max players, turn time, scoring bonuses, ball mass/speed, lane size, settle/timeout timings). Scoring is in `shared/bowlingScore.ts` and is covered by `scripts/test-bowling.ts`.
+
+**Turn sync:** bowling uses the arena's server-authoritative model (Option B). The server owns the state machine (`LOBBY`/party lobby -> `ASSIGN_ORDER` -> `aiming` -> `rolling` -> `settling` -> `scoring` -> `turn_end` -> `game_over`), validates that only the active player can throw and that aim/power stay in range, runs a deterministic fixed-step ball/pin simulation, and broadcasts authoritative snapshots at 20 Hz. Clients render the streamed ball and pins and never compute or submit their own pin count, so every player sees the same result and the scoreboard only updates from the server. Best solo scores persist through the existing JSON game-data store. A server-side `awardBowlingReward` hook emits `first-strike` and `party-win` events; existing reward handling can subscribe there without adding a new reward type.
+
 ### Latency and jitter testing
 
 In development, add query parameters to simulate network conditions and show diagnostics:
@@ -100,6 +115,11 @@ client/
   src/campfire.ts   Campfire clearing, log benches, and flickering firelight
   src/fishModels.ts Procedural fish, catch preview, and leaderboard icons
   src/reelGame.ts   Local tension meter physics and catch progress
+  src/bowlingNet.ts Bowling protocol facade used by the client
+  src/bowlingView.ts Low-poly lane, pins, ball, bowler, cameras, and aim arrow
+  src/bowlingUi.ts  Bowling HUD, scoreboard, party panel, and results
+  src/bowlingMode.ts Bowling input, turn state, SFX hooks, and screen lifecycle
+  src/bowlingAudio.ts Procedural roll/crash/strike/spare/gutter sounds
 server/src/
   index.ts          WebSocket protocol, validation, fishing lifecycle and leaderboard
   fishing.ts        Server-only weighted catch rolls and log-normal sizes
@@ -107,8 +127,12 @@ server/src/
   inventory.ts      Replaceable inventory store interface and in-memory session adapter
   persistence.ts    JSON-backed catch history, inventories, and leaderboard hydration
   types.ts          Shared server-side state and map constants
+  bowling.ts        Authoritative bowling rules, turn state machine, and events
+  bowlingPhysics.ts Deterministic server-side ball and pin simulation
 shared/
   fishConfig.ts     Pond, fishing, odds, sync interpolation, rarity, and species tuning
+  bowlingConfig.ts  Bowling rules, lane/physics tuning, and snapshot contracts
+  bowlingScore.ts   Pure scoring and ranking functions
   worldConfig.ts    Shared island size, movement boundary, and scenery layout
   movement.ts       Shared local movement step and server validation rules
 ```
@@ -145,6 +169,12 @@ Messages are JSON objects with a `type` field. The server is authoritative for r
 | Client → server | `chat` | `{ text }`; trimmed and limited to 240 characters. |
 | Server → room | `chat` | `{ message: { playerId, name, text, at } }`; echoed to all players in that room, including the sender. |
 | Server → client | `error` / `notice` | Join errors or contextual gameplay feedback. |
+| Client → server | `bowlingStartSolo` / `bowlingPartyCreate` / `bowlingPartyInvite` / `bowlingPartyRespond` / `bowlingPartyStart` | Bowling mode select and invite-based party lobby. The server checks alley proximity, availability, party size, and leader permission. |
+| Server → client | `bowlingPartyState` / `bowlingPartyInvite` / `bowlingPartyClosed` | Bowling party membership and invitation updates. |
+| Client → server | `bowlingThrow` | `{ aim, power }`; accepted only from the active player during `aiming`, with both values bounded. |
+| Server → client | `bowlingEnter` / `bowlingState` | Full authoritative bowling snapshot: phase, turn order, active player, timer deadline, scorecards, ball, pins, callout, ranking, and best solo score. |
+| Server → client | `bowlingExit` | `{ reason, position }`; returns the player to their saved world position. |
+| Server → room | `bowlingReward` | `{ playerId, name, kind, label }` reward hook for a first strike or party win. |
 | Server → peers | `player_left` | `{ playerId }`; sent when a disconnected player’s 10-second resume grace expires. During grace, the player retains their ID and position. |
 
 All room broadcasts are scoped to that room. On startup, the server loads the JSON data file and rebuilds each room’s top-ten leaderboard and personal bests from the full catch history. Released fish remain in the catch history and leaderboard, while only unreleased fish are restored to the Backpack. A room with a leaderboard is retained after its last player leaves so its board can be restored when someone rejoins.

@@ -43,6 +43,13 @@ export class Rooms {
             existing.z = WORLD_CONFIG.crocodilePortal.z;
             existing.facing = 0;
           }
+          if (existing.bowlingInstanceId) {
+            existing.bowlingInstanceId = null;
+            const returnPosition = existing.bowlingReturnPosition ?? { x: WORLD_CONFIG.bowlingAlley.x, z: WORLD_CONFIG.bowlingAlley.z };
+            existing.x = returnPosition.x;
+            existing.z = returnPosition.z;
+            existing.bowlingReturnPosition = null;
+          }
         existing.lastMoveSeq = 0;
         existing.lastMoveAt = now;
         existing.velocityX = 0;
@@ -89,6 +96,9 @@ export class Rooms {
       crocodilesSlain: 0,
       hasPet: room.fastestSlayer?.name.toLocaleLowerCase() === normalized,
       arenaInstanceId: null,
+      bowlingInstanceId: null,
+      bowlingReturnPosition: null,
+      bowlingBestScore: 0,
       islandOwnerName: null,
       islandReturnPosition: null,
       inPhotobooth: false,
@@ -168,12 +178,12 @@ export class Rooms {
 
   list(): { room: string; playerCount: number }[] {
     return [...this.rooms.values()]
-      .map((room) => ({ room: room.id, playerCount: [...room.players.values()].filter((player) => player.arenaInstanceId === null).length }))
+      .map((room) => ({ room: room.id, playerCount: [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null).length }))
       .sort((a, b) => a.room.localeCompare(b.room, undefined, { numeric: true, sensitivity: 'base' }));
   }
 
   snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
-    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, hasPet, speaking }) => ({
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, hasPet, speaking }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
       seatedSeatId,
@@ -193,7 +203,7 @@ export class Rooms {
   islandSnapshot(room: Room, ownerName: string, includeHoldingFish = true): PlayerSnapshot[] {
     const ownerKey = ownerName.trim().toLocaleLowerCase();
     return [...room.players.values()]
-      .filter((player) => player.arenaInstanceId === null && player.islandOwnerName === ownerKey)
+      .filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === ownerKey)
       .map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet }) => ({
         id, name, color, x, z, facing, fishing, cast, carryingStoneId, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet,
         ...(includeHoldingFish ? { holdingFish } : {}),

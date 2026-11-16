@@ -11,6 +11,7 @@ export interface PlayerFishData {
   personalBest: CatchRecord | null;
   collection: CatchRecord[];
   crocodilesSlain: number;
+  bowlingBestScore: number;
 }
 
 export interface PersistentGameDataStore {
@@ -18,6 +19,7 @@ export interface PersistentGameDataStore {
   hydrateRoom(room: Room): void;
   playerFish(roomId: string, playerName: string): PlayerFishData;
   recordCrocodileKill(roomId: string, playerName: string): Promise<number>;
+  recordBowlingBestScore(roomId: string, playerName: string, score: number): Promise<number>;
   recordCatch(roomId: string, playerName: string, entry: CatchEntry, item: CatchRecord): Promise<void>;
   recordJunk(roomId: string, playerName: string, item: CatchRecord): Promise<void>;
   releaseFish(roomId: string, playerName: string, catchId: string): Promise<boolean>;
@@ -29,6 +31,7 @@ export interface PersistentGameDataStore {
 interface StoredPlayer {
   inventory: CatchRecord[];
   crocodilesSlain?: number;
+  bowlingBestScore?: number;
 }
 
 interface StoredRoom {
@@ -97,6 +100,7 @@ export class JsonGameDataStore implements PersistentGameDataStore {
       personalBest: bestCatch ? catchRecord(bestCatch) : null,
       collection: [...speciesBest.values()].map(catchRecord),
       crocodilesSlain: room?.players[playerKey]?.crocodilesSlain ?? 0,
+      bowlingBestScore: room?.players[playerKey]?.bowlingBestScore ?? 0,
     };
   }
 
@@ -107,6 +111,16 @@ export class JsonGameDataStore implements PersistentGameDataStore {
     player.crocodilesSlain = (player.crocodilesSlain ?? 0) + 1;
     const count = player.crocodilesSlain;
     return this.queueWrite().then(() => count);
+  }
+
+  recordBowlingBestScore(roomId: string, playerName: string, score: number): Promise<number> {
+    const room = this.room(roomId);
+    const playerKey = normalizePlayerName(playerName);
+    const player = room.players[playerKey] ??= { inventory: [] };
+    const safeScore = Math.max(0, Math.floor(Number.isFinite(score) ? score : 0));
+    player.bowlingBestScore = Math.max(player.bowlingBestScore ?? 0, safeScore);
+    const best = player.bowlingBestScore;
+    return this.queueWrite().then(() => best);
   }
 
   recordCatch(roomId: string, playerName: string, entry: CatchEntry, item: CatchRecord): Promise<void> {

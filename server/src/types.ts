@@ -109,6 +109,9 @@ export interface Player {
   crocodilesSlain: number;
   hasPet: boolean;
   arenaInstanceId: string | null;
+  bowlingInstanceId: string | null;
+  bowlingReturnPosition: { x: number; z: number } | null;
+  bowlingBestScore: number;
   islandOwnerName: string | null;
   islandReturnPosition: { x: number; z: number } | null;
   inPhotobooth: boolean;

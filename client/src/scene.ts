@@ -187,6 +187,7 @@ export class GameScene {
     const portalLight = new THREE.PointLight('#45e3dd', 1.8, 9, 2);
     portalLight.position.set(0, 1.6, 0); this.crocodilePortal.add(portalLight);
     this.scene.add(this.crocodilePortal);
+    this.buildBowlingAlley();
     const ground = new THREE.Mesh(new THREE.CylinderGeometry(WORLD_CONFIG.groundRadius - 1, WORLD_CONFIG.groundRadius, 1.2, 20), this.material('#7fbd83'));
     ground.position.y = -0.62; ground.receiveShadow = true; ground.castShadow = true; this.island.add(ground);
     const top = new THREE.Mesh(new THREE.CircleGeometry(WORLD_CONFIG.grassRadius, 20), this.material('#a7d38e'));
@@ -228,6 +229,63 @@ export class GameScene {
     this.buildJukebox();
     this.buildTheaterScreen();
     this.buildTheaterSeats();
+  }
+
+  private buildBowlingAlley(): void {
+    const alley = WORLD_CONFIG.bowlingAlley;
+    const group = new THREE.Group();
+    group.position.set(alley.x, 0, alley.z);
+    group.rotation.y = alley.rotationY;
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(2.65, 12), this.material('#5b6663'));
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.y = 0.03;
+    group.add(pad);
+    const laneMat = this.material('#c7a66c');
+    const lane = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.09, 2.6), laneMat);
+    lane.position.set(0, 0.11, 0.7);
+    lane.rotation.x = -0.03;
+    group.add(lane);
+    for (const side of [-1, 1]) {
+      const gutter = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 2.7), this.material('#454f50'));
+      gutter.position.set(side * 1.72, 0.09, 0.7);
+      group.add(gutter);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.35, 0.18), this.material('#6b5a42'));
+      post.position.set(side * 1.52, 1.17, -1.1);
+      group.add(post);
+    }
+    const board = new THREE.Mesh(
+      new THREE.BoxGeometry(3.35, 0.9, 0.15),
+      new THREE.MeshStandardMaterial({ color: '#223b3c', emissive: '#17636b', emissiveIntensity: 0.5, roughness: 0.6, flatShading: true }),
+    );
+    board.position.set(0, 2.2, -1.1);
+    group.add(board);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.08, 0.04), new THREE.MeshStandardMaterial({ color: '#ffe27a', emissive: '#a9821a', emissiveIntensity: 0.9, roughness: 0.5, flatShading: true }));
+    stripe.position.set(0, 1.84, -1.0);
+    group.add(stripe);
+    const pinMaterial = this.material('#f5f1e2');
+    for (let index = 0; index < 3; index++) {
+      const pin = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 0.48, 6), pinMaterial);
+      body.position.y = 0.24;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.105, 6, 5), pinMaterial);
+      head.position.y = 0.53;
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.022, 4, 8), this.material('#c64d43'));
+      band.rotation.x = Math.PI / 2;
+      band.position.y = 0.39;
+      pin.add(body, head, band);
+      pin.position.set(-0.82 + index * 0.82, 2.42, -1.02);
+      group.add(pin);
+    }
+    const ball = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.26, 1),
+      new THREE.MeshStandardMaterial({ color: '#3b4f95', roughness: 0.45, metalness: 0.05, flatShading: true }),
+    );
+    ball.position.set(0.62, 0.3, 0.55);
+    group.add(ball);
+    const light = new THREE.PointLight('#59e6ff', 1.4, 9, 2);
+    light.position.set(0, 2.1, -0.9);
+    group.add(light);
+    this.island.add(group);
   }
 
   private buildTheaterScreen(): void {

@@ -23,6 +23,8 @@ import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/the
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
 import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
+import { BOWLING_CONFIG, type BowlingSnapshot } from '../../shared/bowlingConfig.js';
+import { BowlingGame, type BowlingEvent } from './bowling.js';
 import { initializeFileLogging } from './logger.js';
 import { isPlayerEmoji } from '../../shared/emojiReactions.js';
 
@@ -111,6 +113,16 @@ interface ArenaParty {
 }
 const arenaParties = new Map<string, ArenaParty>();
 const playerArenaParties = new Map<string, string>();
+const bowlingGames = new Map<string, { roomId: string; game: BowlingGame }>();
+interface BowlingParty {
+  id: string;
+  roomId: string;
+  leaderId: string;
+  memberIds: string[];
+  invitedIds: Set<string>;
+}
+const bowlingParties = new Map<string, BowlingParty>();
+const playerBowlingParties = new Map<string, string>();
 const dragonCatchCooldowns = new Map<string, number>();
 const inventoryStore: InventoryStore = new InMemoryInventoryStore();
 const persistentData: PersistentGameDataStore = new JsonGameDataStore();
@@ -818,6 +830,7 @@ function roomSnapshot(room: Room, player: Player) {
     chickens: chickenSnapshots(room.chickens),
     crocodileScores: [...room.crocodileScores.values()].sort((a, b) => b.count - a.count),
     fastestSlayer: room.fastestSlayer,
+    bowlingBestScore: player.bowlingBestScore,
     resumeToken: player.resumeToken,
   };
 }
@@ -894,7 +907,7 @@ function dropPlayerStone(room: Room, player: Player): void {
 
 function startArenaParty(room: Room, party: ArenaParty, now: number): ArenaInstance | null {
   const members = party.memberIds.map((id) => room.players.get(id));
-  if (members.some((player) => !player || player.disconnectedAt !== null || player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle')) return null;
+  if (members.some((player) => !player || player.disconnectedAt !== null || player.arenaInstanceId || player.bowlingInstanceId || player.inPhotobooth || player.fishing !== 'idle')) return null;
   const leader = room.players.get(party.leaderId);
   if (!leader || Math.hypot(leader.x - WORLD_CONFIG.crocodilePortal.x, leader.z - WORLD_CONFIG.crocodilePortal.z) > WORLD_CONFIG.crocodilePortal.useRadius) return null;
   const readyMembers = members as Player[];
@@ -965,6 +978,143 @@ function publishArenaEvents(room: Room, arena: ArenaInstance, events: ArenaEvent
       }
       for (const participant of participants) send(participant.socket, event);
     } else for (const participant of participants) send(participant.socket, event);
+  }
+}
+
+function sendBowlingSnapshot(player: Player, game: BowlingGame, now = Date.now()): void {
+  send(player.socket, { type: 'bowlingState', game: game.snapshot(now) });
+}
+
+function broadcastBowlingSnapshot(room: Room, game: BowlingGame, now = Date.now()): void {
+  const snapshot: BowlingSnapshot = game.snapshot(now);
+  for (const participant of game.players) {
+    const player = room.players.get(participant.playerId);
+    if (player?.disconnectedAt === null) send(player.socket, { type: 'bowlingState', game: snapshot });
+  }
+}
+
+function bowlingPartyState(room: Room, party: BowlingParty): object {
+  const members = party.memberIds.map((id) => room.players.get(id)).filter((player): player is Player => Boolean(player));
+  const invited = [...party.invitedIds].map((id) => room.players.get(id)).filter((player): player is Player => Boolean(player));
+  return {
+    type: 'bowlingPartyState',
+    partyId: party.id,
+    leaderId: party.leaderId,
+    maxPlayers: BOWLING_CONFIG.maxPlayers,
+    members: members.map(({ id, name, color }) => ({ playerId: id, name, color })),
+    invited: invited.map(({ id, name }) => ({ playerId: id, name })),
+  };
+}
+
+function broadcastBowlingParty(room: Room, party: BowlingParty): void {
+  const message = bowlingPartyState(room, party);
+  for (const id of party.memberIds) {
+    const player = room.players.get(id);
+    if (player?.disconnectedAt === null) send(player.socket, message);
+  }
+}
+
+function closeBowlingParty(room: Room, party: BowlingParty, reason: string): void {
+  const recipients = new Set([...party.memberIds, ...party.invitedIds]);
+  for (const playerId of party.memberIds) playerBowlingParties.delete(playerId);
+  bowlingParties.delete(party.id);
+  for (const playerId of recipients) {
+    const player = room.players.get(playerId);
+    if (player?.disconnectedAt === null) send(player.socket, { type: 'bowlingPartyClosed', partyId: party.id, reason });
+  }
+}
+
+function removeBowlingPartyMember(room: Room, party: BowlingParty, playerId: string): void {
+  party.memberIds = party.memberIds.filter((id) => id !== playerId);
+  playerBowlingParties.delete(playerId);
+  if (party.memberIds.length === 0) {
+    closeBowlingParty(room, party, 'empty');
+    return;
+  }
+  if (party.leaderId === playerId) party.leaderId = party.memberIds[0];
+  broadcastBowlingParty(room, party);
+}
+
+function clearBowlingInvites(room: Room, playerId: string): void {
+  for (const party of bowlingParties.values()) {
+    if (!party.invitedIds.delete(playerId)) continue;
+    broadcastBowlingParty(room, party);
+  }
+}
+
+function awardBowlingReward(room: Room, playerId: string, kind: 'first-strike' | 'party-win'): void {
+  const player = room.players.get(playerId);
+  if (!player) return;
+  const label = kind === 'first-strike' ? 'First Strike' : 'Bowling Champion';
+  broadcast(room, { type: 'bowlingReward', playerId, name: player.name, kind, label });
+  broadcast(room, { type: 'room_announcement', message: `${player.name} earned ${label}!` });
+}
+
+function startBowlingGame(room: Room, members: Player[], now: number, isSolo: boolean): BowlingGame | null {
+  if (!members.length || members.length > BOWLING_CONFIG.maxPlayers) return null;
+  if (members.some((player) => player.disconnectedAt !== null || player.arenaInstanceId || player.bowlingInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.seatedSeatId || player.ferrisSeatIndex !== null || room.theater.currentPresenterId === player.id)) return null;
+  const game = new BowlingGame(randomUUID(), members, now, isSolo, isSolo ? members[0].bowlingBestScore : 0);
+  bowlingGames.set(game.id, { roomId: room.id, game });
+  for (const member of members) {
+    dropPlayerStone(room, member);
+    if (!member.bowlingReturnPosition) member.bowlingReturnPosition = { x: member.x, z: member.z };
+    member.bowlingInstanceId = game.id;
+    member.moving = false;
+    member.velocityX = 0;
+    member.velocityZ = 0;
+    broadcast(room, { type: 'player_left', playerId: member.id });
+    send(member.socket, { type: 'bowlingEnter', game: game.snapshot(now) });
+  }
+  return game;
+}
+
+function leaveBowling(room: Room, player: Player, now: number, reason: string): void {
+  const reference = player.bowlingInstanceId ? bowlingGames.get(player.bowlingInstanceId) : undefined;
+  if (reference) {
+    reference.game.removePlayer(player.id, now);
+    if (reference.game.players.every((participant) => participant.left)) bowlingGames.delete(reference.game.id);
+    else broadcastBowlingSnapshot(room, reference.game, now);
+  }
+  player.bowlingInstanceId = null;
+  const returnPosition = player.bowlingReturnPosition ?? { x: WORLD_CONFIG.bowlingAlley.x, z: WORLD_CONFIG.bowlingAlley.z };
+  player.x = returnPosition.x;
+  player.z = returnPosition.z;
+  player.bowlingReturnPosition = null;
+  player.facing = WORLD_CONFIG.bowlingAlley.rotationY;
+  player.moving = false;
+  player.velocityX = 0;
+  player.velocityZ = 0;
+  const returned = rooms.snapshot(room).find((entry) => entry.id === player.id);
+  if (returned) broadcast(room, { type: 'player_joined', player: returned, serverTime: now });
+  send(player.socket, { type: 'bowlingExit', reason, position: { x: player.x, z: player.z, facing: player.facing } });
+}
+
+function publishBowlingEvents(room: Room, game: BowlingGame, events: BowlingEvent[], now: number): void {
+  for (const event of events) {
+    if (event.type === 'firstStrike') {
+      awardBowlingReward(room, event.playerId, 'first-strike');
+    } else if (event.type === 'gameOver') {
+      if (event.isSolo && event.playerId) {
+        const player = room.players.get(event.playerId);
+        if (player) {
+          event.ranking.filter((entry) => entry.rank === 1).forEach((entry) => {
+            const participant = game.players.find((candidate) => candidate.playerId === entry.playerId);
+            if (!participant) return;
+            const best = Math.max(game.bestSoloScore, entry.total);
+            game.bestSoloScore = best;
+            if (best > player.bowlingBestScore) {
+              player.bowlingBestScore = best;
+              void persistentData.recordBowlingBestScore(room.id, player.name, best).catch((error: unknown) => {
+                console.error('[game-data] Failed to save bowling best score:', error);
+              });
+            }
+          });
+        }
+      } else {
+        for (const entry of event.ranking.filter((candidate) => candidate.rank === 1)) awardBowlingReward(room, entry.playerId, 'party-win');
+      }
+      broadcastBowlingSnapshot(room, game, now);
+    }
   }
 }
 
@@ -1110,6 +1260,7 @@ wss.on('connection', (socket) => {
       persistentData.hydrateRoom(room);
       const fishData = persistentData.playerFish(roomId, player.name);
       player.crocodilesSlain = fishData.crocodilesSlain;
+      player.bowlingBestScore = fishData.bowlingBestScore;
       room.crocodileScores.set(player.id, { playerId: player.id, playerName: player.name, count: player.crocodilesSlain });
       inventoryStore.restore(player.id, fishData);
       const inventory = inventoryStore.list(player.id);
@@ -1137,7 +1288,7 @@ wss.on('connection', (socket) => {
     if (message.type === 'seat:sit') {
       const seatId = typeof message.seatId === 'string' ? message.seatId : '';
       const seat = THEATER_SEATS.find((entry) => entry.id === seatId);
-      if (!seat || player.seatedSeatId || player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.carryingStoneId) return;
+      if (!seat || player.seatedSeatId || player.arenaInstanceId || player.bowlingInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.carryingStoneId) return;
       const distance = Math.hypot(player.x - seat.x, player.z - seat.z);
       if (distance > THEATER_SEAT_INTERACTION_RADIUS || room.seatOccupancy.has(seatId)) return;
       player.seatedSeatId = seatId;
@@ -1166,7 +1317,7 @@ wss.on('connection', (socket) => {
 
     if (message.type === 'theater:start') {
       const mode = message.mode;
-      if ((mode !== 'screen' && mode !== 'pdf') || player.arenaInstanceId || room.theater.mode !== 'none') {
+      if ((mode !== 'screen' && mode !== 'pdf') || player.arenaInstanceId || player.bowlingInstanceId || room.theater.mode !== 'none') {
         send(socket, { type: 'theater:error', message: room.theater.mode !== 'none' ? `${room.theater.presenterName ?? 'Someone'} is already presenting.` : 'You cannot start presenting right now.' });
         return;
       }
@@ -1242,7 +1393,7 @@ wss.on('connection', (socket) => {
     }
 
     if (message.type === 'arenaPartyCreate') {
-      if (player.arenaInstanceId || player.inPhotobooth || player.fishing !== 'idle') {
+      if (player.arenaInstanceId || player.bowlingInstanceId || player.inPhotobooth || player.fishing !== 'idle') {
         send(socket, { type: 'notice', message: 'Finish your current activity before forming an arena party.' });
         return;
       }
@@ -1274,7 +1425,7 @@ wss.on('connection', (socket) => {
         send(socket, { type: 'notice', message: 'Only the party leader can invite players.' });
         return;
       }
-      if (!target || targetId === player.id || target.disconnectedAt !== null || target.arenaInstanceId || playerArenaParties.has(targetId)) {
+      if (!target || targetId === player.id || target.disconnectedAt !== null || target.arenaInstanceId || target.bowlingInstanceId || playerArenaParties.has(targetId) || playerBowlingParties.has(targetId)) {
         send(socket, { type: 'notice', message: 'That player is unavailable to join this party.' });
         return;
       }
@@ -1291,7 +1442,7 @@ wss.on('connection', (socket) => {
       const party = arenaParties.get(partyId);
       if (!party || party.roomId !== room.id || !party.invitedIds.has(player.id)) return;
       party.invitedIds.delete(player.id);
-      if (message.accept === true && !player.arenaInstanceId && !playerArenaParties.has(player.id) && player.disconnectedAt === null) {
+      if (message.accept === true && !player.arenaInstanceId && !player.bowlingInstanceId && !playerArenaParties.has(player.id) && !playerBowlingParties.has(player.id) && player.disconnectedAt === null) {
         party.memberIds.push(player.id);
         playerArenaParties.set(player.id, party.id);
         clearArenaInvites(room, player.id);
@@ -1377,7 +1528,169 @@ wss.on('connection', (socket) => {
       return;
     }
 
-    if (player.arenaInstanceId && message.type !== 'chat') return;
+    if (message.type === 'bowlingStartSolo') {
+      if (player.arenaInstanceId || player.bowlingInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.seatedSeatId || player.ferrisSeatIndex !== null || room.theater.currentPresenterId === player.id) {
+        send(socket, { type: 'notice', message: 'Finish your current activity before bowling.' });
+        return;
+      }
+      if (playerBowlingParties.has(player.id) || playerArenaParties.has(player.id)) {
+        send(socket, { type: 'notice', message: 'Leave your current party before playing solo.' });
+        return;
+      }
+      if (Math.hypot(player.x - WORLD_CONFIG.bowlingAlley.x, player.z - WORLD_CONFIG.bowlingAlley.z) > WORLD_CONFIG.bowlingAlley.useRadius) {
+        send(socket, { type: 'notice', message: 'Walk to the bowling alley to play.' });
+        return;
+      }
+      if (!startBowlingGame(room, [player], Date.now(), true)) send(socket, { type: 'notice', message: 'The bowling lane is not ready yet.' });
+      return;
+    }
+
+    if (message.type === 'bowlingPartyCreate') {
+      if (player.arenaInstanceId || player.bowlingInstanceId || player.inPhotobooth || player.fishing !== 'idle' || player.seatedSeatId || player.ferrisSeatIndex !== null || room.theater.currentPresenterId === player.id) {
+        send(socket, { type: 'notice', message: 'Finish your current activity before forming a bowling party.' });
+        return;
+      }
+      if (playerArenaParties.has(player.id)) {
+        send(socket, { type: 'notice', message: 'Leave your arena party before forming a bowling party.' });
+        return;
+      }
+      if (Math.hypot(player.x - WORLD_CONFIG.bowlingAlley.x, player.z - WORLD_CONFIG.bowlingAlley.z) > WORLD_CONFIG.bowlingAlley.useRadius) {
+        send(socket, { type: 'notice', message: 'Walk to the bowling alley to start a party.' });
+        return;
+      }
+      const existingPartyId = playerBowlingParties.get(player.id);
+      const existingParty = existingPartyId ? bowlingParties.get(existingPartyId) : undefined;
+      if (existingParty) {
+        send(socket, bowlingPartyState(room, existingParty));
+        return;
+      }
+      clearBowlingInvites(room, player.id);
+      const party: BowlingParty = { id: randomUUID(), roomId: room.id, leaderId: player.id, memberIds: [player.id], invitedIds: new Set() };
+      bowlingParties.set(party.id, party);
+      playerBowlingParties.set(player.id, party.id);
+      send(socket, bowlingPartyState(room, party));
+      return;
+    }
+
+    if (message.type === 'bowlingPartyInvite') {
+      const partyId = playerBowlingParties.get(player.id);
+      const party = partyId ? bowlingParties.get(partyId) : undefined;
+      const targetId = typeof message.playerId === 'string' ? message.playerId : '';
+      const target = room.players.get(targetId);
+      if (!party || party.leaderId !== player.id) {
+        send(socket, { type: 'notice', message: 'Only the bowling party leader can invite players.' });
+        return;
+      }
+      if (party.memberIds.length >= BOWLING_CONFIG.maxPlayers) {
+        send(socket, { type: 'notice', message: `Bowling parties allow up to ${BOWLING_CONFIG.maxPlayers} players.` });
+        return;
+      }
+      if (!target || targetId === player.id || target.disconnectedAt !== null || target.arenaInstanceId || target.bowlingInstanceId || playerBowlingParties.has(targetId) || playerArenaParties.has(targetId)) {
+        send(socket, { type: 'notice', message: 'That player is unavailable to join this party.' });
+        return;
+      }
+      if (!party.invitedIds.has(targetId)) {
+        party.invitedIds.add(targetId);
+        send(target.socket, { type: 'bowlingPartyInvite', partyId: party.id, leaderId: player.id, leaderName: player.name });
+        broadcastBowlingParty(room, party);
+      }
+      return;
+    }
+
+    if (message.type === 'bowlingPartyRespond') {
+      const partyId = typeof message.partyId === 'string' ? message.partyId : '';
+      const party = bowlingParties.get(partyId);
+      if (!party || party.roomId !== room.id || !party.invitedIds.has(player.id)) return;
+      party.invitedIds.delete(player.id);
+      if (message.accept === true && !player.arenaInstanceId && !player.bowlingInstanceId && !playerArenaParties.has(player.id) &&
+          !playerBowlingParties.has(player.id) && player.disconnectedAt === null && party.memberIds.length < BOWLING_CONFIG.maxPlayers) {
+        party.memberIds.push(player.id);
+        playerBowlingParties.set(player.id, party.id);
+        clearBowlingInvites(room, player.id);
+        broadcastBowlingParty(room, party);
+      } else if (message.accept === true) {
+        send(socket, { type: 'notice', message: 'That bowling party is already full.' });
+        broadcastBowlingParty(room, party);
+      } else {
+        send(socket, { type: 'bowlingPartyClosed', partyId: party.id, reason: 'declined' });
+        broadcastBowlingParty(room, party);
+      }
+      return;
+    }
+
+    if (message.type === 'bowlingPartyLeave') {
+      const partyId = playerBowlingParties.get(player.id);
+      const party = partyId ? bowlingParties.get(partyId) : undefined;
+      if (!party) return;
+      if (party.leaderId === player.id) closeBowlingParty(room, party, 'cancelled');
+      else {
+        removeBowlingPartyMember(room, party, player.id);
+        send(socket, { type: 'bowlingPartyClosed', partyId: party.id, reason: 'left' });
+      }
+      return;
+    }
+
+    if (message.type === 'bowlingPartyStart') {
+      const partyId = playerBowlingParties.get(player.id);
+      const party = partyId ? bowlingParties.get(partyId) : undefined;
+      if (!party || party.leaderId !== player.id) {
+        send(socket, { type: 'notice', message: 'Only the bowling party leader can start the game.' });
+        return;
+      }
+      if (party.memberIds.length < 2) {
+        send(socket, { type: 'notice', message: 'Invite at least one more player, or choose Play Solo.' });
+        return;
+      }
+      if (party.memberIds.length > BOWLING_CONFIG.maxPlayers) {
+        send(socket, { type: 'notice', message: `Bowling parties allow up to ${BOWLING_CONFIG.maxPlayers} players.` });
+        return;
+      }
+      if (Math.hypot(player.x - WORLD_CONFIG.bowlingAlley.x, player.z - WORLD_CONFIG.bowlingAlley.z) > WORLD_CONFIG.bowlingAlley.useRadius) {
+        send(socket, { type: 'notice', message: 'The leader must be at the bowling alley to start.' });
+        return;
+      }
+      const members = party.memberIds.map((id) => room.players.get(id)).filter((member): member is Player => Boolean(member));
+      if (members.length !== party.memberIds.length || !startBowlingGame(room, members, Date.now(), false)) {
+        send(socket, { type: 'notice', message: 'Every party member must be available to bowl.' });
+        return;
+      }
+      closeBowlingParty(room, party, 'started');
+      return;
+    }
+
+    if (message.type === 'bowlingThrow') {
+      const reference = player.bowlingInstanceId ? bowlingGames.get(player.bowlingInstanceId) : undefined;
+      if (!reference) return;
+      const result = reference.game.submitThrow(player.id, Number(message.aim), Number(message.power), Date.now());
+      if (result === 'invalid') send(socket, { type: 'notice', message: 'That throw input was invalid.' });
+      else if (result !== 'ok') sendBowlingSnapshot(player, reference.game);
+      return;
+    }
+
+    if (message.type === 'bowlingLeave') {
+      if (player.bowlingInstanceId) leaveBowling(room, player, Date.now(), 'left');
+      else {
+        const partyId = playerBowlingParties.get(player.id);
+        const party = partyId ? bowlingParties.get(partyId) : undefined;
+        if (party) {
+          if (party.leaderId === player.id) closeBowlingParty(room, party, 'cancelled');
+          else {
+            removeBowlingPartyMember(room, party, player.id);
+            send(socket, { type: 'bowlingPartyClosed', partyId: party.id, reason: 'left' });
+          }
+        }
+      }
+      return;
+    }
+
+    if (message.type === 'bowlingPlayAgain') {
+      const reference = player.bowlingInstanceId ? bowlingGames.get(player.bowlingInstanceId) : undefined;
+      if (!reference || reference.game.phase !== 'game_over' || !reference.game.restart(Date.now())) return;
+      broadcastBowlingSnapshot(room, reference.game, Date.now());
+      return;
+    }
+
+    if ((player.arenaInstanceId || player.bowlingInstanceId) && message.type !== 'chat') return;
 
     if (message.type === 'jukebox:enqueue') {
       const videoId = typeof message.videoId === 'string' ? message.videoId : '';
@@ -1830,10 +2143,27 @@ wss.on('connection', (socket) => {
       const party = partyId ? arenaParties.get(partyId) : undefined;
       if (party) removeArenaPartyMember(existingRoom, party, departing.id);
       clearArenaInvites(existingRoom, departing.id);
+      const bowlingPartyId = playerBowlingParties.get(departing.id);
+      const bowlingParty = bowlingPartyId ? bowlingParties.get(bowlingPartyId) : undefined;
+      if (bowlingParty) removeBowlingPartyMember(existingRoom, bowlingParty, departing.id);
+      clearBowlingInvites(existingRoom, departing.id);
     }
     if (departing?.arenaInstanceId) {
       const reference = arenaInstances.get(departing.arenaInstanceId);
       if (reference && existingRoom && departing) detachArenaPlayer(existingRoom, departing, reference.arena);
+    }
+    if (departing?.bowlingInstanceId) {
+      const reference = bowlingGames.get(departing.bowlingInstanceId);
+      if (reference && existingRoom) {
+        reference.game.removePlayer(departing.id, Date.now());
+        if (reference.game.players.every((participant) => participant.left)) bowlingGames.delete(reference.game.id);
+        else broadcastBowlingSnapshot(existingRoom, reference.game);
+      }
+      departing.bowlingInstanceId = null;
+      const returnPosition = departing.bowlingReturnPosition ?? { x: WORLD_CONFIG.bowlingAlley.x, z: WORLD_CONFIG.bowlingAlley.z };
+      departing.x = returnPosition.x;
+      departing.z = returnPosition.z;
+      departing.bowlingReturnPosition = null;
     }
     if (departing?.fishing === 'fighting' && existingRoom) {
       broadcast(existingRoom, { type: 'reel_state', playerId: departing.id, active: false }, socket);
@@ -2029,6 +2359,28 @@ setInterval(() => {
       broadcastArenaSnapshot(room, reference.arena, now);
       reference.arena.nextStateAt = now + ARENA_CONFIG.tickIntervalMs;
     }
+  }
+}, 50);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [instanceId, reference] of [...bowlingGames]) {
+    const room = rooms.getRoom(reference.roomId);
+    if (!room) {
+      bowlingGames.delete(instanceId);
+      continue;
+    }
+    for (const participant of [...reference.game.players]) {
+      const member = room.players.get(participant.playerId);
+      if ((!member || member.disconnectedAt !== null) && !participant.left) reference.game.removePlayer(participant.playerId, now);
+    }
+    if (reference.game.players.every((participant) => participant.left)) {
+      bowlingGames.delete(instanceId);
+      continue;
+    }
+    const events = reference.game.update(now);
+    publishBowlingEvents(room, reference.game, events, now);
+    broadcastBowlingSnapshot(room, reference.game, now);
   }
 }, 50);
 

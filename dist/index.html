@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#c9e8e5" />
     <title>Mengai — a little fishing getaway</title>
-    <script type="module" crossorigin src="/assets/index-DIjnQCrX.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Be7ValvQ.css">
+    <script type="module" crossorigin src="/assets/index-CELTUQ6Q.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-fhEFN4my.css">
   </head>
   <body>
     <main id="app">
@@ -92,6 +92,23 @@
         <section id="arena-party-invites" class="arena-party-invites hidden" aria-label="Arena invitations">
           <strong>You’re invited to an arena party</strong><div id="arena-party-invites-list"></div>
         </section>
+        <div id="bowling-prompt" class="portal-prompt bowling-prompt hidden" role="dialog" aria-label="Bowling alley">
+          <strong>Mengai Lanes</strong>
+          <span>Roll five rows. Play alone or bring your room to the lanes.</span>
+          <span id="bowling-prompt-best" class="bowling-prompt-best"></span>
+          <div><button id="bowling-solo" type="button">Play Solo</button><button id="bowling-create-party" type="button">Create / Join Party</button><button id="bowling-cancel" type="button">Later <kbd>Esc</kbd></button></div>
+        </div>
+        <section id="bowling-party-panel" class="arena-party-panel hidden" role="dialog" aria-modal="true" aria-labelledby="bowling-party-title">
+          <div class="arena-party-card">
+            <header><div><strong id="bowling-party-title">Bowling party</strong><span>Invite room members. Up to 4 players; the leader starts the game.</span></div></header>
+            <h3>Party</h3><div id="bowling-party-members" class="arena-party-list"></div>
+            <h3>Invite players in your room</h3><div id="bowling-party-room" class="arena-party-list"></div>
+            <footer><button id="bowling-party-start" type="button">Start party</button><button id="bowling-party-leave" type="button">Leave party</button></footer>
+          </div>
+        </section>
+        <section id="bowling-party-invites" class="arena-party-invites hidden" aria-label="Bowling invitations">
+          <strong>You’re invited to a bowling party</strong><div id="bowling-party-invites-list"></div>
+        </section>
         <div id="jukebox-prompt" class="photobooth-prompt jukebox-prompt hidden"><kbd>J</kbd><span>Press J to open Jukebox</span></div>
         <div id="photobooth-prompt" class="photobooth-prompt hidden"><kbd>P</kbd><span>Press P to use the photobooth</span></div>
         <div id="fish-prompt" class="fish-prompt hidden">Space to cast</div>
@@ -122,6 +139,33 @@
         <div id="arena-victory" class="arena-result arena-victory hidden" role="dialog" aria-modal="true" aria-labelledby="arena-victory-title">
           <span class="arena-result-emoji" aria-hidden="true">🐊</span><strong id="arena-victory-title">Crocodile Slain!</strong><span>You earned a Crocodile Slain.</span><span id="arena-victory-time" class="arena-victory-time">Fight time: 00:00</span>
           <div><button id="arena-leave-button" type="button">Leave</button><button id="arena-retry-button" type="button">Fight again</button></div>
+        </div>
+      </section>
+      <section id="bowling-overlay" class="bowling-overlay hidden" aria-label="Bowling alley">
+        <div id="bowling-canvas-host" class="bowling-canvas-host"></div>
+        <div class="bowling-hud">
+          <div class="bowling-topbar">
+            <div id="bowling-turn" class="bowling-turn">Your turn</div>
+            <div id="bowling-timer" class="bowling-timer hidden">20s</div>
+            <button id="bowling-leave" class="bowling-leave" type="button">Leave lane</button>
+          </div>
+          <div id="bowling-scoreboard" class="bowling-scoreboard" aria-live="polite"></div>
+          <div id="bowling-waiting" class="bowling-waiting hidden">
+            <strong>Waiting for <span id="bowling-waiting-name">Player</span>'s turn</strong>
+            <ol id="bowling-turn-order"></ol>
+          </div>
+          <div id="bowling-callout" class="bowling-callout" aria-live="assertive"></div>
+          <div id="bowling-power" class="bowling-power hidden"><span>Power</span><div class="bowling-power-track"><div id="bowling-power-fill" class="bowling-power-fill"></div></div></div>
+          <p id="bowling-controls" class="bowling-controls"></p>
+        </div>
+        <div id="bowling-results" class="bowling-results hidden" role="dialog" aria-modal="true" aria-labelledby="bowling-results-title">
+          <div class="bowling-results-card">
+            <span class="bowling-results-emoji" aria-hidden="true">🎳</span>
+            <strong id="bowling-results-title">Final scores</strong>
+            <div id="bowling-results-list" class="bowling-results-list"></div>
+            <p id="bowling-results-note" class="bowling-results-note"></p>
+            <div><button id="bowling-play-again" type="button">Play Again</button><button id="bowling-results-leave" type="button">Leave</button></div>
+          </div>
         </div>
       </section>
       <div id="jukebox-root">
@@ -171,6 +215,7 @@
         <div class="photobooth-controls">
           <button id="photo-exit" class="photo-exit" type="button">Exit</button>
           <label class="photo-setting photo-timer-setting">Timer<select id="photo-timer" aria-label="Capture timer"><option value="0">Off</option><option value="3">3s</option><option value="5">5s</option></select></label>
+          <label class="photo-setting photo-size-setting">Size<select id="photo-size" aria-label="Photo size and orientation"><option value="portrait" selected>4:5 Portrait</option><option value="classic">4:3 Classic</option><option value="wide">16:9 Wide</option></select></label>
           <button id="photo-capture" class="photo-capture" type="button" aria-label="Take photo">📸</button>
           <label class="photo-setting photo-filter-setting">Frame<select id="photo-filter" aria-label="Choose photo frame"><option value="none">Natural</option><option value="warm">Warm</option><option value="sunset">Sunset</option><option value="mono">B&amp;W</option></select></label>
           <label class="photo-show-name"><input id="photo-show-name" type="checkbox" />Show name</label>

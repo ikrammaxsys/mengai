@@ -3,6 +3,7 @@ import { FISH_CONFIG } from '../../shared/fishConfig';
 import type { WeatherSnapshot, WeatherType } from '../../shared/weatherConfig';
 import type { ChickenSnapshot } from '../../shared/chickenConfig';
 import type { ArenaSnapshot } from '../../shared/arenaConfig';
+import type { BowlingSnapshot } from '../../shared/bowlingConfig';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -111,6 +112,17 @@ export interface ArenaPartyState {
   invited: ArenaPartyInvitation[];
 }
 
+export interface BowlingPartyState extends ArenaPartyState {
+  maxPlayers: number;
+}
+
+export interface BowlingReward {
+  playerId: string;
+  name: string;
+  kind: 'first-strike' | 'party-win';
+  label: string;
+}
+
 export interface StoneSnapshot {
   id: string;
   originX: number;
@@ -192,7 +204,7 @@ export interface TheaterSignal {
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; fastestSlayer: FastestSlayerRecord | null; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; fastestSlayer: FastestSlayerRecord | null; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number; bowlingBestScore?: number }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -221,6 +233,13 @@ type Handlers = {
   monsterDied: () => void;
   playerDied: (respawnAt: number) => void;
   portalExited: (respawned: boolean) => void;
+  bowlingEntered: (game: BowlingSnapshot) => void;
+  bowlingState: (game: BowlingSnapshot) => void;
+  bowlingPartyState: (party: BowlingPartyState) => void;
+  bowlingPartyInvite: (invitation: { partyId: string; leaderId: string; leaderName: string }) => void;
+  bowlingPartyClosed: (message: { partyId: string; reason: string }) => void;
+  bowlingExited: (message: { reason: string; position?: { x: number; z: number; facing: number } }) => void;
+  bowlingReward: (reward: BowlingReward) => void;
   announcement: (message: string) => void;
   bigCatch: (message: BigCatchEvent) => void;
   stonePicked: (stoneId: string, playerId: string) => void;
@@ -381,6 +400,13 @@ export class Network {
         case 'monsterDied': this.handlers.monsterDied(); break;
         case 'playerDied': this.handlers.playerDied(Number(message.respawnAt)); break;
         case 'portalExit': this.handlers.portalExited(Boolean(message.respawned)); break;
+        case 'bowlingEnter': this.handlers.bowlingEntered(message.game as BowlingSnapshot); break;
+        case 'bowlingState': this.handlers.bowlingState(message.game as BowlingSnapshot); break;
+        case 'bowlingPartyState': this.handlers.bowlingPartyState(message as unknown as BowlingPartyState); break;
+        case 'bowlingPartyInvite': this.handlers.bowlingPartyInvite(message as unknown as Parameters<Handlers['bowlingPartyInvite']>[0]); break;
+        case 'bowlingPartyClosed': this.handlers.bowlingPartyClosed(message as unknown as Parameters<Handlers['bowlingPartyClosed']>[0]); break;
+        case 'bowlingExit': this.handlers.bowlingExited(message as unknown as Parameters<Handlers['bowlingExited']>[0]); break;
+        case 'bowlingReward': this.handlers.bowlingReward(message as unknown as BowlingReward); break;
         case 'room_announcement': this.handlers.announcement(String(message.message)); break;
         case 'big_catch': this.handlers.bigCatch(message as unknown as BigCatchEvent); break;
         case 'stone_picked': this.handlers.stonePicked(String(message.stoneId), String(message.playerId)); break;
@@ -502,6 +528,15 @@ export class Network {
   arenaStoneAction(): void { this.send({ type: 'arenaStoneAction' }); }
   leaveArena(): void { this.send({ type: 'arenaLeave' }); }
   restartArena(): void { this.send({ type: 'arenaRestart' }); }
+  startBowlingSolo(): void { this.send({ type: 'bowlingStartSolo' }); }
+  createBowlingParty(): void { this.send({ type: 'bowlingPartyCreate' }); }
+  inviteBowlingPartyPlayer(playerId: string): void { this.send({ type: 'bowlingPartyInvite', playerId }); }
+  respondBowlingPartyInvite(partyId: string, accept: boolean): void { this.send({ type: 'bowlingPartyRespond', partyId, accept }); }
+  leaveBowlingParty(): void { this.send({ type: 'bowlingPartyLeave' }); }
+  startBowlingParty(): void { this.send({ type: 'bowlingPartyStart' }); }
+  throwBowling(aim: number, power: number): void { this.send({ type: 'bowlingThrow', aim, power }); }
+  leaveBowling(): void { this.send({ type: 'bowlingLeave' }); }
+  playAgainBowling(): void { this.send({ type: 'bowlingPlayAgain' }); }
   close(): void {
     this.intentionalClose = true;
     window.clearInterval(this.pingTimer);

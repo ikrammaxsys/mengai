@@ -24,6 +24,8 @@ try {
   }
   assert.equal(await first.recordCrocodileKill('pond-one', 'River'), 1);
   assert.equal(await first.recordCrocodileKill('pond-one', 'RIVER'), 2);
+  assert.equal(await first.recordBowlingBestScore('pond-one', 'River', 87), 87);
+  assert.equal(await first.recordBowlingBestScore('pond-one', 'river', 72), 87, 'only a better solo score replaces the stored best');
   assert.equal(await first.releaseFish('pond-one', 'RIVER', catches[0].id), true);
   const cooking: CampfireCooking = {
     cookId: 'cook-one', playerId: 'session-two', playerName: 'River', fish: records[1], startedAt: 3000, durationMs: 9000,
@@ -36,6 +38,7 @@ try {
   const inventory = restarted.playerFish('pond-one', 'river');
   assert.equal(inventory.totalCaught, 2, 'catch total survives release and reload');
   assert.equal(inventory.crocodilesSlain, 2, 'crocodile kills survive reload');
+  assert.equal(inventory.bowlingBestScore, 87, 'best solo bowling score survives reload');
   assert.deepEqual(inventory.items, [], 'released and cooking fish are absent from the active backpack');
   assert.equal(inventory.personalBest?.catchId, catches[0].id, 'personal best remains in catch history after release');
   assert.deepEqual(inventory.collection.map((item) => item.species).sort(), ['bluegill', 'common-carp']);

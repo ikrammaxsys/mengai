@@ -5,6 +5,8 @@ import { FishArt } from './fishModels';
 import { FishViewer } from './fishViewer';
 import { Minimap } from './minimap';
 import { ArenaView } from './arenaView';
+import { BowlingNet } from './bowlingNet';
+import { BowlingMode } from './bowlingMode';
 import { Photobooth, PHOTOBOOTH_CONFIG } from './photobooth';
 import { FISH_CONFIG, reelParametersForDifficulty, type FishSpeciesId, type ReelParameters } from '../../shared/fishConfig';
 import { ReelGame } from './reelGame';
@@ -59,6 +61,8 @@ const arenaPartyLeaveButton = document.querySelector<HTMLButtonElement>('#arena-
 const arenaPartyInvites = document.querySelector<HTMLElement>('#arena-party-invites')!;
 const arenaPartyInvitesList = document.querySelector<HTMLElement>('#arena-party-invites-list')!;
 const arenaOverlay = document.querySelector<HTMLElement>('#arena-overlay')!;
+const bowlingPrompt = document.querySelector<HTMLElement>('#bowling-prompt')!;
+const bowlingPartyPanel = document.querySelector<HTMLElement>('#bowling-party-panel')!;
 const photoboothEnter = document.querySelector<HTMLButtonElement>('#photobooth-enter')!;
 const photoboothPrompt = document.querySelector<HTMLElement>('#photobooth-prompt')!;
 const weatherControl = document.querySelector<HTMLElement>('#weather-control')!;
@@ -294,6 +298,16 @@ const arenaView = new ArenaView(arenaOverlay, {
   leave: () => network.leaveArena(),
   restart: () => network.restartArena(),
 });
+let bowlingNet: BowlingNet | null = null;
+const bowlingMode = new BowlingMode({
+  getNetwork: () => bowlingNet,
+  getWorldPosition: () => scene.getPosition(),
+  showToast,
+  onExit: () => {
+    appRoot.classList.remove('in-bowling');
+    theater.setOccluded(false);
+  },
+});
 let voiceResumeToken = '';
 let isPhotoboothMode = false;
 let previousPhotoboothFacing = 0;
@@ -333,11 +347,12 @@ const forcedWeather = (() => {
 })();
 const fishingRadius = FISH_CONFIG.pond.waterRadius + FISH_CONFIG.pond.edgeRange;
 type WhatsNewItem = { tier: 'highlight' | 'also'; icon: string; title: string; description: string; tone?: 'arena' | 'voice' | 'backpack' | 'jukebox' | 'catch' | 'progress' | 'theater' };
-const whatsNewVersion = '1.2.1'; // Bump when shipping a new What's New update.
+const whatsNewVersion = '1.2.2'; // Bump when shipping a new What's New update.
 const whatsNewReleaseDate = 'Nov 2026';
 const whatsNewSeenKey = 'mengai:whats-new:last-seen-version';
 let whatsNewReturnFocus: HTMLElement | null = null;
 const whatsNewItems: WhatsNewItem[] = [
+  { tier: 'highlight', icon: '🎳', title: 'Bowling at Mengai Lanes', description: 'Play solo or invite up to three players from your room for a five-row game.' },
   { tier: 'highlight', tone: 'theater', icon: '📺', title: 'Share the screen at Theater', description: 'Present your screen to the whole room and watch together.' },
   { tier: 'highlight', tone: 'arena', icon: '🐊', title: 'Upgraded Crocodile', description: 'The arena boss is tougher, faster, and more dangerous than before.' },
   { tier: 'highlight', tone: 'catch', icon: '🐠', title: 'New fish species', description: 'Discover the massive Ikan Bulan and legendary Ikan Naga.' },
@@ -614,6 +629,21 @@ function exitCrocodileArena(respawned: boolean): void {
   keys.clear();
   portalPromptDismissedUntilExit = true;
   if (respawned) showToast('You have respawned by the portal.');
+}
+
+function enterBowlingLane(game: import('../../shared/bowlingConfig').BowlingSnapshot): void {
+  arenaMode = false;
+  arenaView.close();
+  appRoot.classList.remove('in-arena');
+  theater.setOccluded(true);
+  jukebox.close();
+  cancelMouseTurn();
+  keys.clear();
+  setChatOpen(false);
+  setOpenSidePanel(null);
+  if (isPhotoboothMode) exitPhotobooth();
+  appRoot.classList.add('in-bowling');
+  bowlingMode.enter(game, selfId);
 }
 
 function syncRoomPlayerRoster(players: PlayerSnapshot[]): void {
@@ -1516,6 +1546,8 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       arenaMode = false;
       appRoot.classList.remove('in-arena');
       arenaView.close();
+      if (bowlingMode.isActive) bowlingMode.handleExit('reconnect');
+      appRoot.classList.remove('in-bowling');
       currentArenaParty = null;
       incomingArenaInvites.clear();
       renderArenaParty();
@@ -1538,6 +1570,12 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       scene.setLocalId(selfId);
       scene.setFirstPersonView(firstPersonView);
       syncRoomPlayerRoster(message.players);
+      bowlingNet = new BowlingNet(network);
+      bowlingMode.setNetwork(bowlingNet);
+      bowlingMode.setSelfId(selfId);
+      bowlingMode.setRoomPlayers(message.players);
+      bowlingMode.setBestSoloScore(message.bowlingBestScore);
+      bowlingMode.clearSocial();
       const me = message.players.find((player) => player.id === selfId);
       myHeldFish = me?.holdingFish ?? null;
       updateChickenScore(me?.chickenScore ?? 0);
@@ -1587,20 +1625,21 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     state: (players, serverTime) => {
       observeServerTime(serverTime);
       syncRoomPlayerRoster(players);
+      bowlingMode.setRoomPlayers(players);
       for (const player of players) scene.upsert(player, serverTime);
       const me = players.find((player) => player.id === selfId);
       if (me) updateChickenScore(me.chickenScore);
       updateCount();
     },
     speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
-    playerJoined: (player, serverTime) => { observeServerTime(serverTime); roomPlayers.set(player.id, player); scene.upsert(player, serverTime); updateCount(); renderArenaParty(); renderVoicePlayers(); showToast(`${player.name} joined the pond`); },
+    playerJoined: (player, serverTime) => { observeServerTime(serverTime); roomPlayers.set(player.id, player); scene.upsert(player, serverTime); updateCount(); renderArenaParty(); renderVoicePlayers(); bowlingMode.setRoomPlayers([...roomPlayers.values()]); showToast(`${player.name} joined the pond`); },
     playerLeft: (id) => {
       theater.playerLeft(id);
       voice.removeGamePlayer(id);
       speakingPlayers.delete(id);
       syncMusicDuck();
       roomPlayers.delete(id);
-      scene.remove(id); updateCount(); renderArenaParty(); renderVoicePlayers();
+      scene.remove(id); updateCount(); renderArenaParty(); renderVoicePlayers(); bowlingMode.setRoomPlayers([...roomPlayers.values()]);
     },
     correction: (message) => { if (message.seq >= movementSequence) scene.applyCorrection(message.x, message.z); },
     clockOffset: (offsetMs) => {
@@ -1710,6 +1749,16 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     monsterDied: () => arenaView.monsterDied(),
     playerDied: () => arenaView.playerDied(),
     portalExited: (respawned) => exitCrocodileArena(respawned),
+    bowlingEntered: (game) => enterBowlingLane(game),
+    bowlingState: (game) => bowlingMode.receive(game),
+    bowlingPartyState: (party) => bowlingMode.handlePartyState(party),
+    bowlingPartyInvite: (invitation) => bowlingMode.handlePartyInvite(invitation),
+    bowlingPartyClosed: (message) => bowlingMode.handlePartyClosed(message.partyId, message.reason),
+    bowlingExited: (message) => {
+      if (message.position) scene.setLocalMotion(message.position.x, message.position.z, message.position.facing);
+      bowlingMode.handleExit(message.reason);
+    },
+    bowlingReward: (reward) => bowlingMode.showReward(reward),
     disconnected: (details) => {
       if (reconnecting) {
         scheduleReconnect();
@@ -1718,6 +1767,11 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       joined = false;
       theater.reset();
       roomPlayers.clear();
+      if (bowlingMode.isActive) bowlingMode.handleExit('disconnected');
+      bowlingNet = null;
+      bowlingMode.setNetwork(null);
+      bowlingMode.clearSocial();
+      appRoot.classList.remove('in-bowling');
       currentArenaParty = null;
       incomingArenaInvites.clear();
       renderArenaParty();
@@ -1931,6 +1985,23 @@ window.addEventListener('keydown', (event) => {
     }
     return;
   }
+  if (bowlingMode.handleKeyDown(event)) return;
+  if ((event.key === 'Enter' || event.key === ' ') && event.target instanceof HTMLButtonElement) return;
+  if (event.key === 'Escape' && !bowlingMode.isActive && !bowlingPartyPanel.classList.contains('hidden')) {
+    event.preventDefault();
+    network.leaveBowlingParty();
+    return;
+  }
+  if (event.key === 'Escape' && !bowlingMode.isActive && !bowlingPrompt.classList.contains('hidden')) {
+    event.preventDefault();
+    bowlingMode.dismissPrompt();
+    return;
+  }
+  if (event.key === 'Enter' && !bowlingMode.isActive && !bowlingPrompt.classList.contains('hidden') && !(event.target instanceof HTMLButtonElement)) {
+    event.preventDefault();
+    document.querySelector<HTMLButtonElement>('#bowling-solo')?.focus();
+    return;
+  }
   if (event.key === 'Escape' && !fishViewerRoot.classList.contains('hidden')) {
     fishViewer.close();
     return;
@@ -2135,6 +2206,7 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keyup', (event) => {
   if (jukebox.isOpen) return;
+  if (bowlingMode.handleKeyUp(event)) return;
   if (event.key.toLowerCase() === 'v' && voice.isPushToTalk) void voice.setPushToTalkHeld(false);
   if (isPhotoboothMode) return;
   if (event.code === 'Space') reelGame?.setHeld(false);
@@ -2149,6 +2221,7 @@ window.addEventListener('keyup', (event) => {
 });
 window.addEventListener('blur', () => {
   if (voice.isPushToTalk) void voice.setPushToTalkHeld(false);
+  bowlingMode.handleBlur();
   const wasMoving = hasForwardInput();
   cancelMouseTurn();
   keys.clear(); reelGame?.setHeld(false);
@@ -2156,6 +2229,7 @@ window.addEventListener('blur', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    bowlingMode.handleBlur();
     const wasMoving = hasForwardInput();
     cancelMouseTurn();
     keys.clear(); reelGame?.setHeld(false);
@@ -2167,6 +2241,7 @@ function animate(now: number): void {
   requestAnimationFrame(animate);
   const delta = Math.min((now - lastFrame) / 1000, 0.05);
   lastFrame = now;
+  const inBowling = bowlingMode.isActive;
   const ferrisRiding = scene.isFerrisRiding;
   if (ferrisRiding !== lastFerrisRiding) {
     playFerrisDing(ferrisRiding);
@@ -2182,7 +2257,7 @@ function animate(now: number): void {
     drawReel(snapshot);
     if (reelGame.result !== 'active') finishReel(reelGame.result === 'success');
   }
-  if (joined && !arenaMode) scene.stepCorrection(delta);
+  if (joined && !arenaMode && !inBowling) scene.stepCorrection(delta);
   if (joined && arenaMode && !reelGame) {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const turn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
@@ -2192,7 +2267,7 @@ function animate(now: number): void {
       lastArenaMoveAt = now;
     }
   }
-  if (joined && !arenaMode && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && !scene.isFerrisRiding && scene.fishingState() === 'idle') {
+  if (joined && !arenaMode && !inBowling && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && !scene.isFerrisRiding && scene.fishingState() === 'idle') {
     const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
     const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
     let turn = keyboardTurn;
@@ -2206,18 +2281,19 @@ function animate(now: number): void {
     const next = stepMovement({ x: position.x, z: position.z, rotY: scene.localFacing() }, forward, turn, delta);
     scene.setLocalMotion(next.x, next.z, next.rotY);
   }
-  if (joined && !arenaMode && now - lastMinimapRenderAt >= 66) {
+  if (joined && !arenaMode && !inBowling && now - lastMinimapRenderAt >= 66) {
     lastMinimapRenderAt = now;
     minimap.render(now, scene.mapPlayers());
   }
   if (joined) {
     voice.updateSpatialAudio(scene.mapPlayers(), selfId, now);
-    if (arenaMode) {
+    if (arenaMode || inBowling) {
       theater.setNearby(false);
       seatPrompt.classList.add('hidden');
       photoboothPrompt.classList.add('hidden');
       jukeboxPrompt.classList.add('hidden');
       fishPrompt.classList.add('hidden');
+      portalPrompt.classList.add('hidden');
     } else {
       sendLocalMovement(false);
       const distance = Math.hypot(scene.getPosition().x, scene.getPosition().z);
@@ -2249,6 +2325,7 @@ function animate(now: number): void {
       fishPrompt.classList.toggle('hidden', isPhotoboothMode || reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
       fishPrompt.textContent = fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
       updatePortalPrompt();
+      bowlingMode.updateProximity(scene.getPosition(), !isPhotoboothMode && !reelGame && fishing === 'idle' && !jukebox.isOpen && !theater.isFocused && !theater.isMenuOpen);
     }
   } else {
     theater.setNearby(false);
@@ -2257,14 +2334,16 @@ function animate(now: number): void {
     ferrisPrompt.classList.add('hidden');
     photoboothEnter.disabled = true;
     portalPrompt.classList.add('hidden');
+    bowlingMode.updateProximity(scene.getPosition(), false);
   }
   catchPopup.classList.toggle('hidden', !fishArt.render(now));
-  scene.setLocalDanceBlocked(arenaMode || isPhotoboothMode || theater.isFocused || theater.isMenuOpen || jukebox.isOpen || reelGame !== null
+  scene.setLocalDanceBlocked(arenaMode || inBowling || isPhotoboothMode || theater.isFocused || theater.isMenuOpen || jukebox.isOpen || reelGame !== null
     || !chatPanel.classList.contains('hidden') || !backpackPanel.classList.contains('hidden') || !leaderboardPanel.classList.contains('hidden')
     || !fishViewerRoot.classList.contains('hidden') || !catchPopup.classList.contains('hidden') || !expandedMap.classList.contains('hidden')
     || !voicePanel.classList.contains('hidden') || !musicPanel.classList.contains('hidden') || !arenaPartyPanel.classList.contains('hidden')
     || !whatsNew.classList.contains('hidden'));
-  if (arenaMode) arenaView.render(Date.now() + serverClockOffset, delta);
+  if (inBowling) bowlingMode.render(Date.now() + serverClockOffset, delta);
+  else if (arenaMode) arenaView.render(Date.now() + serverClockOffset, delta);
   else scene.render(delta);
 }
 

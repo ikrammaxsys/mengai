@@ -8,9 +8,24 @@ export const PHOTOBOOTH_CONFIG = {
   cameraOffset: { x: 0, y: 3.1, z: 9.8 },
   targetOffset: { x: 0, y: 1.55, z: 0 },
   logoAspect: 289 / 51,
-  photoWidth: 1080,
-  photoHeight: 1350,
 } as const;
+
+export type PhotoSizeId = 'portrait' | 'classic' | 'wide';
+
+export interface PhotoSize {
+  /** Short ratio label shown on the viewfinder guide, e.g. "4:5". */
+  label: string;
+  width: number;
+  height: number;
+}
+
+export const PHOTO_SIZES: Record<PhotoSizeId, PhotoSize> = {
+  portrait: { label: '4:5', width: 1080, height: 1350 },
+  classic: { label: '4:3', width: 1440, height: 1080 },
+  wide: { label: '16:9', width: 1920, height: 1080 },
+};
+
+export const DEFAULT_PHOTO_SIZE: PhotoSizeId = 'portrait';
 
 export type PhotoFilter = 'none' | 'warm' | 'sunset' | 'mono';
 
@@ -53,6 +68,9 @@ export class Photobooth {
   private readonly status: HTMLElement;
   private readonly timerSelect: HTMLSelectElement;
   private readonly filterSelect: HTMLSelectElement;
+  private readonly sizeSelect: HTMLSelectElement;
+  private readonly frameGuide: HTMLElement;
+  private readonly frameGuideLabel: HTMLElement;
   private readonly showNameInput: HTMLInputElement;
   private readonly captureButton: HTMLButtonElement;
   private readonly logo = new Image();
@@ -77,6 +95,9 @@ export class Photobooth {
     this.status = root.querySelector<HTMLElement>('#photobooth-status')!;
     this.timerSelect = root.querySelector<HTMLSelectElement>('#photo-timer')!;
     this.filterSelect = root.querySelector<HTMLSelectElement>('#photo-filter')!;
+    this.sizeSelect = root.querySelector<HTMLSelectElement>('#photo-size')!;
+    this.frameGuide = root.querySelector<HTMLElement>('.photo-frame-guide')!;
+    this.frameGuideLabel = this.frameGuide.querySelector<HTMLElement>('span')!;
     this.showNameInput = root.querySelector<HTMLInputElement>('#photo-show-name')!;
     this.captureButton = root.querySelector<HTMLButtonElement>('#photo-capture')!;
 
@@ -88,6 +109,8 @@ export class Photobooth {
     });
 
     this.captureButton.addEventListener('click', () => this.requestCapture());
+    this.sizeSelect.addEventListener('change', () => this.applyPhotoSize());
+    this.applyPhotoSize();
     root.querySelector<HTMLButtonElement>('#photo-exit')!.addEventListener('click', callbacks.onExit);
     this.resultModal.querySelector<HTMLButtonElement>('#photo-download')!.addEventListener('click', () => this.downloadCurrent());
     this.resultModal.querySelector<HTMLButtonElement>('#photo-share')!.addEventListener('click', () => this.shareOrDownloadCurrent());
@@ -98,6 +121,7 @@ export class Photobooth {
 
   open(): void {
     this.active = true;
+    this.applyPhotoSize();
     this.root.classList.remove('hidden');
     this.root.querySelector<HTMLButtonElement>('#photo-capture')!.focus({ preventScroll: true });
   }
@@ -163,6 +187,16 @@ export class Photobooth {
     this.countdown.classList.add('hidden');
   }
 
+  private activePhotoSize(): PhotoSize {
+    return PHOTO_SIZES[this.sizeSelect.value as PhotoSizeId] ?? PHOTO_SIZES[DEFAULT_PHOTO_SIZE];
+  }
+
+  private applyPhotoSize(): void {
+    const size = this.activePhotoSize();
+    this.frameGuide.style.setProperty('--photo-ratio', String(size.width / size.height));
+    this.frameGuideLabel.textContent = `${size.label} PHOTO`;
+  }
+
   private async capture(): Promise<void> {
     if (this.busy || !this.active) return;
     this.busy = true;
@@ -173,7 +207,7 @@ export class Photobooth {
       if (!this.active) return;
       const capturedAt = new Date();
       const frame = this.callbacks.captureScene(this.showNameInput.checked);
-      const photo = this.composePhoto(frame, this.filterSelect.value as PhotoFilter, hasLogo, capturedAt);
+      const photo = this.composePhoto(frame, this.filterSelect.value as PhotoFilter, hasLogo, capturedAt, this.activePhotoSize());
       const record: PhotoRecord = {
         id: this.nextPhotoId++,
         dataUrl: photo,
@@ -200,9 +234,10 @@ export class Photobooth {
     }
   }
 
-  private composePhoto(frame: PhotoCaptureFrame, filter: PhotoFilter, hasLogo: boolean, capturedAt: Date): string {
-    const width = PHOTOBOOTH_CONFIG.photoWidth;
-    const height = PHOTOBOOTH_CONFIG.photoHeight;
+  private composePhoto(frame: PhotoCaptureFrame, filter: PhotoFilter, hasLogo: boolean, capturedAt: Date, size: PhotoSize): string {
+    const { width, height } = size;
+    // Decoration metrics are authored for the 1080-wide portrait layout and scale with the photo width.
+    const uiScale = width / 1080;
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -224,49 +259,64 @@ export class Photobooth {
     context.drawImage(source, sx, sy, sw, sh, 0, 0, width, height);
     context.filter = 'none';
 
-    if (this.showNameInput.checked && frame.namePoint) this.drawNameTag(context, frame.namePoint, sx, sy, sw, sh, source.width, source.height, frame.playerName);
+    if (this.showNameInput.checked && frame.namePoint) {
+      this.drawNameTag(context, frame.namePoint, sx, sy, sw, sh, source.width, source.height, frame.playerName, size, uiScale);
+    }
 
-    const stripY = height - 112;
+    const stripHeight = Math.round(112 * uiScale);
+    const stripY = height - stripHeight;
     context.fillStyle = 'rgba(32, 54, 47, .76)';
-    context.fillRect(0, stripY, width, 112);
+    context.fillRect(0, stripY, width, stripHeight);
     context.strokeStyle = 'rgba(255,255,255,.9)';
-    context.lineWidth = 18;
-    context.strokeRect(9, 9, width - 18, height - 18);
+    context.lineWidth = 18 * uiScale;
+    context.strokeRect(9 * uiScale, 9 * uiScale, width - 18 * uiScale, height - 18 * uiScale);
 
     if (hasLogo && this.logo.naturalWidth > 0) {
-      const maxWidth = 178, maxHeight = 48;
-      const scale = Math.min(maxWidth / this.logo.naturalWidth, maxHeight / this.logo.naturalHeight);
-      const logoWidth = this.logo.naturalWidth * scale, logoHeight = this.logo.naturalHeight * scale;
+      const maxWidth = 178 * uiScale, maxHeight = 48 * uiScale;
+      const logoScale = Math.min(maxWidth / this.logo.naturalWidth, maxHeight / this.logo.naturalHeight);
+      const logoWidth = this.logo.naturalWidth * logoScale, logoHeight = this.logo.naturalHeight * logoScale;
       context.fillStyle = 'rgba(255,255,255,.94)';
-      this.roundRect(context, 38, stripY + 28, 202, 58, 13);
+      this.roundRect(context, 38 * uiScale, stripY + 28 * uiScale, 202 * uiScale, 58 * uiScale, 13 * uiScale);
       context.fill();
-      context.drawImage(this.logo, 50, stripY + (112 - logoHeight) / 2, logoWidth, logoHeight);
+      context.drawImage(this.logo, 50 * uiScale, stripY + (stripHeight - logoHeight) / 2, logoWidth, logoHeight);
     }
 
     const dateLabel = this.formatDate(capturedAt);
     const caption = `Room ${frame.room} · ${frame.playerName} · ${dateLabel}`;
     context.fillStyle = '#fff';
-    context.font = '600 27px Trebuchet MS, Segoe UI, sans-serif';
+    context.font = `600 ${27 * uiScale}px Trebuchet MS, Segoe UI, sans-serif`;
     context.textAlign = 'right';
     context.textBaseline = 'middle';
-    context.fillText(caption, width - 42, stripY + 56, width - 315);
+    context.fillText(caption, width - 42 * uiScale, stripY + stripHeight / 2, width - 315 * uiScale);
     return canvas.toDataURL('image/png');
   }
 
-  private drawNameTag(context: CanvasRenderingContext2D, point: { x: number; y: number }, sx: number, sy: number, sw: number, sh: number, sourceWidth: number, sourceHeight: number, name: string): void {
+  private drawNameTag(
+    context: CanvasRenderingContext2D,
+    point: { x: number; y: number },
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    name: string,
+    size: PhotoSize,
+    uiScale: number,
+  ): void {
     const sourceX = point.x * sourceWidth, sourceY = point.y * sourceHeight;
     if (sourceX < sx || sourceX > sx + sw || sourceY < sy || sourceY > sy + sh) return;
-    const x = (sourceX - sx) / sw * PHOTOBOOTH_CONFIG.photoWidth;
-    const y = (sourceY - sy) / sh * PHOTOBOOTH_CONFIG.photoHeight;
-    context.font = '700 24px Trebuchet MS, Segoe UI, sans-serif';
-    const width = context.measureText(name).width + 30;
+    const x = (sourceX - sx) / sw * size.width;
+    const y = (sourceY - sy) / sh * size.height;
+    context.font = `700 ${24 * uiScale}px Trebuchet MS, Segoe UI, sans-serif`;
+    const tagWidth = context.measureText(name).width + 30 * uiScale;
     context.fillStyle = 'rgba(255,255,255,.92)';
-    this.roundRect(context, x - width / 2, y - 64, width, 40, 20);
+    this.roundRect(context, x - tagWidth / 2, y - 64 * uiScale, tagWidth, 40 * uiScale, 20 * uiScale);
     context.fill();
     context.fillStyle = '#31564d';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText(name, x, y - 44, width - 20);
+    context.fillText(name, x, y - 44 * uiScale, tagWidth - 20 * uiScale);
   }
 
   private roundRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
