@@ -78,6 +78,17 @@ World/audio tuning is in `shared/worldConfig.ts` (`jukebox` position, interactio
 - Your room, player count, and connection status are shown at the top of the screen.
 - Movement is predicted locally for immediate controls. Position snapshots are buffered and interpolated for other players, while the server validates movement and sends corrections for invalid transforms.
 
+### Touch and mobile
+
+- Input is abstracted in `client/src/inputState.ts`. Keyboard/mouse and the touch controls write into the same `InputState`; movement, the arena and bowling only read from it.
+- On touch devices a floating stick appears wherever the left thumb lands (10% dead zone, analog speed). Push it forward/back to move and sideways to turn. Camera drag works by dragging anywhere on the 3D canvas.
+- The big right-hand button is contextual: pick up / throw stones, sit or stand, board the Ferris wheel, open the jukebox or theater, leave the arena at its exit portal, or throw a stone in the arena. In the bowling alley it is hold-to-charge (the ring shows power) and release to bowl. The smaller button casts/reels and holds the reel mini-game.
+- The ☰ menu button (top-left, below the room card) opens the HUD dock on phones. **Settings** cover touch controls (Auto / Always on / Off), left-handed layout, control size and opacity, vibration, graphics quality and fullscreen.
+- Hybrid devices reveal the controls after the first real touch. Portrait phones show a “rotate your phone” overlay; landscape is the recommended orientation.
+- The page uses `viewport-fit=cover`, `100dvh`, safe-area padding and `touch-action: none` on the render canvas so scrolling, pinch zoom and long-press menus do not interrupt play.
+- Performance: pixel ratio is capped at 2x (1.5x on coarse pointers, 1x with shadows off on Low). An auto-quality governor drops to Low when the frame rate stays under 40 FPS, and rendering pauses while the tab is hidden.
+- Haptics use `navigator.vibrate` where available (Android Chrome); iPhone Safari ignores it. Fullscreen uses the Fullscreen API, or **Share → Add to Home Screen** on iPhone.
+
 ### Bowling alley
 
 Walk to the glowing **Mengai Lanes** sign on the south-west side of the island (near `-24, -20`) and use the mode select:
@@ -108,7 +119,11 @@ http://localhost:5173/?lag=200&jitter=80&loss=2&netdebug
 ```text
 client/
   index.html
+  public/manifest.webmanifest  PWA manifest (fullscreen landscape, Add to Home Screen)
   src/main.ts       UI, input, client prediction, and the single game frame loop
+  src/inputState.ts Device-agnostic move/look/action state shared by all input sources
+  src/touchControls.ts Floating stick, charge/action buttons and camera drag for touch
+  src/mobileSupport.ts Touch detection, persisted settings, haptics, fullscreen and quality pacing
   src/network.ts    WebSocket client and protocol types
   src/voice.ts      Swappable LiveKit voice transport and Web Audio proximity audio
   src/scene.ts      Three.js island, avatars, labels, cast arcs, and interpolation

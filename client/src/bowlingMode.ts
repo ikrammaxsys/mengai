@@ -12,6 +12,7 @@ export interface BowlingModeCallbacks {
   getWorldPosition(): { x: number; z: number };
   showToast(message: string): void;
   onExit(): void;
+  onCallout?(callout: 'strike' | 'spare' | 'gutter'): void;
 }
 
 export class BowlingMode {
@@ -67,6 +68,24 @@ export class BowlingMode {
 
   get isActive(): boolean {
     return this.active;
+  }
+
+  /** 0..1 while the player holds the throw button (shown as a ring on mobile). */
+  get chargePower(): number {
+    return this.charging ? this.power : 0;
+  }
+
+  get isCharging(): boolean {
+    return this.charging;
+  }
+
+  /** Touch input bridge: hold the on-screen throw button, release to bowl. */
+  beginTouchCharge(): void {
+    this.startCharge();
+  }
+
+  endTouchCharge(): void {
+    this.releaseThrow();
   }
 
   setNetwork(network: BowlingNet | null): void {
@@ -170,6 +189,7 @@ export class BowlingMode {
       if (snapshot.callout === 'strike') this.audio.strike();
       else if (snapshot.callout === 'spare') this.audio.spare();
       else this.audio.gutter();
+      this.callbacks.onCallout?.(snapshot.callout);
     }
     this.lastPhase = snapshot.phase;
     this.view.receive(snapshot);

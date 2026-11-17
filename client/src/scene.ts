@@ -65,6 +65,7 @@ export class GameScene {
   private leaderboardLeader = '';
   private serverClockOffset = 0;
   private interpolationDelayMs: number = FISH_CONFIG.sync.interpolationDelayMs;
+  private qualityLevel: 'high' | 'medium' | 'low' = 'high';
   private correctionCount = 0;
   private correctionX = 0;
   private correctionZ = 0;
@@ -133,7 +134,7 @@ export class GameScene {
     this.theaterPresenterLabel.className = 'theater-world-label hidden';
     labels.appendChild(this.theaterPresenterLabel);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1131,6 +1132,37 @@ export class GameScene {
   setInterpolationDelay(delayMs: number): void {
     this.interpolationDelayMs = Math.max(FISH_CONFIG.sync.interpolationDelayMinMs,
       Math.min(FISH_CONFIG.sync.interpolationDelayMaxMs, delayMs));
+  }
+
+  /**
+   * Mobile quality tiers. Phones start at `medium`, weaker phones can drop to
+   * `low` (1x pixel ratio, shadows off) when the frame rate stays low.
+   */
+  setQuality(level: 'high' | 'medium' | 'low'): void {
+    if (this.qualityLevel === level) return;
+    this.qualityLevel = level;
+    const pixelRatio = level === 'low'
+      ? 1
+      : level === 'medium' ? Math.min(devicePixelRatio, 1.5) : Math.min(devicePixelRatio, 2);
+    this.renderer.setPixelRatio(pixelRatio);
+    this.renderer.setSize(innerWidth, innerHeight);
+    const shadows = level !== 'low';
+    this.renderer.shadowMap.enabled = shadows;
+    this.directionalLight.castShadow = shadows;
+    if (shadows) {
+      const size = level === 'medium' ? 1024 : 2048;
+      if (this.directionalLight.shadow.mapSize.x !== size) {
+        this.directionalLight.shadow.mapSize.set(size, size);
+        this.directionalLight.shadow.map?.dispose();
+        this.directionalLight.shadow.map = null;
+      }
+    }
+    this.camera.aspect = innerWidth / innerHeight;
+    this.camera.updateProjectionMatrix();
+  }
+
+  get quality(): 'high' | 'medium' | 'low' {
+    return this.qualityLevel;
   }
 
   noteCorrection(): void { this.correctionCount += 1; }

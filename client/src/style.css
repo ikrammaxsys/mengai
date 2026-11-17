@@ -890,3 +890,333 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 @media (prefers-reduced-motion: reduce) {
   .bowling-callout, .bowling-power-fill { transition: none; }
 }
+
+/* ------------------------------------------------------------------ */
+/* Mobile layout and touch controls                                    */
+/* ------------------------------------------------------------------ */
+
+html, body { height: 100%; height: 100dvh; overscroll-behavior: none; }
+body { min-height: 100dvh; }
+#app { height: 100dvh; }
+#game canvas, .touch-controls, .arena-canvas-host canvas, .bowling-canvas-host canvas {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+#app.touch-device #game canvas { cursor: default; }
+
+.touch-controls {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  display: none;
+  overflow: hidden;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  --touch-scale: 1;
+  --touch-opacity: .86;
+}
+.touch-controls.is-visible { display: block; }
+
+/* Left half: floating stick. Dragging the render canvas turns the camera. */
+.touch-stick-zone { position: absolute; left: 0; bottom: 0; width: 48%; height: 72%; pointer-events: auto; touch-action: none; }
+.touch-controls.is-left-handed .touch-stick-zone { left: auto; right: 0; }
+
+.touch-stick-base {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(128px * var(--touch-scale));
+  height: calc(128px * var(--touch-scale));
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity .12s ease;
+  pointer-events: none;
+}
+.touch-controls.stick-active .touch-stick-base { opacity: var(--touch-opacity); }
+.touch-stick-ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(255, 255, 255, .7);
+  border-radius: 50%;
+  background: rgba(24, 48, 41, .3);
+  box-shadow: 0 8px 24px rgba(14, 32, 26, .3), inset 0 0 18px rgba(255, 255, 255, .08);
+  backdrop-filter: blur(2px);
+}
+.touch-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(52px * var(--touch-scale));
+  height: calc(52px * var(--touch-scale));
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 4px 14px rgba(16, 36, 29, .35);
+  transform: translate(calc(-50% + var(--knob-x, 0px)), calc(-50% + var(--knob-y, 0px)));
+  transition: transform .05s linear;
+}
+
+/* Right thumb: big contextual action + smaller secondary action. */
+.touch-actions {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 18px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  display: flex;
+  align-items: flex-end;
+  gap: calc(14px * var(--touch-scale));
+  pointer-events: none;
+}
+.touch-controls.is-left-handed .touch-actions { right: auto; left: calc(env(safe-area-inset-left, 0px) + 18px); flex-direction: row-reverse; }
+
+.touch-action {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, .78);
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(33, 64, 55, .66);
+  box-shadow: 0 9px 24px rgba(12, 31, 25, .32);
+  opacity: var(--touch-opacity);
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .08s ease, background .12s ease, opacity .12s ease;
+}
+.touch-primary { width: calc(92px * var(--touch-scale)); height: calc(92px * var(--touch-scale)); }
+.touch-secondary { width: calc(66px * var(--touch-scale)); height: calc(66px * var(--touch-scale)); margin-bottom: calc(10px * var(--touch-scale)); }
+.touch-action.is-held { transform: scale(.93); background: rgba(50, 140, 120, .86); }
+.touch-action-glyph { font-size: calc(23px * var(--touch-scale)); line-height: 1; }
+.touch-secondary .touch-action-glyph { font-size: calc(19px * var(--touch-scale)); }
+.touch-action-label { max-width: 84%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; font-size: calc(11px * var(--touch-scale)); font-weight: 800; letter-spacing: .01em; text-align: center; }
+.touch-charge-ring {
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  pointer-events: none;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+}
+.touch-action.is-charging { background: rgba(61, 106, 88, .9); }
+
+/* Bowling only needs the throw button; the arena only needs the stone button. */
+.touch-controls[data-mode="bowling"] .touch-stick-zone,
+.touch-controls[data-mode="bowling"] .touch-secondary,
+.touch-controls[data-mode="arena"] .touch-secondary { display: none; }
+
+/* HUD: one menu button replaces the vertical dock on touch screens.
+   The HUD sits above the transparent touch layer so every existing panel,
+   prompt and popup keeps its own taps; the HUD itself is pointer-events:none. */
+#app.touch-device .hud { z-index: 93; --hud-margin: 10px; }
+#app.settings-open .hud { z-index: 93; }
+#app.touch-device .hud-dock { display: none; }
+#app.touch-device .hud.dock-open .hud-dock {
+  position: fixed;
+  z-index: 11;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(56px, 1fr));
+  gap: 10px;
+  width: min(300px, calc(100vw - 40px));
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, .95);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 22px 70px rgba(17, 41, 33, .38);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+#app.touch-device .hud.dock-open .dock-button { width: 100%; height: 54px; }
+#app.touch-device .dock-tooltip { display: none; }
+#app.touch-device .hud.dock-open .music-control { width: 100%; }
+#app.touch-device .hud.dock-open .music-control > .dock-button { width: 100%; }
+#app.touch-device .hud.dock-open .music-panel {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+#app.touch-device .hud.dock-open .voice-panel,
+#app.touch-device .hud.dock-open .settings-panel { z-index: 40; }
+
+.hud-dock-backdrop {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  background: rgba(19, 40, 34, .34);
+  pointer-events: auto;
+  backdrop-filter: blur(2px);
+}
+
+.hud-menu-toggle {
+  display: none;
+  position: absolute;
+  z-index: 3;
+  top: calc(env(safe-area-inset-top, 0px) + 54px);
+  left: calc(env(safe-area-inset-left, 0px) + 10px);
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .95);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .95);
+  color: #557569;
+  box-shadow: 0 5px 18px rgba(47, 86, 81, .14);
+  pointer-events: auto;
+}
+.hud-menu-toggle:hover, .hud-menu-toggle[aria-expanded="true"] { background: #eaf5ee; color: #328c78; transform: none; }
+.hud-menu-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#app.touch-device .hud-menu-toggle { display: grid; }
+
+/* Settings panel */
+.settings-panel {
+  position: fixed;
+  z-index: 60;
+  left: 50%;
+  top: 50%;
+  width: min(340px, calc(100vw - 32px));
+  max-height: min(86dvh, 560px);
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, .95);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 22px 70px rgba(19, 42, 34, .34);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.settings-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid #edf2f0; }
+.settings-panel-header strong, .settings-panel-header span { display: block; }
+.settings-panel-header strong { color: #294c43; font-size: 15px; }
+.settings-panel-header span { margin-top: 3px; color: #7a9386; font-size: 10px; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; margin-top: 10px; color: #41605a; font-size: 12px; font-weight: 700; }
+.settings-row select { min-height: 40px; padding: 0 8px; border: 1px solid #dce7e4; border-radius: 10px; background: #f8fbf6; color: #2f554b; font: inherit; font-size: 12px; }
+.settings-toggle { display: flex; align-items: center; gap: 9px; min-height: 44px; margin-top: 6px; color: #41605a; font-size: 12px; font-weight: 700; }
+.settings-toggle input { width: 20px; height: 20px; margin: 0; padding: 0; accent-color: #328c78; }
+.settings-slider { display: block; margin-top: 12px; color: #41605a; font-size: 12px; font-weight: 700; }
+.settings-slider > span { display: flex; align-items: center; justify-content: space-between; }
+.settings-slider b { color: #328c78; }
+.settings-slider input { display: block; width: 100%; height: 26px; margin: 2px 0 0; padding: 0; accent-color: #328c78; }
+.settings-fullscreen { width: 100%; min-height: 46px; margin-top: 14px; border-radius: 11px; font-size: 13px; text-align: center; }
+.settings-hint { margin: 10px 0 0; color: #8ba096; font-size: 10px; line-height: 1.45; }
+
+/* Portrait warning: landscape is the recommended orientation. */
+.rotate-hint {
+  position: fixed;
+  z-index: 130;
+  inset: 0;
+  display: none;
+  place-items: center;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: rgba(21, 41, 35, .95);
+  color: #f2f8ed;
+  text-align: center;
+}
+.rotate-hint-icon { font-size: 54px; line-height: 1; animation: rotate-hint-turn 1.9s ease-in-out infinite; }
+.rotate-hint strong { font-size: 20px; }
+.rotate-hint span { color: #b8ccc2; font-size: 13px; }
+@keyframes rotate-hint-turn { 0%, 18% { transform: rotate(0); } 58%, 100% { transform: rotate(90deg); } }
+@media (orientation: portrait) and (max-width: 900px) {
+  #app.touch-ui-active .rotate-hint { display: grid; }
+  #app.touch-device .touch-controls { display: none !important; }
+  #app.touch-device .hud-menu-toggle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .rotate-hint-icon { animation: none; } }
+
+/* Keep HUD widgets clear of the thumb zones on touch screens. */
+#app.touch-device .chat-toggle {
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 128px);
+}
+#app.touch-device .emoji-dock {
+  right: calc(env(safe-area-inset-right, 0px) + 200px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+}
+#app.touch-device .catch-popup {
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 142px);
+  max-width: min(310px, calc(100vw - 28px));
+}
+#app.touch-device .fish-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 122px); font-size: 11px; }
+#app.touch-device .reel-game { bottom: calc(env(safe-area-inset-bottom, 0px) + 122px); width: min(390px, calc(100vw - 36px)); }
+#app.touch-device .portal-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 150px); }
+#app.touch-device .seat-proximity-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 150px); }
+#app.touch-device .ferris-proximity-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 196px); }
+#app.touch-device .theater-proximity-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 150px); }
+#app.touch-device .photobooth-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 150px); }
+#app.touch-device .jukebox-hud-line { bottom: calc(env(safe-area-inset-bottom, 0px) + 122px); max-width: calc(100vw - 220px); }
+
+/* Keyboard-only hints are replaced by the contextual touch buttons. */
+#app.touch-device .pebble-hint,
+#app.touch-device .photobooth-prompt,
+#app.touch-device .jukebox-prompt,
+#app.touch-device .theater-proximity-prompt,
+#app.touch-device .arena-exit-prompt { display: none !important; }
+#app.touch-device .seat-proximity-prompt kbd { display: none; }
+#app.touch-device .map-button { width: 44px; height: 44px; }
+#app.touch-device .map-connection { width: 40px; height: 40px; }
+#app.touch-device .map-controls { right: 0; bottom: -54px; flex-direction: row; gap: 6px; }
+#app.touch-device .chat-toggle { min-height: 48px; }
+
+/* Compact HUD, safe areas and a larger turn indicator for phones. */
+@media (pointer: coarse) {
+  .screen-card { max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px); }
+  #app.touch-device .hud { --hud-margin: 8px; }
+  #app.touch-device .room-card {
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    left: calc(env(safe-area-inset-left, 0px) + 8px);
+    min-height: 34px;
+    padding: 0 9px;
+    gap: 5px;
+    font-size: 10px;
+  }
+  #app.touch-device .room-card strong { font-size: 11px; }
+  #app.touch-device .minimap {
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    right: calc(env(safe-area-inset-right, 0px) + 8px);
+    width: 100px;
+    height: 100px;
+  }
+  #app.touch-device .weather-control { top: calc(env(safe-area-inset-top, 0px) + 8px); }
+  #app.touch-device .weather-badge { height: 34px; padding: 0 10px; font-size: 10px; }
+  #app.touch-device .toast {
+    top: calc(env(safe-area-inset-top, 0px) + 50px);
+    max-width: min(320px, calc(100vw - 28px));
+    font-size: 12px;
+    white-space: normal;
+    text-align: center;
+  }
+
+  /* Arena: hide keyboard hints, keep both health bars on one row. */
+  .arena-party-health { top: calc(env(safe-area-inset-top, 0px) + 8px); left: calc(env(safe-area-inset-left, 0px) + 8px); width: min(230px, 40vw); max-height: 36dvh; }
+  .arena-boss-health { top: calc(env(safe-area-inset-top, 0px) + 8px); width: min(320px, 44vw); }
+  .arena-boss-health > strong { font-size: 12px; }
+  .arena-stone-count { top: calc(env(safe-area-inset-top, 0px) + 8px); right: calc(env(safe-area-inset-right, 0px) + 8px); padding: 6px 9px; font-size: 11px; }
+  .arena-controls { display: none; }
+  .arena-exit-prompt { bottom: calc(env(safe-area-inset-bottom, 0px) + 128px); font-size: 10px; }
+
+  /* Bowling: keep the turn indicator and power meter visible above thumbs. */
+  .bowling-topbar { top: calc(env(safe-area-inset-top, 0px) + 8px); }
+  .bowling-turn { min-width: 110px; padding: 9px 15px; font-size: 15px; }
+  .bowling-timer { padding: 9px 12px; font-size: 14px; }
+  .bowling-leave { height: 40px; padding: 0 14px; font-size: 11px; }
+  .bowling-scoreboard { top: calc(env(safe-area-inset-top, 0px) + 60px); left: 8px; right: 8px; gap: 6px; }
+  .bowling-score-card { flex-basis: 186px; }
+  .bowling-power { bottom: calc(env(safe-area-inset-bottom, 0px) + 124px); }
+  .bowling-controls { display: none; }
+  .bowling-waiting { bottom: calc(env(safe-area-inset-bottom, 0px) + 132px); }
+}

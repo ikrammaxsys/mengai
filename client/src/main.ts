@@ -19,6 +19,23 @@ import { MusicManager, type MusicTrackId } from './music';
 import { Jukebox } from './jukebox';
 import { Theater } from './theater';
 import { PLAYER_EMOJIS } from '../../shared/emojiReactions';
+import { InputState, type InputAction } from './inputState';
+import { TouchControls } from './touchControls';
+import {
+  fullscreenSupported,
+  isCoarsePointer,
+  loadMobileSettings,
+  PerformanceGovernor,
+  saveMobileSettings,
+  toggleFullscreen,
+  vibrate,
+  type MobileSettings,
+  type QualityPreference,
+} from './mobileSupport';
+
+const mobileSettings: MobileSettings = loadMobileSettings();
+const coarsePointer = isCoarsePointer();
+let sawFirstTouch = false;
 
 const joinScreen = document.querySelector<HTMLElement>('#join-screen')!;
 const appRoot = document.querySelector<HTMLElement>('#app')!;
@@ -50,6 +67,20 @@ const whatsNewReopen = document.querySelector<HTMLButtonElement>('#whats-new-reo
 const whatsNewReopenJoin = document.querySelector<HTMLButtonElement>('#whats-new-reopen-join')!;
 const toast = document.querySelector<HTMLElement>('#toast')!;
 const hitFlash = document.querySelector<HTMLElement>('#hit-flash')!;
+const hudMenuToggle = document.querySelector<HTMLButtonElement>('#hud-menu-toggle')!;
+const hudDockBackdrop = document.querySelector<HTMLElement>('#hud-dock-backdrop')!;
+const settingsToggle = document.querySelector<HTMLButtonElement>('#settings-toggle')!;
+const settingsPanel = document.querySelector<HTMLElement>('#settings-panel')!;
+const settingsClose = document.querySelector<HTMLButtonElement>('#settings-close')!;
+const touchModeSelect = document.querySelector<HTMLSelectElement>('#touch-mode')!;
+const touchLeftHandedInput = document.querySelector<HTMLInputElement>('#touch-left-handed')!;
+const touchSizeInput = document.querySelector<HTMLInputElement>('#touch-size')!;
+const touchSizeValue = document.querySelector<HTMLElement>('#touch-size-value')!;
+const touchOpacityInput = document.querySelector<HTMLInputElement>('#touch-opacity')!;
+const touchOpacityValue = document.querySelector<HTMLElement>('#touch-opacity-value')!;
+const hapticsInput = document.querySelector<HTMLInputElement>('#haptics-enabled')!;
+const qualitySelect = document.querySelector<HTMLSelectElement>('#quality-select')!;
+const fullscreenToggle = document.querySelector<HTMLButtonElement>('#fullscreen-toggle')!;
 const portalPrompt = document.querySelector<HTMLElement>('#portal-prompt')!;
 const portalEnterButton = document.querySelector<HTMLButtonElement>('#portal-enter')!;
 const portalCancelButton = document.querySelector<HTMLButtonElement>('#portal-cancel')!;
@@ -61,6 +92,9 @@ const arenaPartyLeaveButton = document.querySelector<HTMLButtonElement>('#arena-
 const arenaPartyInvites = document.querySelector<HTMLElement>('#arena-party-invites')!;
 const arenaPartyInvitesList = document.querySelector<HTMLElement>('#arena-party-invites-list')!;
 const arenaOverlay = document.querySelector<HTMLElement>('#arena-overlay')!;
+const arenaVictoryPanel = document.querySelector<HTMLElement>('#arena-victory')!;
+const arenaDefeatedPanel = document.querySelector<HTMLElement>('#arena-defeated')!;
+const bowlingResultsPanel = document.querySelector<HTMLElement>('#bowling-results')!;
 const bowlingPrompt = document.querySelector<HTMLElement>('#bowling-prompt')!;
 const bowlingPartyPanel = document.querySelector<HTMLElement>('#bowling-party-panel')!;
 const photoboothEnter = document.querySelector<HTMLButtonElement>('#photobooth-enter')!;
@@ -158,7 +192,14 @@ for (const emoji of PLAYER_EMOJIS) {
 }
 const music = new MusicManager();
 const speakingPlayers = new Set<string>();
-let keys = new Set<string>();
+const input = new InputState();
+const keys = input.keys;
+let touchUiActive = false;
+let touchDeviceLayout = false;
+const touchControls = new TouchControls(appRoot, input, {
+  onPress: (action) => handleTouchActionPress(action),
+  onRelease: (action) => handleTouchActionRelease(action),
+});
 let network: Network;
 const theater = new Theater(appRoot, {
   start: (mode) => network.startTheater(mode),
@@ -307,6 +348,10 @@ const bowlingMode = new BowlingMode({
     appRoot.classList.remove('in-bowling');
     theater.setOccluded(false);
   },
+  onCallout: (callout) => {
+    if (callout === 'strike') vibrate([45, 35, 90], mobileSettings.haptics);
+    else if (callout === 'spare') vibrate(35, mobileSettings.haptics);
+  },
 });
 let voiceResumeToken = '';
 let isPhotoboothMode = false;
@@ -395,7 +440,10 @@ function showHitFlash(): void {
 
 function handleStoneHit(playerId: string, fishingCancelled: boolean): void {
   scene.showBonk(playerId);
-  if (playerId === selfId) showHitFlash();
+  if (playerId === selfId) {
+    showHitFlash();
+    vibrate(50, mobileSettings.haptics);
+  }
   if (!fishingCancelled) return;
   scene.cancelFishing(playerId);
   if (playerId !== selfId) return;
@@ -788,7 +836,249 @@ function updatePortalPrompt(): void {
   } else portalPrompt.classList.toggle('hidden', portalPromptDismissedUntilExit);
 }
 
-function hasForwardInput(): boolean { return keys.has('w') || keys.has('s'); }
+function hasForwardInput(): boolean { return input.hasForwardInput; }
+
+/**
+ * Contextual "primary" action, shared by the touch button and mirroring the
+ * keyboard E shortcut: stones, seats, Ferris wheel, theater and arena portal.
+ */
+function performPrimaryAction(): void {
+  if (!joined || isPhotoboothMode || jukebox.isOpen) return;
+  if (reelGame) { reelGame.setHeld(true); return; }
+  if (bowlingMode.isActive) { bowlingMode.beginTouchCharge(); return; }
+  if (arenaMode) {
+    if (arenaView.isNearExit()) network.leaveArena();
+    else network.arenaStoneAction();
+    return;
+  }
+  if (scene.fishingState() !== 'idle') return;
+  if (scene.carryingStoneId(selfId)) { network.throwStone(); return; }
+  const stoneId = scene.nearbyStoneId(selfId);
+  if (stoneId) {
+    if (myHeldFish) network.holdFish(null);
+    network.pickStone(stoneId);
+    return;
+  }
+  if (scene.seatedSeatId) { standFromSeat(); return; }
+  const seatId = scene.nearbySeatId();
+  if (seatId && !scene.isSeatOccupied(seatId)) { network.sitAtSeat(seatId); return; }
+  if (isNearFerris() && scene.ferrisBoardingReady) { network.boardFerrisWheel(); return; }
+  if (isNearJukebox()) { openJukebox(); return; }
+  if (isNearPhotobooth()) { enterPhotobooth(); return; }
+  if (theater.isNearby) { theater.openMenu(); return; }
+  if (!portalPrompt.classList.contains('hidden')) requestPortalEntry();
+}
+
+/** Secondary action: fishing cast/reel or the reel mini-game hold. */
+function performSecondaryAction(): void {
+  if (!joined || isPhotoboothMode || jukebox.isOpen) return;
+  if (reelGame) { reelGame.setHeld(true); return; }
+  if (arenaMode || bowlingMode.isActive) return;
+  const state = scene.fishingState();
+  if (state === 'idle') {
+    if (scene.carryingStoneId(selfId)) { showToast('Put the stone down first (Throw).'); return; }
+    const target = makeCastTarget();
+    if (target) {
+      if (myHeldFish) network.holdFish(null);
+      network.castFish(target.x, target.z);
+    }
+    return;
+  }
+  if (state === 'bite') { startReelMiniGame(); return; }
+  if (state === 'casting' || state === 'waiting') network.cancelFishing();
+}
+
+function handleTouchActionPress(action: InputAction): void {
+  input.press(action);
+  if (action === 'primary') performPrimaryAction();
+  else performSecondaryAction();
+}
+
+function handleTouchActionRelease(action: InputAction): void {
+  input.release(action);
+  if (action === 'primary') {
+    if (reelGame) reelGame.setHeld(false);
+    if (bowlingMode.isActive) bowlingMode.endTouchCharge();
+    return;
+  }
+  if (reelGame) reelGame.setHeld(false);
+}
+
+type TouchUiMode = 'world' | 'arena' | 'bowling';
+let isPageHidden = false;
+let lastTouchLabelSync = 0;
+let qualityPreference: QualityPreference = mobileSettings.quality;
+
+function touchControlMode(): TouchUiMode {
+  if (arenaMode) return 'arena';
+  if (bowlingMode.isActive) return 'bowling';
+  return 'world';
+}
+
+function touchControlLabels(mode: TouchUiMode): { primary: string; secondary: string } {
+  if (mode === 'bowling') return { primary: bowlingMode.isCharging ? 'Release' : 'Throw', secondary: '' };
+  if (mode === 'arena') return { primary: arenaView.isNearExit() ? 'Leave' : 'Stone', secondary: '' };
+  if (reelGame) return { primary: 'Reel', secondary: 'Lift' };
+  const fishing = scene.fishingState();
+  const secondary = fishing === 'bite' ? 'Reel' : fishing === 'casting' || fishing === 'waiting' ? 'Stop' : 'Cast';
+  let primary = 'Interact';
+  if (fishing === 'idle') {
+    if (scene.carryingStoneId(selfId)) primary = 'Throw';
+    else if (scene.nearbyStoneId(selfId)) primary = 'Pick up';
+    else if (scene.seatedSeatId) primary = 'Stand';
+    else if (scene.nearbySeatId()) primary = 'Sit';
+    else if (isNearFerris() && scene.ferrisBoardingReady) primary = 'Board';
+    else if (isNearJukebox()) primary = 'Jukebox';
+    else if (isNearPhotobooth()) primary = 'Photo';
+    else if (theater.isNearby) primary = 'Theater';
+  }
+  return { primary, secondary };
+}
+
+function setTouchDockOpen(open: boolean): void {
+  hud.classList.toggle('dock-open', open);
+  hudDockBackdrop.classList.toggle('hidden', !open);
+  hudMenuToggle.setAttribute('aria-expanded', String(open));
+  if (open) {
+    touchControls.releaseMovement();
+    setSettingsOpen(false);
+  }
+}
+
+function setSettingsOpen(open: boolean): void {
+  settingsPanel.classList.toggle('hidden', !open);
+  settingsToggle.setAttribute('aria-expanded', String(open));
+  settingsToggle.classList.toggle('active', open);
+  appRoot.classList.toggle('settings-open', open);
+  if (open) {
+    touchControls.releaseMovement();
+    hud.classList.remove('dock-open');
+    hudDockBackdrop.classList.add('hidden');
+    hudMenuToggle.setAttribute('aria-expanded', 'false');
+  }
+}
+
+/**
+ * Touch UI is shown for coarse pointers, hybrid devices after the first touch,
+ * or when the player forces it on in Settings. It hides itself for full-screen
+ * modals so the buttons never sit on top of a dialog.
+ */
+function syncTouchUi(): void {
+  const supported = mobileSettings.touchMode === 'on'
+    || (mobileSettings.touchMode === 'auto' && (coarsePointer || sawFirstTouch));
+  if (supported !== touchDeviceLayout) {
+    touchDeviceLayout = supported;
+    appRoot.classList.toggle('touch-device', supported);
+  }
+  const blocked = isPhotoboothMode || jukebox.isOpen || theater.isFocused || theater.isMenuOpen
+    || !joinScreen.classList.contains('hidden')
+    || !fishViewerRoot.classList.contains('hidden')
+    || !expandedMap.classList.contains('hidden')
+    || !whatsNew.classList.contains('hidden')
+    || !leaderboardPanel.classList.contains('hidden')
+    || !backpackPanel.classList.contains('hidden')
+    || !chatPanel.classList.contains('hidden')
+    || !voicePanel.classList.contains('hidden')
+    || !settingsPanel.classList.contains('hidden')
+    || !arenaVictoryPanel.classList.contains('hidden')
+    || !arenaDefeatedPanel.classList.contains('hidden')
+    || !bowlingResultsPanel.classList.contains('hidden');
+  const active = joined && !isPageHidden && supported && !blocked;
+  if (active !== touchUiActive) {
+    touchUiActive = active;
+    appRoot.classList.toggle('touch-ui-active', active);
+    touchControls.setVisible(active);
+    if (!active) setTouchDockOpen(false);
+  }
+  if (!active) return;
+  const mode = touchControlMode();
+  touchControls.setCharge(bowlingMode.chargePower, mode === 'bowling' && bowlingMode.isCharging);
+  // Contextual labels depend on nearby objects; refresh them a few times a
+  // second instead of every frame.
+  const now = performance.now();
+  if (now - lastTouchLabelSync < 120) return;
+  lastTouchLabelSync = now;
+  touchControls.setMode(mode);
+  const labels = touchControlLabels(mode);
+  touchControls.setLabels(labels.primary, labels.secondary);
+}
+
+function applyQualityPreference(): void {
+  if (qualityPreference === 'auto') scene.setQuality(coarsePointer ? 'medium' : 'high');
+  else scene.setQuality(qualityPreference);
+}
+
+const performanceGovernor = new PerformanceGovernor(() => {
+  if (qualityPreference !== 'auto' || scene.quality === 'low') return;
+  scene.setQuality('low');
+  showToast('Graphics lowered to keep the game smooth.');
+});
+
+function applyTouchSettings(): void {
+  touchControls.setSettings({
+    scale: mobileSettings.controlScale,
+    opacity: mobileSettings.controlOpacity,
+    leftHanded: mobileSettings.leftHanded,
+  });
+  saveMobileSettings(mobileSettings);
+}
+
+touchModeSelect.value = mobileSettings.touchMode;
+touchLeftHandedInput.checked = mobileSettings.leftHanded;
+touchSizeInput.value = String(Math.round(mobileSettings.controlScale * 100));
+touchSizeValue.textContent = `${touchSizeInput.value}%`;
+touchOpacityInput.value = String(Math.round(mobileSettings.controlOpacity * 100));
+touchOpacityValue.textContent = `${touchOpacityInput.value}%`;
+hapticsInput.checked = mobileSettings.haptics;
+qualitySelect.value = mobileSettings.quality;
+applyTouchSettings();
+applyQualityPreference();
+
+touchModeSelect.addEventListener('change', () => {
+  const value = touchModeSelect.value;
+  mobileSettings.touchMode = value === 'on' || value === 'off' ? value : 'auto';
+  saveMobileSettings(mobileSettings);
+  syncTouchUi();
+});
+touchLeftHandedInput.addEventListener('change', () => {
+  mobileSettings.leftHanded = touchLeftHandedInput.checked;
+  applyTouchSettings();
+});
+touchSizeInput.addEventListener('input', () => {
+  mobileSettings.controlScale = Math.max(0.75, Math.min(1.4, Number(touchSizeInput.value) / 100));
+  touchSizeValue.textContent = `${touchSizeInput.value}%`;
+  applyTouchSettings();
+});
+touchOpacityInput.addEventListener('input', () => {
+  mobileSettings.controlOpacity = Math.max(0.3, Math.min(1, Number(touchOpacityInput.value) / 100));
+  touchOpacityValue.textContent = `${touchOpacityInput.value}%`;
+  applyTouchSettings();
+});
+hapticsInput.addEventListener('change', () => {
+  mobileSettings.haptics = hapticsInput.checked;
+  saveMobileSettings(mobileSettings);
+  if (mobileSettings.haptics) vibrate(25, true);
+});
+qualitySelect.addEventListener('change', () => {
+  const value = qualitySelect.value;
+  qualityPreference = value === 'high' || value === 'medium' || value === 'low' ? value : 'auto';
+  mobileSettings.quality = qualityPreference;
+  performanceGovernor.reset();
+  applyQualityPreference();
+  saveMobileSettings(mobileSettings);
+});
+if (!fullscreenSupported()) {
+  fullscreenToggle.classList.add('hidden');
+} else {
+  fullscreenToggle.addEventListener('click', () => {
+    void toggleFullscreen().then((active) => {
+      fullscreenToggle.textContent = active ? 'Exit fullscreen' : 'Enter fullscreen';
+    });
+  });
+  document.addEventListener('fullscreenchange', () => {
+    fullscreenToggle.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen';
+  });
+}
 
 function sendLocalMovement(force = false): void {
   if (!joined || typeof network === 'undefined') return;
@@ -1615,6 +1905,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       joinScreen.classList.add('hidden');
       hud.classList.remove('hidden');
       setConnected(true);
+      syncTouchUi();
       updateVoiceButton();
       joinButton.disabled = false;
       joinButton.innerHTML = 'Join the pond <span aria-hidden="true">→</span>';
@@ -1883,6 +2174,25 @@ leaderboardToggle.addEventListener('click', () => {
   setOpenSidePanel(openSidePanel === 'leaderboard' ? null : 'leaderboard');
 });
 viewToggle.addEventListener('click', () => setViewMode(!firstPersonView));
+hudMenuToggle.addEventListener('click', () => setTouchDockOpen(!hud.classList.contains('dock-open')));
+hudDockBackdrop.addEventListener('click', () => setTouchDockOpen(false));
+settingsToggle.addEventListener('click', () => setSettingsOpen(settingsPanel.classList.contains('hidden')));
+settingsClose.addEventListener('click', () => setSettingsOpen(false));
+window.addEventListener('pointerdown', (event) => {
+  if (event.pointerType !== 'touch' || sawFirstTouch) return;
+  sawFirstTouch = true;
+  syncTouchUi();
+}, { capture: true, passive: true });
+window.addEventListener('arena:crocodile-skill', (event) => {
+  const detail = (event as CustomEvent<{ skill: string; phase: string }>).detail;
+  if (!arenaMode || !detail) return;
+  if (detail.phase === 'windup' || detail.phase === 'telegraph') vibrate(18, mobileSettings.haptics);
+  else if (detail.phase === 'charge') vibrate([40, 30, 40], mobileSettings.haptics);
+});
+window.addEventListener('orientationchange', () => {
+  touchControls.reset();
+  lastFrame = performance.now();
+});
 voiceToggle.addEventListener('click', () => {
   if (!voice.isEnabled) void voice.enable(currentRoom, selfId, voiceResumeToken);
   else if (voice.isPushToTalk) void voice.disconnect();
@@ -2018,6 +2328,8 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape') {
+    if (!settingsPanel.classList.contains('hidden')) { event.preventDefault(); setSettingsOpen(false); return; }
+    if (hud.classList.contains('dock-open')) { event.preventDefault(); setTouchDockOpen(false); return; }
     event.preventDefault();
     if (arenaMode) return;
     if (document.pointerLockElement === gameCanvas) cancelMouseTurn();
@@ -2224,23 +2536,47 @@ window.addEventListener('blur', () => {
   bowlingMode.handleBlur();
   const wasMoving = hasForwardInput();
   cancelMouseTurn();
-  keys.clear(); reelGame?.setHeld(false);
+  touchControls.reset();
+  input.clear(); reelGame?.setHeld(false);
   if (wasMoving) sendLocalMovement(true);
+  syncTouchUi();
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    isPageHidden = true;
     bowlingMode.handleBlur();
     const wasMoving = hasForwardInput();
     cancelMouseTurn();
-    keys.clear(); reelGame?.setHeld(false);
+    touchControls.reset();
+    input.clear(); reelGame?.setHeld(false);
     if (wasMoving) sendLocalMovement(true);
+    setTouchDockOpen(false);
+    setSettingsOpen(false);
+  } else {
+    // Returning from the background: drop the stale delta so nothing "teleports".
+    isPageHidden = false;
+    lastFrame = performance.now();
+    performanceGovernor.reset();
+    requestAnimationFrame(() => { lastFrame = performance.now(); });
   }
+  syncTouchUi();
 });
 
 function animate(now: number): void {
   requestAnimationFrame(animate);
+  if (isPageHidden) {
+    lastFrame = now;
+    return;
+  }
   const delta = Math.min((now - lastFrame) / 1000, 0.05);
   lastFrame = now;
+  performanceGovernor.frame(delta);
+  const look = input.consumeLook();
+  if (look.x !== 0 && !input.hasMovementInput && !isPhotoboothMode && !reelGame && scene.fishingState() === 'idle') {
+    // Touch drag is converted into the same "remaining turn" budget as mouse look,
+    // which keeps rotation inside the server's per-tick validation window.
+    mouseTurnRemaining = Math.max(-1.2, Math.min(1.2, mouseTurnRemaining - look.x * 0.02));
+  }
   const inBowling = bowlingMode.isActive;
   const ferrisRiding = scene.isFerrisRiding;
   if (ferrisRiding !== lastFerrisRiding) {
@@ -2259,8 +2595,15 @@ function animate(now: number): void {
   }
   if (joined && !arenaMode && !inBowling) scene.stepCorrection(delta);
   if (joined && arenaMode && !reelGame) {
-    const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
-    const turn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
+    const forward = input.forward;
+    const stickTurn = input.turn;
+    let turn = stickTurn;
+    if (stickTurn === 0 && mouseTurnRemaining !== 0 && delta > 0) {
+      const maxTurn = ARENA_CONFIG.playerTurnRate * delta * 1.35;
+      const lookStep = Math.max(-maxTurn, Math.min(maxTurn, mouseTurnRemaining));
+      mouseTurnRemaining -= lookStep;
+      turn = lookStep / (ARENA_CONFIG.playerTurnRate * delta);
+    } else if (stickTurn !== 0) mouseTurnRemaining = 0;
     const pose = arenaView.move(forward, turn, delta);
     if (pose && now - lastArenaMoveAt >= 50) {
       network.moveArena(pose.x, pose.z, pose.facing);
@@ -2268,15 +2611,15 @@ function animate(now: number): void {
     }
   }
   if (joined && !arenaMode && !inBowling && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && !scene.isFerrisRiding && scene.fishingState() === 'idle') {
-    const forward = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
-    const keyboardTurn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
-    let turn = keyboardTurn;
-    if (keyboardTurn === 0 && mouseTurnRemaining !== 0 && delta > 0) {
+    const forward = input.forward;
+    const stickTurn = input.turn;
+    let turn = stickTurn;
+    if (stickTurn === 0 && mouseTurnRemaining !== 0 && delta > 0) {
       const maxTurn = MOVEMENT_RULES.turnSpeedRadians * delta * 1.35;
       const mouseStep = Math.max(-maxTurn, Math.min(maxTurn, mouseTurnRemaining));
       mouseTurnRemaining -= mouseStep;
       turn = mouseStep / (MOVEMENT_RULES.turnSpeedRadians * delta);
-    } else if (keyboardTurn !== 0) mouseTurnRemaining = 0;
+    } else if (stickTurn !== 0) mouseTurnRemaining = 0;
     const position = scene.getPosition();
     const next = stepMovement({ x: position.x, z: position.z, rotY: scene.localFacing() }, forward, turn, delta);
     scene.setLocalMotion(next.x, next.z, next.rotY);
@@ -2303,15 +2646,21 @@ function animate(now: number): void {
       const seatPromptVisible = Boolean(scene.seatedSeatId || nearbySeat);
       seatPrompt.classList.toggle('hidden', !seatPromptVisible || theater.isFocused || theater.isMenuOpen);
       const seatLabel = seatPrompt.querySelector('span');
-      if (seatLabel) seatLabel.textContent = scene.seatedSeatId ? 'Press E to stand' : 'Press E to sit';
+      if (seatLabel) seatLabel.textContent = scene.seatedSeatId
+        ? (touchUiActive ? 'Stand up' : 'Press E to stand')
+        : (touchUiActive ? 'Sit here' : 'Press E to sit');
       seatPrompt.disabled = false;
       const wheel = WORLD_CONFIG.playground.wheel;
       const nearFerris = scene.isFerrisRiding || isNearFerris();
       ferrisPrompt.classList.toggle('hidden', !nearFerris || theater.isFocused || theater.isMenuOpen || isPhotoboothMode);
       const ferrisLabel = ferrisPrompt.querySelector('span');
       if (ferrisLabel) ferrisLabel.textContent = scene.isFerrisRiding
-        ? scene.ferrisExitQueued ? 'Exit queued · Press E to leave at the bottom' : 'Press E to get off at the bottom'
-        : scene.ferrisBoardingReady ? 'Press E to board Ferris Wheel' : 'Waiting for a free gondola';
+        ? scene.ferrisExitQueued
+          ? (touchUiActive ? 'Leave queued · exit at the bottom' : 'Exit queued · Press E to leave at the bottom')
+          : (touchUiActive ? 'Get off at the bottom' : 'Press E to get off at the bottom')
+        : scene.ferrisBoardingReady
+          ? (touchUiActive ? 'Board Ferris Wheel' : 'Press E to board Ferris Wheel')
+          : 'Waiting for a free gondola';
       ferrisPrompt.disabled = !scene.isFerrisRiding && !scene.ferrisBoardingReady;
       const fishing = scene.fishingState();
       const nearPhotobooth = !isPhotoboothMode && isNearPhotobooth();
@@ -2323,7 +2672,9 @@ function animate(now: number): void {
       jukebox.setDistance(Math.hypot(position.x - WORLD_CONFIG.jukebox.x, position.z - WORLD_CONFIG.jukebox.z));
       syncMusicDuck();
       fishPrompt.classList.toggle('hidden', isPhotoboothMode || reelGame !== null || fishing === 'fighting' || distance > fishingRadius);
-      fishPrompt.textContent = fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
+      fishPrompt.textContent = touchUiActive
+        ? fishing === 'bite' ? 'A bite! Tap Reel' : fishing === 'waiting' ? 'Fishing… Tap Stop' : fishing === 'casting' ? 'Casting… Tap Reel' : fishing === 'reeling' ? 'Reeling in…' : 'Tap Cast'
+        : fishing === 'bite' ? 'A bite! Press Space to reel in' : fishing === 'waiting' ? 'Fishing… Space to stop' : fishing === 'casting' ? 'Casting… Space to reel in' : fishing === 'reeling' ? 'Reeling in…' : 'Space to cast';
       updatePortalPrompt();
       bowlingMode.updateProximity(scene.getPosition(), !isPhotoboothMode && !reelGame && fishing === 'idle' && !jukebox.isOpen && !theater.isFocused && !theater.isMenuOpen);
     }
@@ -2345,6 +2696,8 @@ function animate(now: number): void {
   if (inBowling) bowlingMode.render(Date.now() + serverClockOffset, delta);
   else if (arenaMode) arenaView.render(Date.now() + serverClockOffset, delta);
   else scene.render(delta);
+  syncTouchUi();
+  input.endFrame();
 }
 
 // The same frame loop renders the island before joining and drives gameplay after joining.

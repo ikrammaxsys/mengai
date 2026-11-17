@@ -2,11 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#c9e8e5" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Mengai" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/mengai-icon-192.png" />
     <title>Mengai — a little fishing getaway</title>
-    <script type="module" crossorigin src="/assets/index-CELTUQ6Q.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-fhEFN4my.css">
+    <script type="module" crossorigin src="/assets/index-BK8Ziova.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-mKMfd_Bz.css">
   </head>
   <body>
     <main id="app">
@@ -32,6 +38,10 @@
       </section>
 
       <section id="hud" class="hud hidden" aria-live="polite">
+        <button id="hud-menu-toggle" class="hud-menu-toggle" type="button" aria-label="Open game menu" aria-expanded="false" aria-controls="hud-dock">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div id="hud-dock-backdrop" class="hud-dock-backdrop hidden" aria-hidden="true"></div>
         <div class="hud-top-left hud-card room-card"><strong id="hud-room">Room —</strong><span class="people-dot" aria-hidden="true"></span><span class="room-separator">·</span><span id="player-count">1</span><span>at the pond</span><span class="room-separator">·</span><span class="chicken-score"><span aria-hidden="true">🐔</span><span>hits</span><strong id="chicken-score">0</strong></span></div>
         <div id="weather-control" class="weather-control">
           <button id="weather-badge" class="weather-badge" type="button" aria-describedby="weather-hint"><span id="weather-icon" class="weather-badge-icon" aria-hidden="true"></span><span id="weather-name">Clear</span></button>
@@ -46,7 +56,7 @@
             <button id="map-expand" class="map-button map-expand" type="button" aria-label="Expand map" title="Expand map (M)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M4 16v4h4M20 16v4h-4"/></svg></button>
           </div>
         </div>
-        <nav class="hud-dock" aria-label="Game panels and view">
+        <nav id="hud-dock" class="hud-dock" aria-label="Game panels and view">
           <button id="leaderboard-toggle" class="dock-button" type="button" aria-label="Leaderboard (L)" title="Leaderboard · L" aria-expanded="false" aria-controls="leaderboard-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v4a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 0v5m-4 3h8m-7-3h6v3H9z"/></svg><span class="dock-tooltip">Leaderboard <kbd>L</kbd></span></button>
           <button id="backpack-toggle" class="dock-button" type="button" aria-label="Backpack (I)" title="Backpack · I" aria-expanded="false" aria-controls="backpack-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6V5a4 4 0 0 1 8 0v1m-9 0h10a3 3 0 0 1 3 3v10H4V9a3 3 0 0 1 3-3Zm-3 6h5v3h6v-3h5M9 10h6"/></svg><span id="backpack-count" class="backpack-count">0</span><span class="dock-tooltip">Backpack <kbd>I</kbd></span></button>
           <button id="view-toggle" class="dock-button" type="button" aria-label="Switch to first-person view (V)" title="Switch view · V" aria-pressed="false"><svg id="view-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-8Zm5 9v-6h8v6M9 9h.01M15 9h.01"/></svg><span class="dock-tooltip">Switch view <kbd>V</kbd></span></button>
@@ -64,6 +74,7 @@
           </div>
           <button id="whats-new-reopen" class="dock-button" type="button" aria-label="What's new" title="What's new"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.75h12v16.5l-3-2-3 2-3-2-3 2V3.75Z"/><path d="M9 8h6m-6 4h6m-6 4h3"/></svg><span class="dock-tooltip">What's new</span></button>
           <button id="photobooth-enter" class="dock-button" type="button" aria-label="Photobooth (P)" title="Photobooth · P" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span class="dock-tooltip">Photobooth <kbd>P</kbd></span></button>
+          <button id="settings-toggle" class="dock-button" type="button" aria-label="Settings" aria-expanded="false" aria-controls="settings-panel" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6m4 0h6M4 12h2m4 0h10M4 17h6m4 0h6"/><circle cx="12" cy="7" r="2.4"/><circle cx="8" cy="12" r="2.4"/><circle cx="12" cy="17" r="2.4"/></svg><span class="dock-tooltip">Settings</span></button>
         </nav>
         <section id="voice-panel" class="voice-panel hidden" aria-label="Voice settings">
           <header class="voice-panel-header"><div><strong>Proximity voice</strong><span id="voice-status">Off</span></div><button id="voice-settings-close" class="chat-close" type="button" aria-label="Close voice settings">×</button></header>
@@ -74,6 +85,24 @@
           <input id="voice-volume" class="voice-volume" type="range" min="0" max="1" step="0.01" value="0.8" />
           <div class="voice-players-heading">Players in this room</div>
           <div id="voice-players" class="voice-players"><span class="voice-empty">Join the pond to see players.</span></div>
+        </section>
+        <section id="settings-panel" class="settings-panel hidden" aria-label="Settings">
+          <header class="settings-panel-header">
+            <div><strong>Settings</strong><span>Controls, comfort and graphics</span></div>
+            <button id="settings-close" class="chat-close" type="button" aria-label="Close settings">×</button>
+          </header>
+          <label class="settings-row"><span>Touch controls</span>
+            <select id="touch-mode"><option value="auto">Auto</option><option value="on">Always on</option><option value="off">Off</option></select>
+          </label>
+          <label class="settings-toggle"><input id="touch-left-handed" type="checkbox" /> Left-handed layout</label>
+          <label class="settings-slider" for="touch-size"><span>Control size <b id="touch-size-value">100%</b></span><input id="touch-size" type="range" min="75" max="140" step="5" value="100" /></label>
+          <label class="settings-slider" for="touch-opacity"><span>Control opacity <b id="touch-opacity-value">86%</b></span><input id="touch-opacity" type="range" min="30" max="100" step="5" value="86" /></label>
+          <label class="settings-toggle"><input id="haptics-enabled" type="checkbox" checked /> Vibration feedback</label>
+          <label class="settings-row"><span>Graphics</span>
+            <select id="quality-select"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+          </label>
+          <button id="fullscreen-toggle" class="settings-fullscreen" type="button">Enter fullscreen</button>
+          <p class="settings-hint">iPhone: use Share → Add to Home Screen to play fullscreen.</p>
         </section>
         <div id="toast" class="toast" aria-live="assertive"></div>
         <div id="portal-prompt" class="portal-prompt hidden" role="dialog" aria-label="Arena portal">
@@ -312,6 +341,11 @@
             <p class="viewer-drag-hint">Drag the fish to turn it</p>
           </div>
         </section>
+      </div>
+      <div id="rotate-hint" class="rotate-hint" aria-hidden="true">
+        <div class="rotate-hint-icon">📱</div>
+        <strong>Rotate your phone</strong>
+        <span>Mengai plays best in landscape.</span>
       </div>
       <pre id="net-debug" class="net-debug hidden" aria-live="off"></pre>
     </main>
