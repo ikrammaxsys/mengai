@@ -48,6 +48,8 @@ const YT_DLP = process.env.YT_DLP_PATH || 'yt-dlp';
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 const YT_DLP_JS_RUNTIME = process.env.YT_DLP_JS_RUNTIME?.trim() || 'deno:/home/ec2-user/.deno/bin/deno';
 const YT_DLP_COOKIES_PATH = process.env.YT_DLP_COOKIES_PATH?.trim() || '/opt/mengai-dev/secrets/youtube-cookies.txt';
+const BROADCAST_WEBHOOK_URL = process.env.MENGAI_BROADCAST_WEBHOOK_URL?.trim()
+  || 'https://n8n.azhamrosli.com/webhook/e4b5cd63-1583-4926-93d2-3874fabea2bd';
 let audioToolsAvailable = false;
 const jukeboxDownloads = new Map<string, Promise<void>>();
 const server = createServer((request, response) => {
@@ -142,6 +144,38 @@ const youtubeRequests = new Map<string, number[]>();
 function jsonResponse(response: import('node:http').ServerResponse, status: number, body: object): void {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(body));
+}
+
+function escapeWebhookHtml(value: string | number): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function boldWebhookText(value: string | number): string {
+  return `<b>${escapeWebhookHtml(value)}</b>`;
+}
+
+async function sendBroadcastWebhook(playerName: string, message: string, extras: Record<string, unknown>): Promise<void> {
+  try {
+    const response = await fetch(BROADCAST_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerName,
+        action: 'mengai',
+        message,
+        extras: JSON.stringify(extras),
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) console.warn(`[broadcast] Webhook returned HTTP ${response.status}.`);
+  } catch (error) {
+    console.warn('[broadcast] Webhook request failed:', error instanceof Error ? error.message : error);
+  }
 }
 
 async function uploadTheaterPdf(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, requestUrl: URL): Promise<void> {
@@ -491,6 +525,11 @@ function beginJukeboxDownload(track: JukeboxTrack): void {
           broadcast(room, jukeboxState(room));
           room.jukebox.current.status = 'playing';
           room.jukebox.current.startedAt = Date.now();
+          void sendBroadcastWebhook(
+            room.jukebox.current.requestedBy,
+            `🎵 ${boldWebhookText(room.jukebox.current.requestedBy)} started playing “${boldWebhookText(room.jukebox.current.title)}”.`,
+            { event: 'song_started', title: room.jukebox.current.title },
+          );
           changed = true;
         }
         for (const queued of room.jukebox.queue) {
@@ -690,8 +729,14 @@ function advanceJukebox(room: Room, now = Date.now()): void {
   let next = room.jukebox.queue.shift();
   while (next?.status === 'failed') next = room.jukebox.queue.shift();
   room.jukebox.skipVotes.clear();
-  if (next?.status === 'ready') room.jukebox.current = { ...next, status: 'playing', startedAt: now };
-  else room.jukebox.current = next ? { ...next, status: 'downloading', startedAt: null } : null;
+  if (next?.status === 'ready') {
+    room.jukebox.current = { ...next, status: 'playing', startedAt: now };
+    void sendBroadcastWebhook(
+      next.requestedBy,
+      `🎵 ${boldWebhookText(next.requestedBy)} started playing “${boldWebhookText(next.title)}”.`,
+      { event: 'song_started', title: next.title },
+    );
+  } else room.jukebox.current = next ? { ...next, status: 'downloading', startedAt: null } : null;
   broadcast(room, jukeboxState(room));
 }
 
@@ -961,6 +1006,13 @@ function publishArenaEvents(room: Room, arena: ArenaInstance, events: ArenaEvent
         });
       }
       const killer = room.players.get(event.playerId);
+      if (killer) {
+        void sendBroadcastWebhook(
+          killer.name,
+          `🐊 ${boldWebhookText(killer.name)} defeated the Mecha Crocodile!`,
+          { event: 'croc_slain', timeMs: event.timeMs },
+        );
+      }
       if (arena.isSolo && arena.players.length === 1 && arena.players[0].playerId === event.playerId &&
           killer && killer.disconnectedAt === null && (!room.fastestSlayer || event.timeMs < room.fastestSlayer.timeMs)) {
         const previousHolder = room.fastestSlayer ? room.players.get(room.fastestSlayer.playerId) : undefined;
@@ -1048,6 +1100,10 @@ function awardBowlingReward(room: Room, playerId: string, kind: 'first-strike' |
   const label = kind === 'first-strike' ? 'First Strike' : 'Bowling Champion';
   broadcast(room, { type: 'bowlingReward', playerId, name: player.name, kind, label });
   broadcast(room, { type: 'room_announcement', message: `${player.name} earned ${label}!` });
+  const message = kind === 'first-strike'
+    ? `🎳 ${boldWebhookText(player.name)} scored the first strike!`
+    : `🏆 ${boldWebhookText(player.name)} won the bowling game!`;
+  void sendBroadcastWebhook(player.name, message, { event: kind === 'first-strike' ? 'bowling_first_strike' : 'bowling_champion' });
 }
 
 function startBowlingGame(room: Room, members: Player[], now: number, isSolo: boolean): BowlingGame | null {
@@ -1104,6 +1160,11 @@ function publishBowlingEvents(room: Room, game: BowlingGame, events: BowlingEven
             game.bestSoloScore = best;
             if (best > player.bowlingBestScore) {
               player.bowlingBestScore = best;
+              void sendBroadcastWebhook(
+                player.name,
+                `🔥 ${boldWebhookText(player.name)} set a new bowling record: ${boldWebhookText(best)}!`,
+                { event: 'bowling_personal_best', score: best },
+              );
               void persistentData.recordBowlingBestScore(room.id, player.name, best).catch((error: unknown) => {
                 console.error('[game-data] Failed to save bowling best score:', error);
               });
@@ -1154,6 +1215,11 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
       'A shoe? At least it was a sole-ful catch.',
       'You found a boot. Its owner is probably still looking for it.',
     ];
+    void sendBroadcastWebhook(
+      player.name,
+      `👟 ${boldWebhookText(player.name)} caught an old shoe!`,
+      { event: 'shoe_caught', species: species.id },
+    );
     player.pendingCatch = null;
     startReel(room, player, now);
     send(player.socket, { type: 'catch_result', entry, flags: { newPersonalBest: false, newRoomRecord: false }, personalBest: null, message: messages[Math.floor(Math.random() * messages.length)] });
@@ -1179,6 +1245,9 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   const zScore = Math.log(weightKg / species.medianKg) / species.sigma;
   const heavy = zScore >= FISH_CONFIG.bigCatch.zScoreThreshold;
   const highRarity = (FISH_CONFIG.bigCatch.notableRarities as readonly string[]).includes(species.rarity);
+  const rareOrBetter = ['rare', 'epic', 'legendary'].includes(species.rarity);
+  const personalBestImproved = Boolean(previousBest && newPersonalBest);
+  const roomRecordImproved = Boolean(previousRecord && newRoomRecord);
   const notable = species.id === 'ikan-bulan' ? weightKg > 150 : highRarity || heavy || newRoomRecord;
   startReel(room, player, now);
   send(player.socket, {
@@ -1188,6 +1257,25 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   });
   send(player.socket, { type: 'inventory_add', item: inventoryItem });
   broadcast(room, { type: 'leaderboard_update', entries: room.leaderboard });
+  if (rareOrBetter || heavy || personalBestImproved || roomRecordImproved) {
+    const recordText = newRoomRecord
+      ? ` and set a ${boldWebhookText('new room record')}`
+      : newPersonalBest && previousBest
+        ? ` and set a ${boldWebhookText('new personal best')}`
+        : '';
+    const isBigCatch = heavy || personalBestImproved || roomRecordImproved;
+    const catchMessage = isBigCatch
+      ? `🐟 ${boldWebhookText(player.name)} caught a ${boldWebhookText(weightKg.toFixed(2) + ' kg')} ${boldWebhookText(species.name)}${recordText}!`
+      : `🎣 ${boldWebhookText(player.name)} caught a ${boldWebhookText(species.rarity)} ${boldWebhookText(species.name)} weighing ${boldWebhookText(weightKg.toFixed(2) + ' kg')}${recordText}!`;
+    void sendBroadcastWebhook(player.name, catchMessage, {
+      event: isBigCatch ? 'big_fish' : 'fish_catch',
+      species: species.id,
+      rarity: species.rarity,
+      weightKg,
+      personalBest: personalBestImproved,
+      roomRecord: newRoomRecord,
+    });
+  }
   if (notable && (species.rarity === 'epic' || species.rarity === 'legendary' || newRoomRecord)) {
     const announcement = `${player.name} caught a ${weightKg.toFixed(2)} kg ${species.name}!`;
     broadcast(room, { type: 'room_announcement', message: announcement });
@@ -2279,6 +2367,13 @@ setInterval(() => {
         if (chickenHit) {
           stone.chickenHitId = chickenHit.id;
           const newScore = thrower ? awardChickenScore(thrower) : 0;
+          if (thrower && newScore > 0 && newScore % 10 === 0) {
+            void sendBroadcastWebhook(
+              thrower.name,
+              `🐔 ${boldWebhookText(thrower.name)} hit a chicken milestone: ${boldWebhookText(newScore)}!`,
+              { event: 'chicken_milestone', score: newScore },
+            );
+          }
           broadcast(room, {
             type: 'chicken_hit',
             chickenId: chickenHit.id,
