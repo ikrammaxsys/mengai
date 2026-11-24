@@ -1257,7 +1257,7 @@ async function recordCatch(room: Room, player: Player, now: number): Promise<voi
   });
   send(player.socket, { type: 'inventory_add', item: inventoryItem });
   broadcast(room, { type: 'leaderboard_update', entries: room.leaderboard });
-  if (rareOrBetter || heavy || personalBestImproved || roomRecordImproved) {
+  if (weightKg >= 30 && (rareOrBetter || heavy || personalBestImproved || roomRecordImproved)) {
     const recordText = newRoomRecord
       ? ` and set a ${boldWebhookText('new room record')}`
       : newPersonalBest && previousBest
