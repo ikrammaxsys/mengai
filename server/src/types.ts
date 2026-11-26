@@ -115,6 +115,21 @@ export interface Player {
   islandOwnerName: string | null;
   islandReturnPosition: { x: number; z: number } | null;
   inPhotobooth: boolean;
+  painting?: {
+    easelId: string;
+    x: number;
+    z: number;
+    facing: number;
+    brushColor?: string;
+    strokes: Array<{
+      id: string;
+      brushType: 'round' | 'soft' | 'flat';
+      color: string;
+      size: number;
+      points: Array<{ x: number; y: number; timestamp: number }>;
+      startTime: number;
+    }>;
+  } | null;
   seatedSeatId: string | null;
   ferrisSeatIndex: number | null;
   ferrisSlot: number | null;
@@ -191,6 +206,21 @@ export interface PlayerSnapshot {
   carryingStoneId: string | null;
   holdingFish?: CatchRecord | null;
   inPhotobooth: boolean;
+  painting?: {
+    easelId: string;
+    x: number;
+    z: number;
+    facing: number;
+    brushColor?: string;
+    strokes: Array<{
+      id: string;
+      brushType: 'round' | 'soft' | 'flat';
+      color: string;
+      size: number;
+      points: Array<{ x: number; y: number; timestamp: number }>;
+      startTime: number;
+    }>;
+  } | null;
   seatedSeatId?: string | null;
   chickenScore: number;
   crocodilesSlain: number;

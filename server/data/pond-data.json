@@ -665,125 +665,6 @@
         "1": {
           "inventory": [
             {
-              "catchId": "3b64dc12-a2d7-459d-ac42-6066a0c898f3",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.23,
-              "caughtAt": 1793668502987
-            },
-            {
-              "catchId": "c52cbb15-fb9c-40da-82dc-6af27dc2acb7",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.35,
-              "caughtAt": 1793668923281
-            },
-            {
-              "catchId": "253e5b9a-284a-43d4-8daa-5906f368e16d",
-              "species": "rainbow-trout",
-              "rarity": "uncommon",
-              "weightKg": 0.71,
-              "caughtAt": 1793720119441
-            },
-            {
-              "catchId": "5bbc7711-5ca0-4813-bc83-64d0fec391f2",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.2,
-              "caughtAt": 1793720129991
-            },
-            {
-              "catchId": "0c5fdc2e-c0e8-41a4-8317-ea9757fe5025",
-              "species": "largemouth-bass",
-              "rarity": "rare",
-              "weightKg": 0.78,
-              "caughtAt": 1793720140840
-            },
-            {
-              "catchId": "31e35b57-0218-4074-b159-4a5eecf0625f",
-              "species": "largemouth-bass",
-              "rarity": "rare",
-              "weightKg": 1.12,
-              "caughtAt": 1793720263588
-            },
-            {
-              "catchId": "3edb755d-f1fd-425c-97c3-d1bd0a5c09d0",
-              "species": "largemouth-bass",
-              "rarity": "rare",
-              "weightKg": 1.22,
-              "caughtAt": 1793720280123
-            },
-            {
-              "catchId": "95239d93-9a6b-4847-8d34-cc0ae66e0fd7",
-              "species": "common-carp",
-              "rarity": "epic",
-              "weightKg": 3.59,
-              "caughtAt": 1793720291753
-            },
-            {
-              "catchId": "1884d014-f1e8-449c-bf75-ef1614561923",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.15,
-              "caughtAt": 1793726209040
-            },
-            {
-              "catchId": "43933da4-ed71-4992-a9a5-256f886af9c2",
-              "species": "largemouth-bass",
-              "rarity": "rare",
-              "weightKg": 0.76,
-              "caughtAt": 1793726258560
-            },
-            {
-              "catchId": "f3a195d4-9567-4f59-9121-84fce490bc2e",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.11,
-              "caughtAt": 1793778819054
-            },
-            {
-              "catchId": "7d82297e-a639-4d7c-ad73-0cb978e0fcbc",
-              "species": "largemouth-bass",
-              "rarity": "rare",
-              "weightKg": 1.31,
-              "caughtAt": 1793778829185
-            },
-            {
-              "catchId": "4bf1dc01-0244-48db-ae81-5d90fc05ef63",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.21,
-              "caughtAt": 1793779110729
-            },
-            {
-              "catchId": "9841293f-771a-4c7f-a33a-3d2073b5fb3e",
-              "species": "rainbow-trout",
-              "rarity": "uncommon",
-              "weightKg": 1.03,
-              "caughtAt": 1793779146188
-            },
-            {
-              "catchId": "a1ecc8a6-0c61-4b98-bc8b-af0ac799aa8f",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.17,
-              "caughtAt": 1793779162888
-            },
-            {
-              "catchId": "ba504f29-5ae8-4949-ba93-8f8ead7fb009",
-              "species": "rainbow-trout",
-              "rarity": "uncommon",
-              "weightKg": 0.53,
-              "caughtAt": 1793779177635
-            },
-            {
-              "catchId": "6d161bfe-cf17-4310-a2e2-552f81b82534",
-              "species": "buntal",
-              "rarity": "uncommon",
-              "weightKg": 0.47,
-              "caughtAt": 1793779190116
-            },
-            {
               "catchId": "41699ba1-1833-488d-9625-87c94b46d188",
               "species": "todak",
               "rarity": "epic",
@@ -791,82 +672,11 @@
               "caughtAt": 1793779235155
             },
             {
-              "catchId": "ea72d879-eac6-4d4c-a298-65c758ab41e7",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.18,
-              "caughtAt": 1793879234901
-            },
-            {
               "catchId": "6b19f57b-1e5c-419e-8e9d-abde74715909",
               "species": "pari",
               "rarity": "rare",
               "weightKg": 10.23,
               "caughtAt": 1793880906577
-            },
-            {
-              "catchId": "d8a07cd4-45c7-41da-8190-fc1f8d616575",
-              "species": "largemouth-bass",
-              "rarity": "rare",
-              "weightKg": 0.67,
-              "caughtAt": 1793880921832
-            },
-            {
-              "catchId": "8ca24c06-5064-446e-a26a-49e1a4722c63",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.17,
-              "caughtAt": 1793880939100
-            },
-            {
-              "catchId": "e4d5ae89-6a37-4142-bfb1-7f561a1ca599",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.22,
-              "caughtAt": 1793880950568
-            },
-            {
-              "catchId": "a2aa2121-e717-4e72-900d-ffd4118b70e8",
-              "species": "buntal",
-              "rarity": "uncommon",
-              "weightKg": 0.83,
-              "caughtAt": 1793880960970
-            },
-            {
-              "catchId": "30aa2155-304b-4554-ab72-83722e8ad2c3",
-              "species": "rainbow-trout",
-              "rarity": "uncommon",
-              "weightKg": 1.52,
-              "caughtAt": 1793880972872
-            },
-            {
-              "catchId": "e7baa8c0-42af-4d16-9b93-9c1f83d435c5",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.23,
-              "caughtAt": 1793880986623
-            },
-            {
-              "catchId": "da2b6353-7d7e-4dbd-8946-dd468a1a28ba",
-              "species": "rainbow-trout",
-              "rarity": "uncommon",
-              "weightKg": 1.05,
-              "caughtAt": 1793881005441
-            },
-            {
-              "catchId": "388a0204-755c-4953-945d-e2d049e13499",
-              "species": "kasut-lama",
-              "rarity": "common",
-              "weightKg": 0.5,
-              "caughtAt": 1793881013362,
-              "kind": "junk"
-            },
-            {
-              "catchId": "943d5e49-226e-4204-ab5c-b0a89c9689b8",
-              "species": "rainbow-trout",
-              "rarity": "uncommon",
-              "weightKg": 1.11,
-              "caughtAt": 1793881040989
             },
             {
               "catchId": "f7e7277e-00e1-4d9b-8d5c-31635164c1d3",
@@ -890,13 +700,6 @@
               "caughtAt": 1793881554197
             },
             {
-              "catchId": "52be8b29-a401-42d0-bdb6-ce625526c006",
-              "species": "bluegill",
-              "rarity": "common",
-              "weightKg": 0.23,
-              "caughtAt": 1793881568893
-            },
-            {
               "catchId": "efc81e5c-f7eb-4342-9da0-38eb6a9ef668",
               "species": "rainbow-trout",
               "rarity": "uncommon",
@@ -911,7 +714,37 @@
               "caughtAt": 1793881598426
             }
           ],
-          "crocodilesSlain": 1
+          "crocodilesSlain": 1,
+          "shop": {
+            "coins": 500000,
+            "scrap": 25,
+            "ownedItems": [
+              "straw-hat",
+              "fishing-vest",
+              "umbrella",
+              "bamboo-rod",
+              "fiberglass-rod",
+              "gold-bobber",
+              "fishing-boots",
+              "fishing-chair",
+              "golden-rod"
+            ],
+            "equipped": {
+              "head": "straw-hat",
+              "body": null,
+              "feet": null,
+              "rodSkin": "golden-rod",
+              "bobber": null,
+              "held": "umbrella",
+              "chair": "fishing-chair"
+            },
+            "dailySold": {
+              "date": "2026-11-26",
+              "count": 27
+            },
+            "pinnedItem": null,
+            "firstPurchase": true
+          }
         },
         "2": {
           "inventory": [
@@ -965,7 +798,30 @@
               "caughtAt": 1793877535593
             }
           ],
-          "crocodilesSlain": 1
+          "crocodilesSlain": 1,
+          "shop": {
+            "coins": 500000,
+            "scrap": 25,
+            "ownedItems": [
+              "straw-hat",
+              "bamboo-rod"
+            ],
+            "equipped": {
+              "head": "straw-hat",
+              "body": null,
+              "feet": null,
+              "rodSkin": null,
+              "bobber": null,
+              "held": null,
+              "chair": null
+            },
+            "dailySold": {
+              "date": "2026-11-26",
+              "count": 0
+            },
+            "pinnedItem": null,
+            "firstPurchase": true
+          }
         },
         "core api": {
           "inventory": [
@@ -1004,7 +860,27 @@
               "weightKg": 1.4,
               "caughtAt": 1793609460075
             }
-          ]
+          ],
+          "shop": {
+            "coins": 500000,
+            "scrap": 25,
+            "ownedItems": [],
+            "equipped": {
+              "head": null,
+              "body": null,
+              "feet": null,
+              "rodSkin": null,
+              "bobber": null,
+              "held": null,
+              "chair": null
+            },
+            "dailySold": {
+              "date": "2026-11-26",
+              "count": 0
+            },
+            "pinnedItem": null,
+            "firstPurchase": false
+          }
         },
         "ayam": {
           "inventory": [
@@ -1085,10 +961,50 @@
               "weightKg": 1.32,
               "caughtAt": 1793609826176
             }
-          ]
+          ],
+          "shop": {
+            "coins": 500000,
+            "scrap": 25,
+            "ownedItems": [],
+            "equipped": {
+              "head": null,
+              "body": null,
+              "feet": null,
+              "rodSkin": null,
+              "bobber": null,
+              "held": null,
+              "chair": null
+            },
+            "dailySold": {
+              "date": "2026-11-26",
+              "count": 0
+            },
+            "pinnedItem": null,
+            "firstPurchase": false
+          }
         },
         "core api2": {
-          "inventory": []
+          "inventory": [],
+          "shop": {
+            "coins": 500000,
+            "scrap": 25,
+            "ownedItems": [],
+            "equipped": {
+              "head": null,
+              "body": null,
+              "feet": null,
+              "rodSkin": null,
+              "bobber": null,
+              "held": null,
+              "chair": null
+            },
+            "dailySold": {
+              "date": "2026-11-26",
+              "count": 0
+            },
+            "pinnedItem": null,
+            "firstPurchase": false
+          }
         },
         "test": {
           "inventory": [
@@ -1113,7 +1029,27 @@
               "weightKg": 0.14,
               "caughtAt": 1793622298257
             }
-          ]
+          ],
+          "shop": {
+            "coins": 500000,
+            "scrap": 25,
+            "ownedItems": [],
+            "equipped": {
+              "head": null,
+              "body": null,
+              "feet": null,
+              "rodSkin": null,
+              "bobber": null,
+              "held": null,
+              "chair": null
+            },
+            "dailySold": {
+              "date": "2026-11-26",
+              "count": 0
+            },
+            "pinnedItem": null,
+            "firstPurchase": false
+          }
         }
       },
       "campfireCooking": null

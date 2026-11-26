@@ -1879,6 +1879,71 @@ wss.on('connection', (socket) => {
       return;
     }
 
+    if (message.type === 'painting:open') {
+      const painting = message.painting as {
+        easelId: string;
+        x: number;
+        z: number;
+        facing: number;
+        brushColor?: string;
+      } | undefined;
+      if (!painting || typeof painting.easelId !== 'string' || painting.easelId.length > 80) return;
+      const x = Number(painting.x), z = Number(painting.z), facing = Number(painting.facing);
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(facing)) return;
+      if (Math.hypot(x - player.x, z - player.z) > 8) return;
+      player.painting = {
+        easelId: painting.easelId,
+        x,
+        z,
+        facing,
+        brushColor: typeof painting.brushColor === 'string' ? painting.brushColor.slice(0, 20) : undefined,
+        strokes: [],
+      };
+      broadcast(room, { type: 'painting:state', playerId: player.id, painting: player.painting });
+      return;
+    }
+
+    if (message.type === 'painting:stroke') {
+      const easelId = typeof message.easelId === 'string' ? message.easelId : '';
+      const stroke = message.stroke as {
+        id: string;
+        brushType: 'round' | 'soft' | 'flat';
+        color: string;
+        size: number;
+        points: Array<{ x: number; y: number; timestamp: number }>;
+        startTime: number;
+      } | undefined;
+      if (!player.painting || player.painting.easelId !== easelId || !stroke) return;
+      if (typeof stroke.id !== 'string' || !Array.isArray(stroke.points) || stroke.points.length < 1 || stroke.points.length > 500) return;
+      if (!['round', 'soft', 'flat'].includes(stroke.brushType)) return;
+      if (typeof stroke.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(stroke.color)) return;
+      const size = Number(stroke.size);
+      if (!Number.isFinite(size) || size < 4 || size > 24) return;
+      const points = stroke.points.slice(0, 500).map((point: { x: number; y: number; timestamp: number }) => ({
+        x: Math.max(0, Math.min(1024, Number(point.x))),
+        y: Math.max(0, Math.min(768, Number(point.y))),
+        timestamp: Number.isFinite(point.timestamp) ? Number(point.timestamp) : Date.now(),
+      })).filter((point: { x: number; y: number }) => Number.isFinite(point.x) && Number.isFinite(point.y));
+      if (!points.length) return;
+      player.painting.strokes.push({
+        id: String(stroke.id).slice(0, 80),
+        brushType: stroke.brushType,
+        color: stroke.color,
+        size,
+        points,
+        startTime: Number.isFinite(stroke.startTime) ? Number(stroke.startTime) : Date.now(),
+      });
+      if (player.painting.strokes.length > 200) player.painting.strokes.shift();
+      broadcast(room, { type: 'painting:state', playerId: player.id, painting: player.painting });
+      return;
+    }
+
+    if (message.type === 'painting:close') {
+      if (player.painting?.easelId === message.easelId) player.painting = null;
+      broadcast(room, { type: 'painting:state', playerId: player.id, painting: null });
+      return;
+    }
+
     if (message.type === 'move') {
       const seq = Number(message.seq);
       if (!Number.isSafeInteger(seq) || seq <= player.lastMoveSeq) return;

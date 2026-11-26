@@ -16,7 +16,7 @@ import { animateCrocodileWalk, populateCrocodileModel } from './crocodileModel';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null; hasPet: boolean };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; paintingProps: THREE.Group | null; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null; hasPet: boolean };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type EmojiPopup = { element: HTMLDivElement; expiresAt: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
@@ -77,6 +77,13 @@ export class GameScene {
   private waterGeometry!: THREE.BufferGeometry;
   private waterMaterial!: THREE.MeshStandardMaterial;
   private firstPersonView = false;
+  private paintingCameraActive = false;
+  private readonly paintingCameraPosition = new THREE.Vector3();
+  private readonly paintingCameraTarget = new THREE.Vector3();
+  private paintingPreviousPosition = new THREE.Vector3();
+  private paintingPreviousQuaternion = new THREE.Quaternion();
+  private paintingPreviousFov = 45;
+  private paintingTransition: { fromPosition: THREE.Vector3; fromQuaternion: THREE.Quaternion; fromFov: number; startedAt: number; active: boolean } | null = null;
   private photoboothCameraActive = false;
   private photoboothLogoReady: Promise<void> = Promise.resolve();
   private readonly photoboothCameraPosition = new THREE.Vector3(
@@ -554,6 +561,35 @@ export class GameScene {
   }
 
   private updateTheaterCamera(local: Avatar, now: number, deltaSeconds: number): void {
+    if (this.paintingTransition) {
+      const amount = Math.max(0, Math.min(1, (now - this.paintingTransition.startedAt) / 500));
+      const eased = amount * amount * (3 - 2 * amount);
+      if (this.paintingTransition.active) {
+        this.theaterOrientation.position.copy(this.paintingCameraPosition);
+        this.theaterOrientation.up.set(0, 1, 0);
+        this.theaterOrientation.lookAt(this.paintingCameraTarget);
+        this.camera.position.copy(this.paintingTransition.fromPosition).lerp(this.paintingCameraPosition, eased);
+        this.camera.quaternion.copy(this.paintingTransition.fromQuaternion).slerp(this.theaterOrientation.quaternion, eased);
+        this.camera.fov = THREE.MathUtils.lerp(this.paintingTransition.fromFov, 34, eased);
+      } else {
+        this.camera.position.copy(this.paintingTransition.fromPosition).lerp(this.paintingPreviousPosition, eased);
+        this.camera.quaternion.copy(this.paintingTransition.fromQuaternion).slerp(this.paintingPreviousQuaternion, eased);
+        this.camera.fov = THREE.MathUtils.lerp(this.paintingTransition.fromFov, this.paintingPreviousFov, eased);
+      }
+      if (amount >= 1) this.paintingTransition = null;
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    if (this.paintingCameraActive) {
+      this.theaterOrientation.position.copy(this.paintingCameraPosition);
+      this.theaterOrientation.up.set(0, 1, 0);
+      this.theaterOrientation.lookAt(this.paintingCameraTarget);
+      this.camera.position.copy(this.paintingCameraPosition);
+      this.camera.quaternion.copy(this.theaterOrientation.quaternion);
+      this.camera.fov = 34;
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     if (this.theaterFocused || this.theaterTransition?.focusing) {
       const pose = this.focusedCameraPose();
       if (this.theaterTransition) {
@@ -860,7 +896,16 @@ export class GameScene {
     this.labels.appendChild(label);
     const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
     this.crocodileSlainCounts.set(player.id, crocodilesSlain);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null, hasPet: player.hasPet };
+    const paintingProps = new THREE.Group();
+    paintingProps.visible = false;
+    visualRoot.add(paintingProps);
+    const avatar: Avatar = {
+      group, label, renderedLabelMarkup: '', rod,
+      line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false,
+      ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false,
+      samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0,
+      holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], paintingProps, hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null, hasPet: player.hasPet,
+    };
     this.avatarDance.set(player.id, { root: visualRoot, note: danceNote, moving: player.moving, phase: Math.random() * Math.PI * 2, speed: 0.9 + Math.random() * 0.2, blend: 0 });
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
@@ -872,6 +917,46 @@ export class GameScene {
   }
 
   setLocalId(id: string): void { this.localId = id; }
+
+  enterPaintingCamera(position: THREE.Vector3, target: THREE.Vector3, fov = 34): void {
+    this.paintingPreviousPosition.copy(this.camera.position);
+    this.paintingPreviousQuaternion.copy(this.camera.quaternion);
+    this.paintingPreviousFov = this.camera.fov;
+
+    this.paintingCameraActive = true;
+    this.paintingCameraPosition.copy(position);
+    this.paintingCameraTarget.copy(target);
+    this.paintingTransition = {
+      fromPosition: this.camera.position.clone(),
+      fromQuaternion: this.camera.quaternion.clone(),
+      fromFov: this.camera.fov,
+      startedAt: performance.now(),
+      active: true,
+    };
+    this.setFirstPersonView(true);
+
+    const look = this.theaterOrientation;
+    look.position.copy(position);
+    look.up.set(0, 1, 0);
+    look.lookAt(target);
+    this.paintingTransition.fromFov = this.camera.fov;
+  }
+
+  exitPaintingCamera(): void {
+    if (!this.paintingCameraActive) {
+      this.setFirstPersonView(false);
+      return;
+    }
+    this.paintingTransition = {
+      fromPosition: this.camera.position.clone(),
+      fromQuaternion: this.camera.quaternion.clone(),
+      fromFov: this.camera.fov,
+      startedAt: performance.now(),
+      active: false,
+    };
+    this.paintingCameraActive = false;
+    this.setFirstPersonView(false);
+  }
 
   setFirstPersonView(enabled: boolean): void {
     this.firstPersonView = enabled;
@@ -967,6 +1052,38 @@ export class GameScene {
   petHop(ownerId: string): void {
     const pet = this.pets.get(ownerId);
     if (pet) pet.hopStartedAt = performance.now();
+  }
+
+  setAvatarPainting(id: string, active: boolean, brushColor = '#e74c3c'): void {
+    const avatar = this.avatars.get(id);
+    if (!avatar?.paintingProps) return;
+    const props = avatar.paintingProps;
+    if (props.children.length === 0) {
+      const wood = new THREE.MeshStandardMaterial({ color: '#7a5030', roughness: 0.8 });
+      const skin = new THREE.MeshStandardMaterial({ color: '#e7bd92', roughness: 0.9 });
+      const palette = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 6), wood);
+      palette.scale.set(1.35, 0.16, 0.8);
+      palette.position.set(-0.55, 0.92, 0.34);
+      palette.rotation.z = -0.12;
+      props.add(palette);
+      const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 5), skin);
+      leftHand.position.set(-0.48, 0.92, 0.31);
+      props.add(leftHand);
+      const brush = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.55, 8), wood);
+      brush.position.set(0.48, 0.88, 0.32);
+      brush.rotation.z = -0.18;
+      props.add(brush);
+      const brushTip = new THREE.Mesh(
+        new THREE.SphereGeometry(0.055, 8, 5),
+        new THREE.MeshStandardMaterial({ color: brushColor, roughness: 0.8 }),
+      );
+      brushTip.name = 'painting-brush-tip';
+      brushTip.position.set(0.63, 1.12, 0.32);
+      props.add(brushTip);
+    }
+    const tip = props.getObjectByName('painting-brush-tip');
+    if (tip instanceof THREE.Mesh) (tip.material as THREE.MeshStandardMaterial).color.set(brushColor);
+    props.visible = active && (!avatar.local || !this.firstPersonView);
   }
 
   setPhotoboothMode(active: boolean): void {

@@ -102,6 +102,7 @@ export class Rooms {
       islandOwnerName: null,
       islandReturnPosition: null,
       inPhotobooth: false,
+      painting: null,
       seatedSeatId: null,
       ferrisSeatIndex: null,
       ferrisSlot: null,
@@ -183,9 +184,10 @@ export class Rooms {
   }
 
   snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
-    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, hasPet, speaking }) => ({
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, painting, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, hasPet, speaking }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
+      painting,
       seatedSeatId,
       ferrisSeatIndex,
       ferrisSlot,
@@ -204,8 +206,8 @@ export class Rooms {
     const ownerKey = ownerName.trim().toLocaleLowerCase();
     return [...room.players.values()]
       .filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === ownerKey)
-      .map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet }) => ({
-        id, name, color, x, z, facing, fishing, cast, carryingStoneId, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet,
+      .map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, painting, seatedSeatId, chickenScore, crocodilesSlain, hasPet }) => ({
+        id, name, color, x, z, facing, fishing, cast, carryingStoneId, inPhotobooth, painting, seatedSeatId, chickenScore, crocodilesSlain, hasPet,
         ...(includeHoldingFish ? { holdingFish } : {}),
         moving,
       }));

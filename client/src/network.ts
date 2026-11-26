@@ -169,6 +169,25 @@ export interface PlayerSnapshot {
   ferrisSlot?: number | null;
   ferrisRideStartedAt?: number | null;
   ferrisExitQueued?: boolean;
+  equipped?: Record<string, string | null>;
+  chairSeated?: boolean;
+  painting?: PaintingSnapshot | null;
+}
+
+export interface PaintingSnapshot {
+  easelId: string;
+  x: number;
+  z: number;
+  facing: number;
+  brushColor?: string;
+  strokes: Array<{
+    id: string;
+    brushType: 'round' | 'soft' | 'flat';
+    color: string;
+    size: number;
+    points: Array<{ x: number; y: number; timestamp: number }>;
+    startTime: number;
+  }>;
 }
 
 export interface JukeboxTrack {
@@ -264,6 +283,7 @@ type Handlers = {
   theaterSignal: (signal: TheaterSignal) => void;
   theaterError: (message: string) => void;
   seatState: (occupancy: Record<string, string>) => void;
+  paintingState: (message: { playerId: string; painting: PaintingSnapshot | null }) => void;
   disconnected: (details: { code: number; reason: string; wasClean: boolean }) => void;
 };
 
@@ -347,6 +367,10 @@ export class Network {
           break;
         case 'player_joined': this.handlers.playerJoined(message.player as PlayerSnapshot, Number(message.serverTime) || Date.now()); break;
         case 'player_left': this.handlers.playerLeft(String(message.playerId)); break;
+        case 'painting:state': this.handlers.paintingState({
+          playerId: String(message.playerId),
+          painting: (message.painting as PaintingSnapshot | null) ?? null,
+        }); break;
         case 'jukebox:state': this.handlers.jukeboxState((message.current as JukeboxCurrent | null) ?? null, Array.isArray(message.queue) ? message.queue as JukeboxTrack[] : [], Number(message.skipVotes) || 0); break;
         case 'jukebox:error': this.handlers.jukeboxError(String(message.message ?? 'The jukebox could not complete that action.')); break;
         case 'theater:state': this.handlers.theaterState(message.state as TheaterState); break;
@@ -471,6 +495,11 @@ export class Network {
   sendMove(seq: number, x: number, z: number, rotY: number, moving: boolean, t: number, inPhotobooth = false): void {
     this.send({ type: 'move', seq, x, z, rotY, moving, t, rttMs: this.rttMs ?? 0, inPhotobooth });
   }
+  sendPaintingOpen(painting: PaintingSnapshot): void { this.send({ type: 'painting:open', painting }); }
+  sendPaintingStroke(easelId: string, stroke: PaintingSnapshot['strokes'][number]): void {
+    this.send({ type: 'painting:stroke', easelId, stroke });
+  }
+  sendPaintingClose(easelId: string): void { this.send({ type: 'painting:close', easelId }); }
   sendSpeaking(speaking: boolean): void { this.send({ type: 'speaking', speaking }); }
   castFish(targetX: number, targetZ: number): void { this.send({ type: 'fish_cast', targetX, targetZ }); }
   startReel(): void { this.send({ type: 'reel_start', rttMs: this.rttMs ?? 0 }); }

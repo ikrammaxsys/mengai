@@ -21,6 +21,8 @@ import { Theater } from './theater';
 import { PLAYER_EMOJIS } from '../../shared/emojiReactions';
 import { InputState, type InputAction } from './inputState';
 import { TouchControls } from './touchControls';
+import { PaintingController } from './paintingMode';
+import { EaselManager } from './easelManager';
 import {
   fullscreenSupported,
   isCoarsePointer,
@@ -181,6 +183,13 @@ const netDebugEnabled = import.meta.env.DEV && new URLSearchParams(location.sear
 if (netDebugEnabled) netDebug.classList.remove('hidden');
 
 const scene = new GameScene(document.querySelector<HTMLElement>('#game')!, document.querySelector<HTMLElement>('#name-labels')!);
+const easelManager = new EaselManager(scene.scene);
+const paintingController = new PaintingController(
+  scene,
+  easelManager,
+  appRoot,
+  nameInput.value.trim() || 'Player',
+);
 for (const emoji of PLAYER_EMOJIS) {
   const button = document.createElement('button');
   button.className = 'emoji-reaction';
@@ -838,12 +847,33 @@ function updatePortalPrompt(): void {
 
 function hasForwardInput(): boolean { return input.hasForwardInput; }
 
+function togglePaintingMode(): void {
+  if (!joined || arenaMode || bowlingMode.isActive || reelGame || scene.fishingState() !== 'idle'
+    || isPhotoboothMode || jukebox.isOpen || theater.isFocused || theater.isMenuOpen
+    || scene.seatedSeatId || scene.isFerrisRiding) {
+    showToast('You cannot open the easel right now.');
+    return;
+  }
+  if (paintingController.isActive()) {
+    paintingController.exitPainting();
+    return;
+  }
+  paintingController.setPlayer(nameInput.value.trim() || 'Player', selfId);
+  const position = scene.getPosition();
+  cancelMouseTurn();
+  keys.clear();
+  if (!paintingController.startPainting(position.x, position.z, scene.localFacing())) {
+    showToast('Could not place an easel here.');
+  }
+}
+
 /**
  * Contextual "primary" action, shared by the touch button and mirroring the
  * keyboard E shortcut: stones, seats, Ferris wheel, theater and arena portal.
  */
 function performPrimaryAction(): void {
   if (!joined || isPhotoboothMode || jukebox.isOpen) return;
+  if (paintingController.isActive()) return;
   if (reelGame) { reelGame.setHeld(true); return; }
   if (bowlingMode.isActive) { bowlingMode.beginTouchCharge(); return; }
   if (arenaMode) {
@@ -867,6 +897,7 @@ function performPrimaryAction(): void {
   if (isNearPhotobooth()) { enterPhotobooth(); return; }
   if (theater.isNearby) { theater.openMenu(); return; }
   if (!portalPrompt.classList.contains('hidden')) requestPortalEntry();
+  else togglePaintingMode();
 }
 
 /** Secondary action: fishing cast/reel or the reel mini-game hold. */
@@ -921,7 +952,7 @@ function touchControlLabels(mode: TouchUiMode): { primary: string; secondary: st
   if (reelGame) return { primary: 'Reel', secondary: 'Lift' };
   const fishing = scene.fishingState();
   const secondary = fishing === 'bite' ? 'Reel' : fishing === 'casting' || fishing === 'waiting' ? 'Stop' : 'Cast';
-  let primary = 'Interact';
+  let primary = 'Easel';
   if (fishing === 'idle') {
     if (scene.carryingStoneId(selfId)) primary = 'Throw';
     else if (scene.nearbyStoneId(selfId)) primary = 'Pick up';
@@ -970,7 +1001,7 @@ function syncTouchUi(): void {
     touchDeviceLayout = supported;
     appRoot.classList.toggle('touch-device', supported);
   }
-  const blocked = isPhotoboothMode || jukebox.isOpen || theater.isFocused || theater.isMenuOpen
+  const blocked = paintingController.isActive() || isPhotoboothMode || jukebox.isOpen || theater.isFocused || theater.isMenuOpen
     || !joinScreen.classList.contains('hidden')
     || !fishViewerRoot.classList.contains('hidden')
     || !expandedMap.classList.contains('hidden')
@@ -1871,6 +1902,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       updateChickenScore(me?.chickenScore ?? 0);
       if (me) scene.addLocal(me);
       for (const player of message.players) if (player.id !== selfId) scene.upsert(player, message.serverTime);
+      paintingController.syncRemotePaintings(message.players);
       scene.setSeatOccupancy(message.seatOccupancy ?? {});
       theater.setSeated(Boolean(scene.seatedSeatId));
       scene.setStones(message.stones ?? []);
@@ -1918,12 +1950,20 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       syncRoomPlayerRoster(players);
       bowlingMode.setRoomPlayers(players);
       for (const player of players) scene.upsert(player, serverTime);
+      paintingController.syncRemotePaintings(players);
       const me = players.find((player) => player.id === selfId);
       if (me) updateChickenScore(me.chickenScore);
       updateCount();
     },
     speaking: (playerId, speaking) => scene.setVoiceSpeaking(playerId, speaking),
-    playerJoined: (player, serverTime) => { observeServerTime(serverTime); roomPlayers.set(player.id, player); scene.upsert(player, serverTime); updateCount(); renderArenaParty(); renderVoicePlayers(); bowlingMode.setRoomPlayers([...roomPlayers.values()]); showToast(`${player.name} joined the pond`); },
+    playerJoined: (player, serverTime) => { observeServerTime(serverTime); roomPlayers.set(player.id, player); scene.upsert(player, serverTime); paintingController.syncRemotePaintings([player]); updateCount(); renderArenaParty(); renderVoicePlayers(); bowlingMode.setRoomPlayers([...roomPlayers.values()]); showToast(`${player.name} joined the pond`); },
+    paintingState: ({ playerId, painting }) => {
+      const player = roomPlayers.get(playerId);
+      if (player) {
+        player.painting = painting;
+        paintingController.syncRemotePaintings([player]);
+      }
+    },
     playerLeft: (id) => {
       theater.playerLeft(id);
       voice.removeGamePlayer(id);
@@ -2107,6 +2147,7 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       scheduleReconnect();
     },
   });
+  paintingController.setNetwork(network);
   const resumeKey = `mengai:resume:${encodeURIComponent(room)}:${encodeURIComponent(name.toLocaleLowerCase())}`;
   network.connect(room, name, localStorage.getItem(resumeKey) ?? undefined);
 }
@@ -2193,6 +2234,9 @@ window.addEventListener('orientationchange', () => {
   touchControls.reset();
   lastFrame = performance.now();
 });
+window.addEventListener('painting:saved', ((event: CustomEvent<{ title?: string }>) => {
+  showToast(event.detail?.title ? `Saved to My Paintings: ${event.detail.title}` : 'Saved to My Paintings');
+}) as EventListener);
 voiceToggle.addEventListener('click', () => {
   if (!voice.isEnabled) void voice.enable(currentRoom, selfId, voiceResumeToken);
   else if (voice.isPushToTalk) void voice.disconnect();
@@ -2297,6 +2341,13 @@ window.addEventListener('keydown', (event) => {
   }
   if (bowlingMode.handleKeyDown(event)) return;
   if ((event.key === 'Enter' || event.key === ' ') && event.target instanceof HTMLButtonElement) return;
+  if (paintingController.isActive()) {
+    if (event.key === 'Escape' || event.key.toLowerCase() === 'g') {
+      event.preventDefault();
+      if (!event.repeat) paintingController.exitPainting();
+      return;
+    }
+  }
   if (event.key === 'Escape' && !bowlingMode.isActive && !bowlingPartyPanel.classList.contains('hidden')) {
     event.preventDefault();
     network.leaveBowlingParty();
@@ -2347,6 +2398,15 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   const key = keyNames[event.key] ?? event.key.toLowerCase();
+  if (paintingController.isActive()) {
+    if (key === 'g' || key === 'escape') {
+      event.preventDefault();
+      if (!event.repeat) paintingController.exitPainting();
+    } else {
+      event.preventDefault();
+    }
+    return;
+  }
   if (scene.isFerrisRiding && key === 'e' && !event.repeat) {
     event.preventDefault();
     network.requestFerrisExit();
@@ -2429,6 +2489,11 @@ window.addEventListener('keydown', (event) => {
       return;
     }
     if (event.key === ' ' || event.key.startsWith('Arrow')) event.preventDefault();
+    return;
+  }
+  if (key === 'g' && joined && !event.repeat) {
+    event.preventDefault();
+    togglePaintingMode();
     return;
   }
   if (key === 'p' && joined && !event.repeat) {
@@ -2610,7 +2675,7 @@ function animate(now: number): void {
       lastArenaMoveAt = now;
     }
   }
-  if (joined && !arenaMode && !inBowling && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && !scene.isFerrisRiding && scene.fishingState() === 'idle') {
+  if (joined && !paintingController.isActive() && !arenaMode && !inBowling && !theater.isFocused && !isPhotoboothMode && !jukebox.isOpen && !reelGame && !scene.seatedSeatId && !scene.isFerrisRiding && scene.fishingState() === 'idle') {
     const forward = input.forward;
     const stickTurn = input.turn;
     let turn = stickTurn;
