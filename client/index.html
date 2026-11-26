@@ -36,6 +36,7 @@
       </section>
 
       <section id="hud" class="hud hidden" aria-live="polite">
+        <div id="economy-hud" class="economy-hud"><span>🪙 <strong id="coin-count">0</strong></span><span>♻️ <strong id="scrap-count">0</strong></span><span id="pinned-goal" class="pinned-goal hidden"></span></div>
         <button id="hud-menu-toggle" class="hud-menu-toggle" type="button" aria-label="Open game menu" aria-expanded="false" aria-controls="hud-dock">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         </button>
@@ -137,6 +138,7 @@
           <strong>You’re invited to a bowling party</strong><div id="bowling-party-invites-list"></div>
         </section>
         <div id="jukebox-prompt" class="photobooth-prompt jukebox-prompt hidden"><kbd>J</kbd><span>Press J to open Jukebox</span></div>
+        <div id="shop-prompt" class="photobooth-prompt shop-prompt hidden"><kbd>E</kbd><span>Press E to open Shop</span></div>
         <div id="photobooth-prompt" class="photobooth-prompt hidden"><kbd>P</kbd><span>Press P to use the photobooth</span></div>
         <div id="fish-prompt" class="fish-prompt hidden">Space to cast</div>
         <section id="reel-game" class="reel-game hidden" aria-live="polite">
@@ -346,6 +348,14 @@
         <span>Mengai plays best in landscape.</span>
       </div>
       <pre id="net-debug" class="net-debug hidden" aria-live="off"></pre>
+      <section id="shop-modal" class="shop-modal hidden" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+        <div class="shop-backdrop"></div>
+        <div class="shop-card">
+          <header class="shop-header"><div><strong id="shop-title">Pondside Shop</strong><span id="shop-wallet">0 coins · 0 scrap</span></div><button id="shop-close" type="button" aria-label="Close shop">×</button></header>
+          <nav class="shop-tabs" aria-label="Shop tabs"><button type="button" data-tab="sell" class="active">Sell</button><button type="button" data-tab="shop">Shop</button><button type="button" data-tab="wardrobe">Wardrobe</button></nav>
+          <div id="shop-content" class="shop-content"></div>
+        </div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

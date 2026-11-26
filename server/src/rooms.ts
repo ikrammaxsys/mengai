@@ -4,6 +4,7 @@ import { FISH_CONFIG } from '../../shared/fishConfig.js';
 import { createWeatherSnapshot } from '../../shared/weatherConfig.js';
 import { createChickenFlock } from './chickens.js';
 import { WORLD_CONFIG } from '../../shared/worldConfig.js';
+import { defaultShopData } from './shop.js';
 
 const COLORS = ['#f07853', '#5c9ee8', '#e6b84b', '#a978d1', '#4cb89b', '#e37eae', '#7eb653', '#e08a43'];
 export const RESUME_GRACE_MS = 20_000;
@@ -113,6 +114,8 @@ export class Rooms {
       lastSpecies: profile.lastSpecies,
       holdingFish: null,
       resumeHoldingCatchId: null,
+      shop: defaultShopData(),
+      chairSeated: false,
       socket,
     };
     if (room.fastestSlayer && room.fastestSlayer.name.toLocaleLowerCase() === normalized) {
@@ -183,7 +186,7 @@ export class Rooms {
   }
 
   snapshot(room: Room, includeHoldingFish = true, includeSpeaking = true): PlayerSnapshot[] {
-    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, hasPet, speaking }) => ({
+    return [...room.players.values()].filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === null).map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, ferrisSeatIndex, ferrisSlot, ferrisRideStartedAt, ferrisExitQueued, chickenScore, crocodilesSlain, hasPet, speaking, shop, chairSeated }) => ({
       id, name, color, x, z, facing, fishing, cast, carryingStoneId,
       inPhotobooth,
       seatedSeatId,
@@ -196,6 +199,8 @@ export class Rooms {
       hasPet,
       ...(includeSpeaking ? { speaking } : {}),
       ...(includeHoldingFish ? { holdingFish } : {}),
+       equipped: shop.equipped,
+       chairSeated,
       moving,
     }));
   }
@@ -204,8 +209,8 @@ export class Rooms {
     const ownerKey = ownerName.trim().toLocaleLowerCase();
     return [...room.players.values()]
       .filter((player) => player.arenaInstanceId === null && player.bowlingInstanceId === null && player.islandOwnerName === ownerKey)
-      .map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet }) => ({
-        id, name, color, x, z, facing, fishing, cast, carryingStoneId, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet,
+      .map(({ id, name, color, x, z, facing, fishing, cast, carryingStoneId, holdingFish, moving, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet, shop, chairSeated }) => ({
+        id, name, color, x, z, facing, fishing, cast, carryingStoneId, inPhotobooth, seatedSeatId, chickenScore, crocodilesSlain, hasPet, equipped: shop.equipped, chairSeated,
         ...(includeHoldingFish ? { holdingFish } : {}),
         moving,
       }));

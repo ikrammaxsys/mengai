@@ -48,7 +48,7 @@ LIVEKIT_API_SECRET=your-api-secret
 
 Keep `LIVEKIT_API_SECRET` on the server; it is only used to mint short-lived, room-scoped participant tokens. The game validates the room-scoped resume token before issuing a voice token and uses the player ID/name as LiveKit identity/display name. Proximity audio is spatialized in the browser; voice needs HTTPS in deployed environments (localhost is allowed). The V key is push-to-talk when that option is enabled in Voice settings; otherwise V retains its view-switch shortcut.
 
-Put these values in the repository-root `.env` file (copy `.env.example` to start); `.env` is gitignored and loaded by the game server. Environment variables set by the deployment environment take precedence.
+Put these values in the repository-root `.env` file (copy `.env.example` to start); `.env` is gitignored and loaded by the game server. Environment variables set by the deployment environment take precedence. For economy testing, set `MONEY_OVERRIDE_COINS`, `SCRAP_OVERRIDE_COUNT`, or `KOI_EMAS_OVERRIDE_COUNT` to override coins, scrap, or effective Koi Emas count.
 
 ### Shared jukebox
 

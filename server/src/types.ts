@@ -3,6 +3,7 @@ import type { FishKind, FishRarity, FishSpeciesId } from '../../shared/fishConfi
 import type { CatchRecord } from './inventory.js';
 import type { WeatherSnapshot } from '../../shared/weatherConfig.js';
 import type { ChickenAgent, ChickenSnapshot } from '../../shared/chickenConfig.js';
+import type { ShopEquipped, ShopPlayerData } from './shop.js';
 
 export type FishingState = 'idle' | 'casting' | 'waiting' | 'bite' | 'fighting' | 'reeling';
 
@@ -126,6 +127,8 @@ export interface Player {
   lastSpecies: FishSpeciesId | null;
   holdingFish: CatchRecord | null;
   resumeHoldingCatchId: string | null;
+  shop: ShopPlayerData;
+  chairSeated: boolean;
   socket: WebSocket;
 }
 
@@ -200,6 +203,8 @@ export interface PlayerSnapshot {
   ferrisSlot?: number | null;
   ferrisRideStartedAt?: number | null;
   ferrisExitQueued?: boolean;
+  equipped?: ShopEquipped;
+  chairSeated?: boolean;
 }
 
 export type { ChickenSnapshot };

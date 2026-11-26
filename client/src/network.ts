@@ -169,6 +169,8 @@ export interface PlayerSnapshot {
   ferrisSlot?: number | null;
   ferrisRideStartedAt?: number | null;
   ferrisExitQueued?: boolean;
+  equipped?: Record<string, string | null>;
+  chairSeated?: boolean;
 }
 
 export interface JukeboxTrack {
@@ -204,7 +206,7 @@ export interface TheaterSignal {
 }
 
 type Handlers = {
-  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; fastestSlayer: FastestSlayerRecord | null; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number; bowlingBestScore?: number }) => void;
+  joined: (message: { selfId: string; room: string; resumeToken: string; serverTime: number; players: PlayerSnapshot[]; leaderboard: CatchEntry[]; personalBest: CatchEntry | null; stones: StoneSnapshot[]; campfireCooking: CampfireCooking | null; weather: WeatherSnapshot; chickens: ChickenSnapshot[]; crocodileScores: CrocodileScore[]; fastestSlayer: FastestSlayerRecord | null; theater: TheaterState; seatOccupancy: Record<string, string>; ferrisWheelStartedAt: number; bowlingBestScore?: number; shop?: any; shopConfig?: any }) => void;
   state: (players: PlayerSnapshot[], serverTime: number) => void;
   playerJoined: (player: PlayerSnapshot, serverTime: number) => void;
   playerLeft: (playerId: string) => void;
@@ -254,6 +256,13 @@ type Handlers = {
   inventorySync: (items: InventoryItem[], totalCaught: number, personalBest: InventoryItem | null, collection: InventoryItem[]) => void;
   inventoryAdd: (item: InventoryItem) => void;
   inventoryRemove: (catchId: string) => void;
+  shopState: (message: { shop: any; config: any; items: InventoryItem[]; fishPrices?: Record<string, number> }) => void;
+  shopSale: (message: { result: any; shop: any; items: InventoryItem[] }) => void;
+  shopPurchase: (message: { shop: any; items: InventoryItem[] }) => void;
+  shopEquip: (shop: any) => void;
+  shopChair: (message: { seated: boolean; shop: any }) => void;
+  shopError: (message: string) => void;
+  equipmentChanged: (playerId: string, equipped: Record<string, string | null>, chairSeated: boolean) => void;
   playerHolding: (playerId: string, fish: HeldFish | null) => void;
   campfireCooking: (cooking: CampfireCooking | null) => void;
   campfireCooked: (event: CampfireCookedEvent) => void;
@@ -420,6 +429,13 @@ export class Network {
         case 'inventory_sync': this.handlers.inventorySync(message.items as InventoryItem[], Number(message.totalCaught) || 0, message.personalBest as InventoryItem | null, message.collection as InventoryItem[] ?? []); break;
         case 'inventory_add': this.handlers.inventoryAdd(message.item as InventoryItem); break;
         case 'inventory_remove': this.handlers.inventoryRemove(String(message.catchId)); break;
+        case 'shop_state': this.handlers.shopState(message as any); break;
+        case 'shop_sale': this.handlers.shopSale(message as any); break;
+        case 'shop_purchase': this.handlers.shopPurchase(message as any); break;
+        case 'shop_equip': this.handlers.shopEquip(message.shop); break;
+        case 'shop_chair': this.handlers.shopChair(message as any); break;
+        case 'shop_error': this.handlers.shopError(String(message.message ?? 'Shop action rejected.')); break;
+        case 'equipment_changed': this.handlers.equipmentChanged(String(message.playerId), (message.equipped ?? {}) as Record<string, string | null>, Boolean(message.chairSeated)); break;
         case 'player_holding': this.handlers.playerHolding(String(message.playerId), message.fish as HeldFish | null); break;
         case 'campfire_cooking': this.handlers.campfireCooking(message.cooking as CampfireCooking); break;
         case 'campfire_cooked': this.handlers.campfireCooked(message as unknown as CampfireCookedEvent); break;
@@ -478,6 +494,12 @@ export class Network {
   cancelFishing(): void { this.send({ type: 'fish_cancel' }); }
   sendChat(text: string): void { this.send({ type: 'chat', text }); }
   sendPlayerEmoji(emoji: string): void { this.send({ type: 'player_emoji', emoji }); }
+  openShop(): void { this.send({ type: 'shop_open' }); }
+  sellFish(species: string, count: number | 'all'): void { this.send({ type: 'sell_fish', species, count }); }
+  buyShopItem(itemId: string): void { this.send({ type: 'buy_item', itemId }); }
+  equipShopItem(slot: string, itemId: string | null): void { this.send({ type: 'equip', slot, itemId }); }
+  pinShopItem(itemId: string | null): void { this.send({ type: 'shop_pin', itemId }); }
+  toggleShopChair(): void { this.send({ type: 'shop_toggle_chair' }); }
   enqueueJukebox(videoId: string): boolean {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
     this.send({ type: 'jukebox:enqueue', videoId });

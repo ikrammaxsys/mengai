@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { CampfireCooking, FishCast, FishingState, HeldFish, PlayerSnapshot, StoneFlight, StoneSnapshot } from './network';
 import { FISH_CONFIG, type FishSpeciesId } from '../../shared/fishConfig';
 import { createFishModel } from './fishModels';
@@ -16,7 +17,7 @@ import { animateCrocodileWalk, populateCrocodileModel } from './crocodileModel';
 
 type CastRender = FishCast & { phase: 'casting' | 'floating' | 'reeling'; reelSeconds: number };
 type RemoteSample = { time: number; x: number; z: number; facing: number; moving: boolean };
-type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Mesh; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null; hasPet: boolean };
+type Avatar = { group: THREE.Group; label: HTMLDivElement; renderedLabelMarkup: string; rod: THREE.Group; rodTipMarker: THREE.Object3D; rodBlankMesh: THREE.Mesh; rodReelMesh: THREE.Mesh; rodWrapMesh: THREE.Mesh; rodGuideMesh: THREE.Mesh; rodSparkle: THREE.Sprite; line: THREE.Line; bobber: THREE.Mesh; splash: THREE.Mesh[]; cast: CastRender | null; fishing: FishingState; reelActive: boolean; lineTaut: boolean; dragonBite: boolean; ferrisSeatIndex: number | null; ferrisSlot: number | null; ferrisRideStartedAt: number | null; ferrisExitQueued: boolean; samples: RemoteSample[]; targetX: number; targetZ: number; targetFacing: number; local: boolean; color: string; inPhotobooth: boolean; inUnderrun: boolean; blendOffsetX: number; blendOffsetZ: number; blendOffsetFacing: number; blendStartedAt: number; holdingFish: HeldFish | null; heldModel: THREE.Group | null; bodyParts: THREE.Object3D[]; hat: THREE.Group; hatMainMesh: THREE.Mesh; hatBandMesh: THREE.Mesh; crown: THREE.Group; crocodileRobe: THREE.Group; speaking: boolean; crocodilesSlain: number; seatedSeatId: string | null; hasPet: boolean; equipped: Record<string, string | null>; chairSeated: boolean; chairModel: THREE.Group | null; umbrellaModel: THREE.Group | null; umbrellaTopMesh: THREE.Mesh; umbrellaBottomMesh: THREE.Mesh };
 type ChatBubble = { element: HTMLDivElement; expiresAt: number; fadeMs?: number };
 type EmojiPopup = { element: HTMLDivElement; expiresAt: number };
 type StoneVisual = { group: THREE.Group; state: StoneSnapshot['state']; x: number; z: number; color: string; carriedBy: string | null; flight: StoneFlight | null; respawnAt: number | null; splashStartedAt: number | null; splash: THREE.Mesh };
@@ -50,6 +51,7 @@ export class GameScene {
   private readonly jukeboxParticles: JukeboxParticle[] = [];
   private readonly jukeboxReduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   private jukeboxNoteTexture!: THREE.CanvasTexture;
+  private rodSparkleTexture?: THREE.CanvasTexture;
   private jukeboxPlaying = false;
   private localDanceBlocked = false;
   private jukeboxIntensity = 0;
@@ -155,6 +157,45 @@ export class GameScene {
   }
 
   private material(color: string, roughness = 1): THREE.MeshStandardMaterial { return new THREE.MeshStandardMaterial({ color, roughness, flatShading: true }); }
+  private rng(seed: number): () => number {
+    let value = Math.imul(seed ^ 0x9e3779b9, 0x85ebca6b) >>> 0;
+    return () => {
+      value ^= value << 13;
+      value ^= value >>> 17;
+      value ^= value << 5;
+      return ((value >>> 0) % 10_000) / 10_000;
+    };
+  }
+
+  private jitterGeometry(geometry: THREE.BufferGeometry, min = 0.01, max = 0.02, seed = 1): THREE.BufferGeometry {
+    const rng = this.rng(seed);
+    const amount = min + (max - min) * rng();
+    const position = geometry.attributes.position as THREE.BufferAttribute;
+    for (let index = 0; index < position.count; index++) {
+      const scale = (rng() * 2 - 1) * amount;
+      const x = position.getX(index);
+      const y = position.getY(index);
+      const z = position.getZ(index);
+      position.setXYZ(index, x + scale * 0.8, y + (rng() * 2 - 1) * amount * 0.5, z + (rng() * 2 - 1) * amount * 0.8);
+    }
+    position.needsUpdate = true;
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+
+  private mergeGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
+    const merged = BufferGeometryUtils.mergeGeometries(geometries, false);
+    if (!merged) return geometries[0] ?? new THREE.BufferGeometry();
+    merged.computeVertexNormals();
+    return merged;
+  }
+
+  private geometryFrom(mesh: THREE.Mesh): THREE.BufferGeometry {
+    mesh.updateMatrixWorld(true);
+    const geometry = mesh.geometry.clone();
+    geometry.applyMatrix4(mesh.matrixWorld);
+    return geometry;
+  }
 
   private buildWorld(): void {
     this.ambientLight = new THREE.HemisphereLight('#f4fff4', '#8aa69a', 2.15);
@@ -629,6 +670,16 @@ export class GameScene {
     this.jukeboxGlowLight = new THREE.PointLight('#b8f1d8', 0, 3.2, 2);
     this.jukeboxGlowLight.position.set(0, -0.05, 0);
     this.jukeboxRoot.add(this.jukeboxGlowLight);
+    const shopRoot = new THREE.Group();
+    shopRoot.position.set(-7.5, 0.2, -10.5);
+    const shopCounter = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.05, 0.85), this.material('#b98b5a'));
+    shopCounter.position.y = 0.52;
+    shopCounter.castShadow = true;
+    const shopAwning = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.12, 1.25), this.material('#6b9a82'));
+    shopAwning.position.set(0, 1.65, 0);
+    shopAwning.castShadow = true;
+    shopRoot.add(shopCounter, shopAwning);
+    this.scene.add(shopRoot);
     this.createJukeboxParticles();
   }
 
@@ -817,6 +868,284 @@ export class GameScene {
     this.island.add(group);
   }
 
+  private createSparkleTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const context = canvas.getContext('2d')!;
+    context.clearRect(0, 0, 32, 32);
+    context.fillStyle = '#ffffff';
+    context.beginPath();
+    context.moveTo(16, 1);
+    context.lineTo(20, 12);
+    context.lineTo(31, 16);
+    context.lineTo(20, 20);
+    context.lineTo(16, 31);
+    context.lineTo(12, 20);
+    context.lineTo(1, 16);
+    context.lineTo(12, 12);
+    context.closePath();
+    context.fill();
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  private createStrawHat(headWidth: number): { root: THREE.Group; mainMesh: THREE.Mesh; bandMesh: THREE.Mesh } {
+    const root = new THREE.Group();
+    const strawLight = new THREE.MeshStandardMaterial({ color: '#d9b866', roughness: 0.92, flatShading: true });
+    const strawDark = new THREE.MeshStandardMaterial({ color: '#b8964a', roughness: 0.95, flatShading: true });
+    const bandMaterial = new THREE.MeshStandardMaterial({ color: '#a63a3a', roughness: 0.8, flatShading: true });
+    const accentMaterial = new THREE.MeshStandardMaterial({ color: '#3f5ca8', roughness: 0.75, flatShading: true });
+    const crownBottom = headWidth * 0.37;
+    const crownTop = crownBottom * 0.5;
+    const brimRadius = headWidth * 0.95;
+    const partsLight: THREE.BufferGeometry[] = [];
+    const partsDark: THREE.BufferGeometry[] = [];
+
+    for (let index = 0; index < 10; index++) {
+      const start = index / 10 * Math.PI * 2;
+      const end = (index + 1) / 10 * Math.PI * 2;
+      const crownPanel = new THREE.Mesh(
+        this.jitterGeometry(new THREE.CylinderGeometry(crownTop, crownBottom, headWidth * 0.28, 1, 1, false, start, end - start), 0.006, 0.012, 100 + index),
+      );
+      crownPanel.position.y = 0.11;
+      (index % 2 ? partsDark : partsLight).push(this.geometryFrom(crownPanel));
+      const topCap = new THREE.Mesh(this.jitterGeometry(new THREE.CircleGeometry(crownTop * 0.95, 3, start, end - start), 0.004, 0.008, 300 + index));
+      topCap.rotation.x = -Math.PI / 2;
+      topCap.position.y = 0.11 + headWidth * 0.14;
+      (index % 2 ? partsDark : partsLight).push(this.geometryFrom(topCap));
+    }
+
+    for (let index = 0; index < 12; index++) {
+      const start = index / 12 * Math.PI * 2;
+      const end = (index + 1) / 12 * Math.PI * 2;
+      const panel = new THREE.Mesh(this.jitterGeometry(new THREE.CylinderGeometry(brimRadius * 0.94, brimRadius, headWidth * 0.055, 1, 1, false, start, end - start), 0.006, 0.014, 500 + index));
+      panel.position.y = 0.03 - Math.cos((index + 0.5) / 12 * Math.PI * 2) * 0.01;
+      (index % 2 ? partsDark : partsLight).push(this.geometryFrom(panel));
+    }
+
+    const rimEdge = new THREE.Mesh(this.jitterGeometry(new THREE.TorusGeometry(brimRadius, 0.02, 4, 12), 0.002, 0.006, 900));
+    rimEdge.rotation.x = Math.PI / 2;
+    rimEdge.position.y = 0.002;
+    partsDark.push(this.geometryFrom(rimEdge));
+
+    const crownMesh = new THREE.Mesh(this.mergeGeometries(partsLight), strawLight);
+    const detailMesh = new THREE.Mesh(this.mergeGeometries(partsDark), strawDark);
+
+    const band = new THREE.Mesh(new THREE.TorusGeometry(crownBottom * 0.92, 0.02, 4, 8), bandMaterial);
+    band.rotation.x = Math.PI / 2;
+    band.position.y = 0.055;
+    const knot = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.035, 0.02), bandMaterial);
+    knot.position.set(crownBottom * 0.7, 0.055, 0.03);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.012), bandMaterial);
+    tail.position.set(crownBottom * 0.75, 0.02, 0.03);
+    const lureA = new THREE.Mesh(new THREE.ConeGeometry(0.015, 0.05, 6), accentMaterial);
+    lureA.position.set(-crownBottom * 0.55, 0.08, 0.02);
+    lureA.rotation.z = 0.25;
+    const lureB = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 5), new THREE.MeshStandardMaterial({ color: '#e7cf76', roughness: 0.55, flatShading: true }));
+    lureB.position.set(-crownBottom * 0.62, 0.04, 0.04);
+    root.add(crownMesh, detailMesh, band, knot, tail, lureA, lureB);
+    root.rotation.x = -THREE.MathUtils.degToRad(5);
+    root.position.y = 1.89;
+    return { root, mainMesh: crownMesh, bandMesh: band };
+  }
+
+  private createRod(characterHeight: number): {
+    root: THREE.Group;
+    tipMarker: THREE.Object3D;
+    blankMesh: THREE.Mesh;
+    reelMesh: THREE.Mesh;
+    wrapMesh: THREE.Mesh;
+    guideMesh: THREE.Mesh;
+    sparkle: THREE.Sprite;
+  } {
+    const root = new THREE.Group();
+    const axis = new THREE.Group();
+    axis.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0.2, 0.62, 0.76).normalize());
+    root.add(axis);
+    const length = characterHeight * 1.18;
+    let cursor = 0;
+    const sections = [0.24, 0.23, 0.22, 0.19, 0.12];
+    const baseRadius = 0.018;
+    const tipRadius = 0.006;
+    const blankParts: THREE.BufferGeometry[] = [];
+    const wrapParts: THREE.BufferGeometry[] = [];
+    const guideParts: THREE.BufferGeometry[] = [];
+    const reelParts: THREE.BufferGeometry[] = [];
+    const corkParts: THREE.BufferGeometry[] = [];
+
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.028, 0.25, 6));
+    grip.rotation.z = Math.PI / 2;
+    grip.position.x = 0.1;
+    corkParts.push(this.geometryFrom(grip));
+    const reelSeat = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.004, 4, 6));
+    reelSeat.rotation.y = Math.PI / 2;
+    reelSeat.position.set(0.24, -0.01, 0);
+    wrapParts.push(this.geometryFrom(reelSeat));
+    const reelBody = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 8));
+    reelBody.rotation.x = Math.PI / 2;
+    reelBody.position.set(0.26, -0.05, 0.03);
+    reelParts.push(this.geometryFrom(reelBody));
+    const crank = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.01, 0.05));
+    crank.position.set(0.26, -0.08, 0.05);
+    reelParts.push(this.geometryFrom(crank));
+
+    for (let index = 0; index < sections.length; index++) {
+      const section = sections[index] * length;
+      const startT = cursor / length;
+      const endT = (cursor + section) / length;
+      const radiusA = THREE.MathUtils.lerp(baseRadius, tipRadius, startT);
+      const radiusB = THREE.MathUtils.lerp(baseRadius, tipRadius, endT);
+      const segment = new THREE.Mesh(this.jitterGeometry(new THREE.CylinderGeometry(radiusB, radiusA, section, 6), 0.002, 0.005, 1400 + index));
+      segment.rotation.z = Math.PI / 2;
+      segment.position.x = cursor + section * 0.5;
+      segment.rotation.y = index * 0.03;
+      blankParts.push(this.geometryFrom(segment));
+      if (index < sections.length - 1) {
+        const ferrule = new THREE.Mesh(new THREE.TorusGeometry(radiusB + 0.0018, 0.0025, 4, 6));
+        ferrule.rotation.y = Math.PI / 2;
+        ferrule.position.x = cursor + section;
+        wrapParts.push(this.geometryFrom(ferrule));
+      }
+      cursor += section;
+    }
+    for (let node = 0.38; node < length - 0.12; node += 0.3) {
+      const bambooNode = new THREE.Mesh(new THREE.TorusGeometry(0.013, 0.0026, 4, 6));
+      bambooNode.rotation.y = Math.PI / 2;
+      bambooNode.position.x = node;
+      wrapParts.push(this.geometryFrom(bambooNode));
+    }
+
+    const guidePositions = [0.24, 0.45, 0.64, 0.79, 0.91];
+    for (let index = 0; index < guidePositions.length; index++) {
+      const guideT = guidePositions[index];
+      const guideRadius = THREE.MathUtils.lerp(0.018, 0.009, index / (guidePositions.length - 1));
+      const guide = new THREE.Mesh(new THREE.TorusGeometry(guideRadius, 0.0028, 4, 5));
+      guide.rotation.y = Math.PI / 2;
+      guide.position.set(length * guideT, 0.018 + index * 0.001, 0);
+      guideParts.push(this.geometryFrom(guide));
+      const wrap = new THREE.Mesh(new THREE.CylinderGeometry(guideRadius * 0.55, guideRadius * 0.55, 0.012, 6));
+      wrap.rotation.z = Math.PI / 2;
+      wrap.position.x = length * guideT;
+      wrapParts.push(this.geometryFrom(wrap));
+    }
+    const tipCone = new THREE.Mesh(new THREE.ConeGeometry(0.0065, 0.03, 6));
+    tipCone.rotation.z = -Math.PI / 2;
+    tipCone.position.x = length + 0.015;
+    guideParts.push(this.geometryFrom(tipCone));
+
+    const blankMesh = new THREE.Mesh(this.mergeGeometries(blankParts), new THREE.MeshStandardMaterial({ color: '#bca25f', roughness: 0.82, flatShading: true }));
+    const reelMesh = new THREE.Mesh(this.mergeGeometries([...reelParts, ...corkParts]), new THREE.MeshStandardMaterial({ color: '#8f8f96', roughness: 0.48, metalness: 0.25, flatShading: true }));
+    const wrapMesh = new THREE.Mesh(this.mergeGeometries(wrapParts), new THREE.MeshStandardMaterial({ color: '#f3eee2', roughness: 0.72, flatShading: true }));
+    const guideMesh = new THREE.Mesh(this.mergeGeometries(guideParts), new THREE.MeshStandardMaterial({ color: '#5f6864', roughness: 0.6, metalness: 0.35, flatShading: true }));
+    axis.add(blankMesh, reelMesh, wrapMesh, guideMesh);
+    root.position.set(0.43, 1.22, 0.2);
+    const tipMarker = new THREE.Object3D();
+    tipMarker.position.set(length * 0.91, 0.022, 0);
+    axis.add(tipMarker);
+    this.rodSparkleTexture ??= this.createSparkleTexture();
+    const sparkle = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.rodSparkleTexture, color: '#ffe7a3', transparent: true, opacity: 0, depthWrite: false }));
+    sparkle.scale.set(0.1, 0.1, 1);
+    tipMarker.add(sparkle);
+    return { root, tipMarker, blankMesh, reelMesh, wrapMesh, guideMesh, sparkle };
+  }
+
+  private applyUmbrellaPanelColors(geometry: THREE.BufferGeometry, darker = 1): THREE.BufferGeometry {
+    const nonIndexed = geometry.toNonIndexed();
+    const position = nonIndexed.attributes.position as THREE.BufferAttribute;
+    const colors = new Float32Array(position.count * 3);
+    const coral = new THREE.Color('#d9534f');
+    const cream = new THREE.Color('#f3e9d2');
+    for (let index = 0; index < position.count; index += 3) {
+      const x = (position.getX(index) + position.getX(index + 1) + position.getX(index + 2)) / 3;
+      const z = (position.getZ(index) + position.getZ(index + 1) + position.getZ(index + 2)) / 3;
+      const angle = (Math.atan2(z, x) + Math.PI * 2) % (Math.PI * 2);
+      const panel = Math.floor(angle / (Math.PI * 2 / 8));
+      const color = (panel % 2 === 0 ? coral : cream).clone().multiplyScalar(darker);
+      for (let offset = 0; offset < 3; offset++) {
+        colors[(index + offset) * 3] = color.r;
+        colors[(index + offset) * 3 + 1] = color.g;
+        colors[(index + offset) * 3 + 2] = color.b;
+      }
+    }
+    nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return nonIndexed;
+  }
+
+  private createUmbrella(headWidth: number): { root: THREE.Group; topMesh: THREE.Mesh; bottomMesh: THREE.Mesh } {
+    const root = new THREE.Group();
+    const radius = headWidth * 1.02;
+    const profile = [
+      new THREE.Vector2(0, 0.3),
+      new THREE.Vector2(radius * 0.35, 0.27),
+      new THREE.Vector2(radius * 0.7, 0.18),
+      new THREE.Vector2(radius, 0.0),
+    ];
+    const canopyBase = this.jitterGeometry(new THREE.LatheGeometry(profile, 8), 0.003, 0.006, 2400);
+    const canopyPosition = canopyBase.attributes.position as THREE.BufferAttribute;
+    for (let index = 0; index < canopyPosition.count; index++) {
+      const y = canopyPosition.getY(index);
+      if (Math.abs(y) > 0.01) continue;
+      const x = canopyPosition.getX(index);
+      const z = canopyPosition.getZ(index);
+      const angle = (Math.atan2(z, x) + Math.PI * 2) % (Math.PI * 2);
+      const localPhase = (angle / (Math.PI * 2 / 8)) % 1;
+      const scallop = Math.sin(localPhase * Math.PI) * 0.04;
+      canopyPosition.setY(index, y + scallop);
+      canopyPosition.setX(index, x * (1 - scallop * 0.2));
+      canopyPosition.setZ(index, z * (1 - scallop * 0.2));
+    }
+    canopyPosition.needsUpdate = true;
+    canopyBase.computeVertexNormals();
+    const topGeometry = this.applyUmbrellaPanelColors(canopyBase, 1);
+    const bottomGeometry = this.applyUmbrellaPanelColors(canopyBase, 0.7);
+    const topMesh = new THREE.Mesh(topGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, flatShading: true, side: THREE.DoubleSide }));
+    const bottomMesh = new THREE.Mesh(bottomGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true, side: THREE.DoubleSide }));
+    root.add(topMesh, bottomMesh);
+
+    const woodParts: THREE.BufferGeometry[] = [];
+    const metalParts: THREE.BufferGeometry[] = [];
+    for (let index = 0; index < 8; index++) {
+      const angle = index / 8 * Math.PI * 2;
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.95, 0.008, 0.012));
+      rib.position.set(Math.cos(angle) * radius * 0.48, 0.14, Math.sin(angle) * radius * 0.48);
+      rib.rotation.y = -angle;
+      rib.rotation.z = -0.18;
+      woodParts.push(this.geometryFrom(rib));
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 5));
+      tip.position.set(Math.cos(angle) * radius * 0.96, 0.01, Math.sin(angle) * radius * 0.96);
+      woodParts.push(this.geometryFrom(tip));
+    }
+    const finial = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.05, 6));
+    finial.position.y = 0.33;
+    metalParts.push(this.geometryFrom(finial));
+
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.0, 6));
+    shaft.position.y = -0.35;
+    woodParts.push(this.geometryFrom(shaft));
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.018, 4, 6, Math.PI));
+    handle.rotation.set(0, 0, Math.PI * 0.5);
+    handle.position.set(0, -0.84, 0.055);
+    woodParts.push(this.geometryFrom(handle));
+    const runner = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.008, 4, 6));
+    runner.rotation.x = Math.PI / 2;
+    runner.position.y = -0.2;
+    metalParts.push(this.geometryFrom(runner));
+    for (let index = 0; index < 4; index++) {
+      const angle = index / 4 * Math.PI * 2 + Math.PI / 8;
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.65, 0.006, 0.008));
+      strut.position.set(Math.cos(angle) * radius * 0.3, -0.09, Math.sin(angle) * radius * 0.3);
+      strut.rotation.y = -angle;
+      strut.rotation.z = -0.3;
+      metalParts.push(this.geometryFrom(strut));
+    }
+    const woodMesh = new THREE.Mesh(this.mergeGeometries(woodParts), new THREE.MeshStandardMaterial({ color: '#7a5230', roughness: 0.72, flatShading: true }));
+    const metalMesh = new THREE.Mesh(this.mergeGeometries(metalParts), new THREE.MeshStandardMaterial({ color: '#b6a27e', roughness: 0.56, metalness: 0.35, flatShading: true }));
+    root.add(woodMesh, metalMesh);
+    return { root, topMesh, bottomMesh };
+  }
+
   private makeAvatar(player: PlayerSnapshot, local: boolean): Avatar {
     const group = new THREE.Group();
     const visualRoot = new THREE.Group();
@@ -825,8 +1154,12 @@ export class GameScene {
     body.position.y = 0.8; body.castShadow = true; body.visible = !local || !this.firstPersonView; visualRoot.add(body);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), this.material('#f2c7a5'));
     head.position.set(0, 1.55, 0.04); head.castShadow = true; head.visible = !local || !this.firstPersonView; visualRoot.add(head);
-    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.37, 0.35, 7), this.material(player.color));
-    hat.position.set(0, 1.86, 0.04); hat.castShadow = true; hat.visible = !local || !this.firstPersonView; visualRoot.add(hat);
+    const headWidth = 0.6;
+    const characterHeight = 2.0;
+    const hatModel = this.createStrawHat(headWidth);
+    const hat = hatModel.root;
+    hat.visible = !local || !this.firstPersonView;
+    visualRoot.add(hat);
     const crown = this.createCrown();
     crown.visible = false; visualRoot.add(crown);
     const crocodileRobe = this.createCrocodileRobe();
@@ -834,8 +1167,10 @@ export class GameScene {
     const face = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), this.material('#344b45'));
     face.position.set(0.11, 1.57, 0.31); face.visible = !local || !this.firstPersonView; visualRoot.add(face);
 
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.25, 5), this.material('#765b40'));
-    rod.position.set(0.48, 1.2, 0.18); rod.rotation.z = -0.42; rod.visible = false; visualRoot.add(rod);
+    const rodModel = this.createRod(characterHeight);
+    const rod = rodModel.root;
+    rod.visible = false;
+    visualRoot.add(rod);
     const noteColors = ['#a8ead1', '#f4b8cb', '#f4dc8c', '#a8d7f0'];
     const danceNote = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.jukeboxNoteTexture, color: noteColors[Math.floor(Math.random() * noteColors.length)], transparent: true, opacity: 0, depthWrite: false }));
     danceNote.position.set(0, 2.32, 0);
@@ -860,13 +1195,24 @@ export class GameScene {
     this.labels.appendChild(label);
     const crocodilesSlain = Math.max(this.crocodileSlainCounts.get(player.id) ?? 0, player.crocodilesSlain ?? 0);
     this.crocodileSlainCounts.set(player.id, crocodilesSlain);
-    const avatar: Avatar = { group, label, renderedLabelMarkup: '', rod, line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false, ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false, samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0, holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null, hasPet: player.hasPet };
+    const umbrella = this.createUmbrella(headWidth);
+    umbrella.root.visible = false;
+    visualRoot.add(umbrella.root);
+    const avatar: Avatar = {
+      group, label, renderedLabelMarkup: '', rod, rodTipMarker: rodModel.tipMarker, rodBlankMesh: rodModel.blankMesh, rodReelMesh: rodModel.reelMesh, rodWrapMesh: rodModel.wrapMesh, rodGuideMesh: rodModel.guideMesh, rodSparkle: rodModel.sparkle,
+      line, bobber, splash, cast: null, fishing: player.fishing, reelActive: player.fishing === 'fighting', lineTaut: player.fishing === 'fighting', dragonBite: false,
+      ferrisSeatIndex: player.ferrisSeatIndex ?? null, ferrisSlot: player.ferrisSlot ?? null, ferrisRideStartedAt: player.ferrisRideStartedAt ?? null, ferrisExitQueued: player.ferrisExitQueued ?? false,
+      samples: [], targetX: player.x, targetZ: player.z, targetFacing: player.facing, local, color: player.color, inPhotobooth: player.inPhotobooth ?? false, inUnderrun: false, blendOffsetX: 0, blendOffsetZ: 0, blendOffsetFacing: 0, blendStartedAt: 0,
+      holdingFish: null, heldModel: null, bodyParts: [body, head, hat, face, crown, crocodileRobe, danceNote], hat, hatMainMesh: hatModel.mainMesh, hatBandMesh: hatModel.bandMesh, crown, crocodileRobe, speaking: false, crocodilesSlain, seatedSeatId: null, hasPet: player.hasPet,
+      equipped: player.equipped ?? {}, chairSeated: player.chairSeated ?? false, chairModel: null, umbrellaModel: umbrella.root, umbrellaTopMesh: umbrella.topMesh, umbrellaBottomMesh: umbrella.bottomMesh,
+    };
     this.avatarDance.set(player.id, { root: visualRoot, note: danceNote, moving: player.moving, phase: Math.random() * Math.PI * 2, speed: 0.9 + Math.random() * 0.2, blend: 0 });
     group.position.set(player.x, 0, player.z);
     this.scene.add(group); this.avatars.set(player.id, avatar); this.setFishing(player.id, player.fishing);
     this.updateLeaderAppearance(avatar);
     this.updateCrocodileRobeAppearance();
     this.syncPet(player.id, player.hasPet);
+    this.applyCosmetics(avatar);
     if (player.holdingFish) this.setHoldingFish(player.id, player.holdingFish);
     return avatar;
   }
@@ -1032,7 +1378,7 @@ export class GameScene {
   private updateLeaderAppearance(avatar: Avatar): void {
     const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
     const visible = !avatar.local || !this.firstPersonView;
-    avatar.hat.visible = !isLeader && visible;
+    avatar.hat.visible = !isLeader && visible && avatar.equipped.head === 'straw-hat';
     avatar.crown.visible = isLeader && visible;
   }
 
@@ -1173,6 +1519,63 @@ export class GameScene {
     return { bufferDepth, interpolationDelayMs: Math.round(this.interpolationDelayMs), corrections: this.correctionCount, underruns: this.interpolationUnderruns };
   }
 
+  private applyCosmetics(avatar: Avatar): void {
+    const equipped = avatar.equipped;
+    const isLeader = this.leaderboardLeader !== '' && avatar.label.dataset.name?.toLocaleLowerCase() === this.leaderboardLeader;
+    avatar.hat.visible = equipped.head === 'straw-hat' && !isLeader && (!avatar.local || !this.firstPersonView);
+    (avatar.hatMainMesh.material as THREE.MeshStandardMaterial).color.set('#d9b866');
+    (avatar.hatBandMesh.material as THREE.MeshStandardMaterial).color.set('#a63a3a');
+    const rodBlank = avatar.rodBlankMesh.material as THREE.MeshStandardMaterial;
+    const rodReel = avatar.rodReelMesh.material as THREE.MeshStandardMaterial;
+    const rodWrap = avatar.rodWrapMesh.material as THREE.MeshStandardMaterial;
+    const rodGuide = avatar.rodGuideMesh.material as THREE.MeshStandardMaterial;
+    rodBlank.metalness = 0;
+    rodBlank.roughness = 0.78;
+    rodBlank.emissive.set('#000000');
+    rodReel.color.set('#8f8f96');
+    rodReel.metalness = 0.3;
+    rodReel.roughness = 0.5;
+    rodWrap.color.set('#f2eade');
+    rodGuide.color.set('#5f6864');
+    avatar.rodSparkle.material.opacity = 0;
+    if (equipped.rodSkin === 'golden-rod') {
+      rodBlank.color.set('#d8b24f');
+      rodBlank.metalness = 0.8;
+      rodBlank.roughness = 0.3;
+      rodBlank.emissive.set('#5b4213');
+      rodReel.color.set('#d9c27a');
+      rodReel.metalness = 0.88;
+      rodReel.roughness = 0.25;
+      rodWrap.color.set('#f0d79a');
+      rodGuide.color.set('#c6a24f');
+    } else if (equipped.rodSkin === 'fiberglass-rod') {
+      rodBlank.color.set('#33b9bb');
+      rodReel.color.set('#c4c7d0');
+      rodWrap.color.set('#f6f8fa');
+      rodGuide.color.set('#d7e0ec');
+    } else {
+      rodBlank.color.set('#b8a65a');
+      rodReel.color.set('#9d8f79');
+      rodWrap.color.set('#d5c18d');
+      rodGuide.color.set('#6a5a44');
+    }
+    (avatar.bobber.material as THREE.MeshStandardMaterial).color.set(equipped.bobber === 'gold-bobber' ? '#e3bd45' : '#f2745d');
+    const body = avatar.bodyParts[0] as THREE.Mesh;
+    if (body?.material) (body.material as THREE.MeshStandardMaterial).color.set(equipped.body === 'fishing-vest' ? '#6d8b67' : avatar.color);
+    if (avatar.umbrellaModel) avatar.umbrellaModel.visible = equipped.held === 'umbrella';
+    if (!avatar.chairModel && avatar.chairSeated) {
+      const chair = new THREE.Group();
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.12, 0.65), new THREE.MeshStandardMaterial({ color: '#8d6747' }));
+      seat.position.y = 0.42;
+      const back = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.7, 0.12), new THREE.MeshStandardMaterial({ color: '#8d6747' }));
+      back.position.set(0, 0.75, -0.32);
+      chair.add(seat, back);
+      chair.position.set(0, 0, -0.12);
+      avatar.group.add(chair);
+      avatar.chairModel = chair;
+    } else if (avatar.chairModel) avatar.chairModel.visible = avatar.chairSeated;
+  }
+
   upsert(player: PlayerSnapshot, serverTime = Date.now() + this.serverClockOffset): void {
     let avatar = this.avatars.get(player.id);
     if (!avatar) avatar = this.makeAvatar(player, player.id === this.localId);
@@ -1197,6 +1600,9 @@ export class GameScene {
     }
     avatar.fishing = player.fishing;
     avatar.hasPet = player.hasPet;
+    if (player.equipped) avatar.equipped = player.equipped;
+    avatar.chairSeated = player.chairSeated ?? false;
+    this.applyCosmetics(avatar);
     this.syncPet(player.id, player.hasPet);
     avatar.ferrisSeatIndex = player.ferrisSeatIndex ?? null;
     avatar.ferrisSlot = player.ferrisSlot ?? null;
@@ -1380,13 +1786,19 @@ export class GameScene {
   }
 
   private castRodTip(cast: FishCast): THREE.Vector3 {
-    const localX = 0.9, localZ = 0.2;
-    const c = Math.cos(cast.facing), s = Math.sin(cast.facing);
-    return new THREE.Vector3(cast.startX + c * localX + s * localZ, 1.72, cast.startZ - s * localX + c * localZ);
+    const grip = new THREE.Vector3(0.43, 1.22, 0.2);
+    const tipOffset = new THREE.Vector3(0.32, 0.68, 1.24);
+    const c = Math.cos(cast.facing);
+    const s = Math.sin(cast.facing);
+    return new THREE.Vector3(
+      cast.startX + c * (grip.x + tipOffset.x) + s * (grip.z + tipOffset.z),
+      grip.y + tipOffset.y,
+      cast.startZ - s * (grip.x + tipOffset.x) + c * (grip.z + tipOffset.z),
+    );
   }
 
   private rodTip(avatar: Avatar): THREE.Vector3 {
-    return avatar.group.localToWorld(new THREE.Vector3(0.9, 1.72, 0.2));
+    return avatar.rodTipMarker.getWorldPosition(new THREE.Vector3());
   }
 
   private renderCast(avatar: Avatar, now: number): void {
@@ -1701,7 +2113,31 @@ export class GameScene {
     this.jukeboxLabel.style.top = `${Math.round((-this.ray.y * 0.5 + 0.5) * innerHeight)}px`;
     this.jukeboxLabel.style.display = this.ray.z <= 1 && Math.abs(this.ray.x) <= 1.2 && Math.abs(this.ray.y) <= 1.2 ? 'block' : 'none';
     for (const [id, avatar] of this.avatars) {
-      avatar.rod.rotation.z = -0.42 + (avatar.reelActive ? 0.12 + Math.sin(Date.now() * 0.006) * 0.035 : 0);
+      const walkSway = Math.sin(serverNow * 0.006 + avatar.group.position.x) * (this.avatarDance.get(id)?.moving ? 0.05 : 0.02);
+      avatar.rod.rotation.set(
+        avatar.chairSeated ? -0.18 : -0.08 + walkSway * 0.2,
+        avatar.chairSeated ? -0.3 : -0.16,
+        -0.98 + (avatar.reelActive ? 0.11 + Math.sin(serverNow * 0.006) * 0.03 : walkSway),
+      );
+      if (avatar.equipped.rodSkin === 'golden-rod') {
+        avatar.rodSparkle.material.opacity = 0.35 + Math.max(0, Math.sin(serverNow * 0.015 + avatar.group.position.x * 0.4)) * 0.55;
+      } else avatar.rodSparkle.material.opacity = 0;
+      if (avatar.umbrellaModel) {
+        const hasUmbrella = avatar.equipped.held === 'umbrella' && avatar.umbrellaModel.visible && (!avatar.local || !this.firstPersonView);
+        avatar.umbrellaModel.visible = hasUmbrella;
+        if (hasUmbrella) {
+          const crownMargin = avatar.crown.visible ? 0.18 : 0.08;
+          const idleSway = Math.sin(serverNow * 0.002 + avatar.group.position.z) * THREE.MathUtils.degToRad(3);
+          const walking = this.avatarDance.get(id)?.moving ?? false;
+          const shoulderMode = Boolean(avatar.holdingFish);
+          avatar.umbrellaModel.position.set(shoulderMode ? -0.35 : -0.62, shoulderMode ? 2.15 + crownMargin : 2.28 + crownMargin, shoulderMode ? -0.33 : 0.08);
+          avatar.umbrellaModel.rotation.set(
+            0.08,
+            shoulderMode ? 0.9 : 0.35,
+            shoulderMode ? 0.55 : 0.3 + idleSway + (walking ? Math.sin(serverNow * 0.009) * 0.05 : 0),
+          );
+        }
+      }
       if (avatar.heldModel) {
         avatar.heldModel.position.y = 1.12 + Math.sin(serverNow * 0.0022 + avatar.group.position.x) * 0.035;
         avatar.heldModel.rotation.z = Math.sin(serverNow * 0.0018 + avatar.group.position.z) * 0.055;

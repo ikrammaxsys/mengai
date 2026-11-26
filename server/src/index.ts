@@ -23,6 +23,7 @@ import { THEATER_SEATS, THEATER_SEAT_INTERACTION_RADIUS } from '../../shared/the
 import { createWeatherSnapshot, isWeatherType, WEATHER_CONFIG } from '../../shared/weatherConfig.js';
 import { ARENA_CONFIG } from '../../shared/arenaConfig.js';
 import { addArenaPlayer, arenaSnapshot, arenaStoneAction, createCrocodileArena, moveArenaPlayer, removeArenaPlayer, restartCrocodileArena, updateArena, type ArenaEvent, type ArenaInstance } from './arenas.js';
+import { SHOP_CONFIG } from './shop.js';
 import { BOWLING_CONFIG, type BowlingSnapshot } from '../../shared/bowlingConfig.js';
 import { BowlingGame, type BowlingEvent } from './bowling.js';
 import { initializeFileLogging } from './logger.js';
@@ -872,6 +873,8 @@ function roomSnapshot(room: Room, player: Player) {
     theater: { ...room.theater },
     seatOccupancy: Object.fromEntries(room.seatOccupancy),
     ferrisWheelStartedAt: room.ferrisWheelStartedAt,
+    shop: player.shop,
+    shopConfig: SHOP_CONFIG,
     chickens: chickenSnapshots(room.chickens),
     crocodileScores: [...room.crocodileScores.values()].sort((a, b) => b.count - a.count),
     fastestSlayer: room.fastestSlayer,
@@ -1349,6 +1352,7 @@ wss.on('connection', (socket) => {
       const fishData = persistentData.playerFish(roomId, player.name);
       player.crocodilesSlain = fishData.crocodilesSlain;
       player.bowlingBestScore = fishData.bowlingBestScore;
+      player.shop = fishData.shop;
       room.crocodileScores.set(player.id, { playerId: player.id, playerName: player.name, count: player.crocodilesSlain });
       inventoryStore.restore(player.id, fishData);
       const inventory = inventoryStore.list(player.id);
@@ -1365,13 +1369,82 @@ wss.on('connection', (socket) => {
       return;
     }
 
-    if (!membership) {
+    const membershipForAction = memberships.get(socket);
+    if (!membershipForAction) {
       send(socket, { type: 'error', message: 'Join a room first.' });
       return;
     }
-    const player = rooms.getPlayer(membership.roomId, membership.playerId);
-    const room = rooms.getRoom(membership.roomId);
+    const player = rooms.getPlayer(membershipForAction.roomId, membershipForAction.playerId);
+    const room = rooms.getRoom(membershipForAction.roomId);
     if (!player || !room) return;
+
+    if (message.type === 'shop_open') {
+      const atStall = Math.hypot(player.x - SHOP_CONFIG.stall.x, player.z - SHOP_CONFIG.stall.z) <= SHOP_CONFIG.stall.interactionRadius;
+      if (!atStall) { send(socket, { type: 'shop_error', message: 'Walk closer to the shop stall.' }); return; }
+      send(socket, { type: 'shop_state', shop: persistentData.playerEconomy(room.id, player.name), config: SHOP_CONFIG, items: inventoryStore.list(player.id), fishPrices: Object.fromEntries(FISH_CONFIG.species.map((species) => [species.id, SHOP_CONFIG.baseValues[species.id] ?? 0])) });
+      return;
+    }
+
+    if (message.type === 'sell_fish') {
+      const atStall = Math.hypot(player.x - SHOP_CONFIG.stall.x, player.z - SHOP_CONFIG.stall.z) <= SHOP_CONFIG.stall.interactionRadius;
+      if (!atStall) { send(socket, { type: 'shop_error', message: 'Walk closer to the shop stall.' }); return; }
+      const species = typeof message.species === 'string' ? message.species : '';
+      const count = message.count === 'all' ? 'all' : Math.max(1, Math.floor(Number(message.count) || 1));
+      try {
+        const result = await persistentData.sellFish(room.id, player.name, species, count);
+        inventoryStore.restore(player.id, { ...persistentData.playerFish(room.id, player.name), items: result.items });
+        player.shop = persistentData.playerEconomy(room.id, player.name);
+        send(socket, { type: 'shop_sale', result: { ...result, soldCount: result.sold }, shop: player.shop, items: result.items });
+        send(socket, { type: 'inventory_sync', items: result.items, totalCaught: inventoryStore.totalCaught(player.id), personalBest: inventoryStore.personalBest(player.id), collection: inventoryStore.collection(player.id) });
+      } catch (error) {
+        send(socket, { type: 'shop_error', message: error instanceof Error ? error.message : 'Fish could not be sold.' });
+      }
+      return;
+    }
+
+    if (message.type === 'buy_item') {
+      const atStall = Math.hypot(player.x - SHOP_CONFIG.stall.x, player.z - SHOP_CONFIG.stall.z) <= SHOP_CONFIG.stall.interactionRadius;
+      if (!atStall) { send(socket, { type: 'shop_error', message: 'Walk closer to the shop stall.' }); return; }
+      const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+      const result = await persistentData.buyItem(room.id, player.name, itemId);
+      if (result.ok) {
+        inventoryStore.restore(player.id, { ...persistentData.playerFish(room.id, player.name), items: result.items });
+        player.shop = result.shop;
+        send(socket, { type: 'inventory_sync', items: result.items, totalCaught: inventoryStore.totalCaught(player.id), personalBest: inventoryStore.personalBest(player.id), collection: inventoryStore.collection(player.id) });
+        broadcast(room, { type: 'equipment_changed', playerId: player.id, equipped: player.shop.equipped, chairSeated: player.chairSeated });
+      }
+      send(socket, result.ok ? { type: 'shop_purchase', shop: result.shop, items: result.items } : { type: 'shop_error', message: result.reason ?? 'Purchase rejected.' });
+      return;
+    }
+
+    if (message.type === 'equip') {
+      const slot = typeof message.slot === 'string' ? message.slot : '';
+      const itemId = typeof message.itemId === 'string' ? message.itemId : null;
+      if (!['head', 'body', 'feet', 'rodSkin', 'bobber', 'held', 'chair'].includes(slot)) { send(socket, { type: 'shop_error', message: 'Unknown equipment slot.' }); return; }
+      const result = await persistentData.equipItem(room.id, player.name, slot as keyof typeof player.shop.equipped, itemId);
+      if (result.ok) {
+        player.shop = result.shop;
+        broadcast(room, { type: 'equipment_changed', playerId: player.id, equipped: player.shop.equipped, chairSeated: player.chairSeated });
+      }
+      send(socket, result.ok ? { type: 'shop_equip', shop: result.shop } : { type: 'shop_error', message: result.reason ?? 'Equipment rejected.' });
+      return;
+    }
+
+    if (message.type === 'shop_pin') {
+      player.shop = await persistentData.pinItem(room.id, player.name, typeof message.itemId === 'string' ? message.itemId : null);
+      send(socket, { type: 'shop_state', shop: player.shop, config: SHOP_CONFIG, items: inventoryStore.list(player.id) });
+      return;
+    }
+
+    if (message.type === 'shop_toggle_chair') {
+      if (!player.shop.ownedItems.includes('fishing-chair')) { send(socket, { type: 'shop_error', message: 'Own the fishing chair first.' }); return; }
+      const result = await persistentData.toggleChair(room.id, player.name);
+      player.shop = result.shop;
+      player.chairSeated = result.seated;
+      broadcast(room, { type: 'equipment_changed', playerId: player.id, equipped: player.shop.equipped, chairSeated: player.chairSeated });
+      send(socket, { type: 'shop_chair', seated: player.chairSeated, shop: player.shop });
+      return;
+    }
 
     if (message.type === 'seat:sit') {
       const seatId = typeof message.seatId === 'string' ? message.seatId : '';

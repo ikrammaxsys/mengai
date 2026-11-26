@@ -106,6 +106,14 @@ const weatherName = document.querySelector<HTMLElement>('#weather-name')!;
 const weatherHint = document.querySelector<HTMLElement>('#weather-hint')!;
 const fishPrompt = document.querySelector<HTMLElement>('#fish-prompt')!;
 const jukeboxPrompt = document.querySelector<HTMLElement>('#jukebox-prompt')!;
+const shopPrompt = document.querySelector<HTMLElement>('#shop-prompt')!;
+const shopModal = document.querySelector<HTMLElement>('#shop-modal')!;
+const shopClose = document.querySelector<HTMLButtonElement>('#shop-close')!;
+const shopContent = document.querySelector<HTMLElement>('#shop-content')!;
+const shopWallet = document.querySelector<HTMLElement>('#shop-wallet')!;
+const coinCount = document.querySelector<HTMLElement>('#coin-count')!;
+const scrapCount = document.querySelector<HTMLElement>('#scrap-count')!;
+const pinnedGoal = document.querySelector<HTMLElement>('#pinned-goal')!;
 const chatUi = document.querySelector<HTMLElement>('#chat-ui')!;
 const chatToggle = document.querySelector<HTMLButtonElement>('#chat-toggle')!;
 const chatPanel = document.querySelector<HTMLElement>('#chat-panel')!;
@@ -309,6 +317,8 @@ const fishArt = new FishArt(document.querySelector<HTMLCanvasElement>('#catch-fi
 let currentLeaderboard: CatchEntry[] = [];
 let currentCrocodileScores: CrocodileScore[] = [];
 let inventoryItems: InventoryItem[] = [];
+let shopData: any = null;
+let shopConfig: any = null;
 let totalCaught = 0;
 let personalBestFish: InventoryItem | null = null;
 let collectionBests = new Map<FishSpeciesId, InventoryItem>();
@@ -864,6 +874,7 @@ function performPrimaryAction(): void {
   if (seatId && !scene.isSeatOccupied(seatId)) { network.sitAtSeat(seatId); return; }
   if (isNearFerris() && scene.ferrisBoardingReady) { network.boardFerrisWheel(); return; }
   if (isNearJukebox()) { openJukebox(); return; }
+  if (isNearShop()) { openShop(); return; }
   if (isNearPhotobooth()) { enterPhotobooth(); return; }
   if (theater.isNearby) { theater.openMenu(); return; }
   if (!portalPrompt.classList.contains('hidden')) requestPortalEntry();
@@ -929,6 +940,7 @@ function touchControlLabels(mode: TouchUiMode): { primary: string; secondary: st
     else if (scene.nearbySeatId()) primary = 'Sit';
     else if (isNearFerris() && scene.ferrisBoardingReady) primary = 'Board';
     else if (isNearJukebox()) primary = 'Jukebox';
+    else if (isNearShop()) primary = 'Shop';
     else if (isNearPhotobooth()) primary = 'Photo';
     else if (theater.isNearby) primary = 'Theater';
   }
@@ -1642,6 +1654,171 @@ function addInventoryItem(item: InventoryItem): void {
   renderBackpack();
 }
 
+let shopTab: 'sell' | 'shop' | 'wardrobe' = 'sell';
+
+function isNearShop(): boolean {
+  const stall = shopConfig?.stall ?? { x: -7.5, z: -10.5, interactionRadius: 3.2 };
+  const position = scene.getPosition();
+  return Math.hypot(position.x - stall.x, position.z - stall.z) <= stall.interactionRadius;
+}
+
+function openShop(): void {
+  if (!joined || !isNearShop()) return;
+  shopModal.classList.remove('hidden');
+  network.openShop();
+}
+
+function closeShop(): void {
+  shopModal.classList.add('hidden');
+}
+
+shopClose.addEventListener('click', closeShop);
+document.querySelector('.shop-backdrop')?.addEventListener('click', closeShop);
+document.querySelectorAll<HTMLButtonElement>('.shop-tabs button').forEach((button) => {
+  button.addEventListener('click', () => {
+    shopTab = button.dataset.tab as typeof shopTab;
+    document.querySelectorAll('.shop-tabs button').forEach((entry) => entry.classList.toggle('active', entry === button));
+    renderShop();
+  });
+});
+
+function updateEconomyHud(): void {
+  const coins = shopData?.coins ?? 0;
+  const scrap = shopData?.scrap ?? 0;
+  coinCount.textContent = String(coins);
+  scrapCount.textContent = String(scrap);
+  shopWallet.textContent = `${coins} coins · ${scrap} scrap`;
+  if (shopData?.pinnedItem && shopConfig) {
+    const item = shopConfig.items.find((entry: any) => entry.id === shopData.pinnedItem);
+    if (item) {
+      pinnedGoal.classList.remove('hidden');
+      pinnedGoal.textContent = `Goal: ${item.name} · ${coins}/${item.price}`;
+    }
+  } else pinnedGoal.classList.add('hidden');
+}
+
+function showCoinFloat(amount: number): void {
+  if (!amount) return;
+  const bubble = document.createElement('div');
+  bubble.className = 'coin-float';
+  bubble.textContent = `+${amount} 🪙`;
+  document.body.append(bubble);
+  window.setTimeout(() => bubble.remove(), 1200);
+}
+
+function shopFishPrice(item: InventoryItem): number {
+  if (item.kind === 'junk') return 0;
+  const species = FISH_CONFIG.species.find((entry) => entry.id === item.species);
+  if (!species) return 0;
+  const base = shopConfig?.baseValues?.[species.id] ?? 0;
+  const position = (item.weightKg - species.minKg) / Math.max(0.0001, species.maxKg - species.minKg);
+  const factor = (shopConfig?.weightFactor?.baseline ?? 0.7) + (shopConfig?.weightFactor?.weightRange ?? 0.6) * Math.max(0, Math.min(1, position));
+  return Math.max(1, Math.round(base * factor));
+}
+
+function renderShop(): void {
+  updateEconomyHud();
+  if (!shopData) return;
+  shopContent.replaceChildren();
+  if (shopTab === 'sell') {
+    const count = shopData.dailySold?.count ?? 0;
+    const fullLeft = Math.max(0, 20 - count);
+    const header = document.createElement('p');
+    header.className = 'shop-daily';
+    header.textContent = `Full price: ${fullLeft} left today · 50% for 21–40 · 25% after 40`;
+    shopContent.append(header);
+    const bySpecies = new Map<string, InventoryItem[]>();
+    for (const item of inventoryItems) {
+      const list = bySpecies.get(item.species) ?? [];
+      list.push(item);
+      bySpecies.set(item.species, list);
+    }
+    for (const [speciesId, items] of bySpecies) {
+      const species = FISH_CONFIG.species.find((entry) => entry.id === speciesId);
+      if (!species) continue;
+      const row = document.createElement('div');
+      row.className = 'shop-row';
+      const name = document.createElement('div');
+      name.innerHTML = `<strong>${species.name}</strong><br><span class="shop-daily">${items.length} owned · ${species.kind === 'junk' ? '1 scrap each' : `${shopFishPrice(items[0])} coin est.`}</span>`;
+      const actions = document.createElement('div');
+      actions.className = 'shop-row-actions';
+      if (species.kind !== 'junk') {
+        const sellOne = document.createElement('button');
+        sellOne.type = 'button';
+        sellOne.textContent = 'Sell one';
+        sellOne.addEventListener('click', () => {
+          if (items.length <= 1) { showToast('Keep one specimen for the aquarium.'); return; }
+          const estimated = shopFishPrice(items[0]);
+          if (estimated >= (shopConfig?.confirmThresholdCoins ?? 100) && !window.confirm(`Sell this ${species.name} for about ${estimated} coins?`)) return;
+          network.sellFish(speciesId, 1);
+        });
+        actions.append(sellOne);
+        if (items.length > 1) {
+          const sellAll = document.createElement('button');
+          sellAll.type = 'button';
+          sellAll.textContent = 'Sell all';
+          sellAll.addEventListener('click', () => {
+            if (!window.confirm(`Sell all ${species.name} copies except the protected aquarium specimen?`)) return;
+            network.sellFish(speciesId, 'all');
+          });
+          actions.append(sellAll);
+        }
+      } else {
+        const sellAll = document.createElement('button');
+        sellAll.type = 'button';
+        sellAll.textContent = 'Turn in scrap';
+        sellAll.addEventListener('click', () => network.sellFish(speciesId, 'all'));
+        actions.append(sellAll);
+      }
+      row.append(name, actions);
+      shopContent.append(row);
+    }
+  } else if (shopTab === 'shop') {
+    for (const item of (shopConfig?.items ?? [])) {
+      const owned = shopData.ownedItems.includes(item.id);
+      const card = document.createElement('article');
+      card.className = `shop-item${owned ? '' : ''}`;
+      const detail = document.createElement('div');
+      detail.innerHTML = `<strong>${item.name}</strong><br><span class="shop-daily">${item.price} coins${item.scrap ? ` · ${item.scrap} scrap` : ''}</span>`;
+      if (item.requiredFish) detail.insertAdjacentHTML('beforeend', `<br><span class="shop-lock">Requires one extra ${item.requiredFish.species === 'golden-koi' ? 'Koi Emas' : item.requiredFish.species}</span>`);
+      const controls = document.createElement('div');
+      const pin = document.createElement('button');
+      pin.type = 'button';
+      pin.textContent = shopData.pinnedItem === item.id ? 'Unpin' : 'Pin goal';
+      pin.addEventListener('click', () => network.pinShopItem(shopData.pinnedItem === item.id ? null : item.id));
+      controls.append(pin);
+      if (!owned) {
+        const buy = document.createElement('button');
+        buy.type = 'button';
+        buy.textContent = 'Buy';
+        buy.addEventListener('click', () => network.buyShopItem(item.id));
+        controls.append(buy);
+      } else {
+        const ownedText = document.createElement('span');
+        ownedText.className = 'shop-lock';
+        ownedText.textContent = 'Owned';
+        controls.append(ownedText);
+      }
+      card.append(detail, controls);
+      shopContent.append(card);
+    }
+  } else {
+    for (const item of (shopConfig?.items ?? []).filter((entry: any) => shopData.ownedItems.includes(entry.id))) {
+      const row = document.createElement('div');
+      row.className = 'shop-row';
+      const name = document.createElement('strong');
+      name.textContent = item.name;
+      const equip = document.createElement('button');
+      equip.type = 'button';
+      equip.textContent = shopData.equipped[item.slot] === item.id ? 'Unequip' : 'Equip';
+      equip.addEventListener('click', () => network.equipShopItem(item.slot, shopData.equipped[item.slot] === item.id ? null : item.id));
+      row.append(name, equip);
+      shopContent.append(row);
+    }
+  }
+  updateEconomyHud();
+}
+
 function holdFish(catchId: string): void {
   if (scene.carryingStoneId(selfId)) { showToast('Throw the stone first.'); return; }
   network.holdFish(catchId);
@@ -1845,6 +2022,9 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
       portalPromptDismissedUntilExit = false;
       applyWeather(message.weather, false);
       selfId = message.selfId;
+      shopData = message.shop ?? null;
+      shopConfig = message.shopConfig ?? null;
+      updateEconomyHud();
       voiceResumeToken = message.resumeToken;
       theater.setSession(selfId, message.room, message.resumeToken);
       theater.setOccluded(false);
@@ -1977,6 +2157,32 @@ function join(room: string, name: string, isReconnectAttempt = false): void {
     fastestSlayer: updateFastestSlayer,
     inventorySync: syncInventory,
     inventoryAdd: addInventoryItem,
+    shopState: (message) => {
+      shopData = message.shop;
+      shopConfig = message.config;
+      inventoryItems = message.items ?? inventoryItems;
+      renderShop();
+    },
+    shopSale: (message) => {
+      shopData = message.shop;
+      inventoryItems = message.items ?? inventoryItems;
+      renderShop();
+      renderBackpack();
+      showCoinFloat(message.result.gained ?? 0);
+    },
+    shopPurchase: (message) => {
+      shopData = message.shop;
+      inventoryItems = message.items ?? inventoryItems;
+      renderShop();
+      renderBackpack();
+    },
+    shopEquip: (shop) => { shopData = shop; renderShop(); },
+    shopChair: (message) => { shopData = message.shop; renderShop(); },
+    shopError: showToast,
+    equipmentChanged: (playerId, equipped, chairSeated) => {
+      const player = roomPlayers.get(playerId);
+      if (player) { player.equipped = equipped; player.chairSeated = chairSeated; scene.upsert(player); }
+    },
     inventoryRemove: (catchId) => {
       inventoryItems = inventoryItems.filter((item) => item.catchId !== catchId);
       if (pendingReleaseId === catchId) pendingReleaseId = null;
@@ -2382,6 +2588,11 @@ window.addEventListener('keydown', (event) => {
     openJukebox();
     return;
   }
+  if (key === 'e' && joined && !event.repeat && isNearShop()) {
+    event.preventDefault();
+    openShop();
+    return;
+  }
   if (key === 't' && joined && !event.repeat && theater.isNearby) {
     event.preventDefault();
     theater.openMenu();
@@ -2668,6 +2879,7 @@ function animate(now: number): void {
       photoboothEnter.disabled = !nearPhotobooth;
       const nearJukebox = !isPhotoboothMode && !jukebox.isOpen && isNearJukebox();
       jukeboxPrompt.classList.toggle('hidden', !nearJukebox);
+      shopPrompt.classList.toggle('hidden', !isNearShop() || shopModal.classList.contains('hidden') === false);
       const position = scene.getPosition();
       jukebox.setDistance(Math.hypot(position.x - WORLD_CONFIG.jukebox.x, position.z - WORLD_CONFIG.jukebox.z));
       syncMusicDuck();
